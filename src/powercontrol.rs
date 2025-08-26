@@ -157,6 +157,12 @@ impl CPowerControl {
         self.init_cn0
     }
 
+    /// Alias for get_power_control_list for compatibility
+    /// Псевдоним для get_power_control_list для совместимости
+    pub fn get_power_list(&mut self, time_step_ms: i32) -> (&[SignalPower], usize) {
+        self.get_power_control_list(time_step_ms)
+    }
+
     /// Set initial CN0 value
     /// Установить начальное значение CN0
     pub fn set_init_cn0(&mut self, init_cn0: f64) {

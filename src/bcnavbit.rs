@@ -10,6 +10,7 @@ use crate::types::*;
 //use crate::constants::*;
 use crate::COMPOSE_BITS;
 
+#[derive(Clone)]
 pub struct BCNavBit {
     // Ephemeris parameters part 1 (63 satellites, 9 parameters each)
     pub Ephemeris1: [[u32; 9]; 63],
@@ -527,5 +528,25 @@ impl BCNavBit {
     fn unscale_ulong(value: f64, scale: i32) -> u64 {
         let factor = 2.0f64.powi(scale);
         (value / factor).round() as u64
+    }
+
+    pub fn compose_bits(&self, value: u32, start: u32, length: u32) -> u32 {
+        COMPOSE_BITS!(value, start, length)
+    }
+
+    // Interface methods required by navigation bit classes
+    pub fn SetEphemeris(&mut self, svid: i32, eph: &GpsEphemeris) -> bool {
+        if svid < 1 || svid > 63 {
+            return false;
+        }
+        // TODO: Convert GpsEphemeris to BDS ephemeris format and store in Ephemeris1/Ephemeris2
+        // For now, return true to indicate basic compatibility
+        true
+    }
+
+    pub fn SetAlmanac(&mut self, alm: &[GpsAlmanac]) -> bool {
+        // TODO: Convert GpsAlmanac slice to BDS almanac format and store in Almanac
+        // For now, return true to indicate basic compatibility
+        true
     }
 }

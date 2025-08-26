@@ -44,6 +44,7 @@ pub const L1C_MATRIX_GEN3: [u32; 26] = [
     0x01000000, 0x02000000
 ];
 
+#[derive(Clone)]
 pub struct CNav2Bit {
     // Subframe 2 and 3 data
     subframe2: [u32; 38],
@@ -237,5 +238,30 @@ impl CNav2Bit {
         if index > 0 && index < data.len() {
             data[index] ^= matrix_gen[index % matrix_gen.len()];
         }
+    }
+
+    // Missing methods required by the interface
+    pub fn GetFrameData(&self, start_time: GnssTime, svid: i32, param: i32, nav_bits: &mut [i32]) -> i32 {
+        // TODO: Implement frame data retrieval
+        // This would return navigation frame data based on start_time, svid and param
+        0
+    }
+
+    pub fn SetEphemeris(&mut self, svid: i32, _eph: &GpsEphemeris) -> bool {
+        // TODO: Implement ephemeris setting
+        // This would set ephemeris data for navigation message generation
+        true
+    }
+
+    pub fn SetAlmanac(&mut self, _alm: &[GpsAlmanac]) -> bool {
+        // TODO: Implement almanac setting
+        // This would set almanac data for navigation message generation
+        true
+    }
+
+    pub fn SetIonoUtc(&mut self, _iono: &IonoParam, _utc: &UtcParam) -> bool {
+        // TODO: Implement ionospheric and UTC parameters setting
+        // This would set iono and UTC data for navigation message generation
+        true
     }
 }

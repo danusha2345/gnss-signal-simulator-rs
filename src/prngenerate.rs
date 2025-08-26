@@ -71,15 +71,15 @@ impl LsfrSequence {
 pub struct PrnGenerate {
     pub data_prn: Option<Vec<i32>>,
     pub pilot_prn: Option<Vec<i32>>,
-    pub attribute: &'static PrnAttribute,
+    pub attribute: Option<PrnAttribute>,
 }
 
 impl PrnGenerate {
-    pub fn new(system: GnssSystem, signal_index: usize, svid: i32) -> Self {
+    pub fn new(system: GnssSystem, signal_index: i32, svid: i32) -> Self {
         let mut generator = PrnGenerate {
             data_prn: None,
             pilot_prn: None,
-            attribute: &PRN_ATTRIBUTES[0], // Default, will be updated
+            attribute: Some(PRN_ATTRIBUTES[0]), // Default, will be updated
         };
 
         // Validate SVID range and generate PRN codes based on system and signal
@@ -105,139 +105,158 @@ impl PrnGenerate {
             _ => {
                 generator.data_prn = None;
                 generator.pilot_prn = None;
-                generator.attribute = &PRN_ATTRIBUTES[0];
+                generator.attribute = Some(PRN_ATTRIBUTES[0]);
             }
         }
 
         generator
     }
 
-    fn generate_gps_prn(&mut self, signal_index: usize, svid: i32) {
+    fn generate_gps_prn(&mut self, signal_index: i32, svid: i32) {
+        const L1CA: i32 = SIGNAL_INDEX_L1CA as i32;
+        const L1C: i32 = SIGNAL_INDEX_L1C as i32;
+        const L2C: i32 = SIGNAL_INDEX_L2C as i32;
+        const L2P: i32 = SIGNAL_INDEX_L2P as i32;
+        const L5: i32 = SIGNAL_INDEX_L5 as i32;
 
         match signal_index {
-            SIGNAL_INDEX_L1CA => {
+            L1CA => {
                 self.data_prn = Some(self.get_gold_code(L1CA_PRN_INIT[(svid-1) as usize], 0x3a6, 0x3ff, 0x204, 1023, 10, 1023));
                 self.pilot_prn = None;
-                self.attribute = &PRN_ATTRIBUTES[0];
+                self.attribute = Some(PRN_ATTRIBUTES[0]);
             },
-            SIGNAL_INDEX_L1C => {
+            L1C => {
                 self.data_prn = Some(self.get_l1c_weil(L1C_DATA_INSERT_INDEX[(svid-1) as usize], L1C_DATA_PHASE_DIFF[(svid-1) as usize]));
                 self.pilot_prn = Some(self.get_l1c_weil(L1C_PILOT_INSERT_INDEX[(svid-1) as usize], L1C_PILOT_PHASE_DIFF[(svid-1) as usize]));
-                self.attribute = &PRN_ATTRIBUTES[1];
+                self.attribute = Some(PRN_ATTRIBUTES[1]);
             },
-            SIGNAL_INDEX_L2C => {
+            L2C => {
                 self.data_prn = Some(self.get_gold_code(L2CM_PRN_INIT[(svid-1) as usize], 0x0494953c, 0x0, 0x0, 10230, 27, 10230));
                 self.pilot_prn = Some(self.get_gold_code(L2CL_PRN_INIT[(svid-1) as usize], 0x0494953c, 0x0, 0x0, 10230*75, 27, 0));
-                self.attribute = &PRN_ATTRIBUTES[2];
+                self.attribute = Some(PRN_ATTRIBUTES[2]);
             },
-            SIGNAL_INDEX_L2P => {
+            L2P => {
                 self.data_prn = Some(self.get_simplified_p_code(svid));
                 self.pilot_prn = None;
-                self.attribute = &PRN_ATTRIBUTES[3];
+                self.attribute = Some(PRN_ATTRIBUTES[3]);
             },
-            SIGNAL_INDEX_L5 => {
+            L5 => {
                 self.data_prn = Some(self.get_gold_code(L5I_PRN_INIT[(svid-1) as usize], 0x18ed, 0x1fff, 0x1b00, 10230, 13, 8190));
                 self.pilot_prn = Some(self.get_gold_code(L5Q_PRN_INIT[(svid-1) as usize], 0x18ed, 0x1fff, 0x1b00, 10230, 13, 8190));
-                self.attribute = &PRN_ATTRIBUTES[4];
+                self.attribute = Some(PRN_ATTRIBUTES[4]);
             },
             _ => {
                 self.data_prn = None;
                 self.pilot_prn = None;
-                self.attribute = &PRN_ATTRIBUTES[0];
+                self.attribute = Some(PRN_ATTRIBUTES[0]);
             }
         }
     }
 
-    fn generate_bds_prn(&mut self, signal_index: usize, svid: i32) {
+    fn generate_bds_prn(&mut self, signal_index: i32, svid: i32) {
+        const B1I: i32 = SIGNAL_INDEX_B1I as i32;
+        const B2I: i32 = SIGNAL_INDEX_B2I as i32;
+        const B3I: i32 = SIGNAL_INDEX_B3I as i32;
+        const B1C: i32 = SIGNAL_INDEX_B1C as i32;
+        const B2A: i32 = SIGNAL_INDEX_B2A as i32;
+        const B2B: i32 = SIGNAL_INDEX_B2B as i32;
 
         match signal_index {
-            SIGNAL_INDEX_B1I => {
+            B1I => {
                 self.data_prn = Some(self.get_gold_code(B1I_PRN_INIT[(svid-1) as usize], 0x59f, 0x2aa, 0x7c1, 2046, 11, 2046));
                 self.pilot_prn = None;
-                self.attribute = &PRN_ATTRIBUTES[5];
+                self.attribute = Some(PRN_ATTRIBUTES[5]);
             },
-            SIGNAL_INDEX_B2I => {
+            B2I => {
                 self.data_prn = Some(self.get_gold_code(B1I_PRN_INIT[(svid-1) as usize], 0x59f, 0x2aa, 0x7c1, 2046, 11, 2046));
                 self.pilot_prn = None;
-                self.attribute = &PRN_ATTRIBUTES[5];
+                self.attribute = Some(PRN_ATTRIBUTES[5]);
             },
-            SIGNAL_INDEX_B3I => {
+            B3I => {
                 self.data_prn = Some(self.get_gold_code(B3I_PRN_INIT[(svid-1) as usize], 0x1b71, 0x1fff, 0x100d, 10230, 13, 8190));
                 self.pilot_prn = None;
-                self.attribute = &PRN_ATTRIBUTES[6];
+                self.attribute = Some(PRN_ATTRIBUTES[6]);
             },
-            SIGNAL_INDEX_B1C => {
+            B1C => {
                 self.data_prn = Some(self.get_b1c_weil(B1C_DATA_TRUNCATION[(svid-1) as usize], B1C_DATA_PHASE_DIFF[(svid-1) as usize]));
                 self.pilot_prn = Some(self.get_b1c_weil(B1C_PILOT_TRUNCATION[(svid-1) as usize], B1C_PILOT_PHASE_DIFF[(svid-1) as usize]));
-                self.attribute = &PRN_ATTRIBUTES[11];
+                self.attribute = Some(PRN_ATTRIBUTES[11]);
             },
-            SIGNAL_INDEX_B2A => {
+            B2A => {
                 self.data_prn = Some(self.get_gold_code(B2A_D_PRN_INIT[(svid-1) as usize], 0x1d14, 0x1fff, 0x1411, 10230, 13, 8190));
                 self.pilot_prn = Some(self.get_gold_code(B2A_P_PRN_INIT[(svid-1) as usize], 0x18d1, 0x1fff, 0x1064, 10230, 13, 8190));
-                self.attribute = &PRN_ATTRIBUTES[4];
+                self.attribute = Some(PRN_ATTRIBUTES[4]);
             },
-            SIGNAL_INDEX_B2B => {
+            B2B => {
                 let mask = if svid < 6 || svid > 58 { 0 } else { 0x1fff };
                 self.data_prn = Some(self.get_gold_code(B2B_PRN_INIT[(svid-1) as usize], 0x192c, mask, 0x1301, 10230, 13, 8190));
                 self.pilot_prn = None;
-                self.attribute = &PRN_ATTRIBUTES[7];
+                self.attribute = Some(PRN_ATTRIBUTES[7]);
             },
             _ => {
                 self.data_prn = None;
                 self.pilot_prn = None;
-                self.attribute = &PRN_ATTRIBUTES[0];
+                self.attribute = Some(PRN_ATTRIBUTES[0]);
             }
         }
     }
 
-    fn generate_galileo_prn(&mut self, signal_index: usize, svid: i32) {
+    fn generate_galileo_prn(&mut self, signal_index: i32, svid: i32) {
+        const E1: i32 = SIGNAL_INDEX_E1 as i32;
+        const E5A: i32 = SIGNAL_INDEX_E5A as i32;
+        const E5B: i32 = SIGNAL_INDEX_E5B as i32;
+        const E6: i32 = SIGNAL_INDEX_E6 as i32;
 
         match signal_index {
-            SIGNAL_INDEX_E1 => {
+            E1 => {
                 self.data_prn = Some(self.get_memory_sequence(&E1_MEMORY_CODE[(svid - 1) as usize * 128..], 4));
                 self.pilot_prn = Some(self.get_memory_sequence(&E1_MEMORY_CODE[(svid + 49) as usize * 128..], 4));
-                self.attribute = &PRN_ATTRIBUTES[8];
+                self.attribute = Some(PRN_ATTRIBUTES[8]);
             },
-            SIGNAL_INDEX_E5A => {
+            E5A => {
                 self.data_prn = Some(self.get_gold_code(E5A_I_PRN_INIT[(svid-1) as usize], 0x28d8, 0x3fff, 0x20a1, 10230, 14, 10230));
                 self.pilot_prn = Some(self.get_gold_code(E5A_Q_PRN_INIT[(svid-1) as usize], 0x28d8, 0x3fff, 0x20a1, 10230, 14, 10230));
-                self.attribute = &PRN_ATTRIBUTES[4];
+                self.attribute = Some(PRN_ATTRIBUTES[4]);
             },
-            SIGNAL_INDEX_E5B => {
+            E5B => {
                 self.data_prn = Some(self.get_gold_code(E5B_I_PRN_INIT[(svid-1) as usize], 0x2992, 0x3fff, 0x3408, 10230, 14, 10230));
                 self.pilot_prn = Some(self.get_gold_code(E5B_Q_PRN_INIT[(svid-1) as usize], 0x2331, 0x3fff, 0x3408, 10230, 14, 10230));
-                self.attribute = &PRN_ATTRIBUTES[4];
+                self.attribute = Some(PRN_ATTRIBUTES[4]);
             },
-            SIGNAL_INDEX_E6 => {
+            E6 => {
                 self.data_prn = Some(self.get_memory_sequence(&E6_MEMORY_CODE[(svid - 1) as usize * 160..], 5));
                 self.pilot_prn = Some(self.get_memory_sequence(&E6_MEMORY_CODE[(svid + 49) as usize * 160..], 5));
-                self.attribute = &PRN_ATTRIBUTES[9];
+                self.attribute = Some(PRN_ATTRIBUTES[9]);
             },
             _ => {
                 self.data_prn = None;
                 self.pilot_prn = None;
-                self.attribute = &PRN_ATTRIBUTES[0];
+                self.attribute = Some(PRN_ATTRIBUTES[0]);
             }
         }
     }
 
-    fn generate_glonass_prn(&mut self, signal_index: usize, _svid: i32) {
+    fn generate_glonass_prn(&mut self, signal_index: i32, _svid: i32) {
+        const G1: i32 = SIGNAL_INDEX_G1 as i32;
+        const G2: i32 = SIGNAL_INDEX_G2 as i32;
+        const G3: i32 = SIGNAL_INDEX_G3 as i32;
+
         match signal_index {
-            SIGNAL_INDEX_G1 | SIGNAL_INDEX_G2 => {
+            G1 | G2 => {
                 self.data_prn = Some(self.get_gold_code(0x1fc, 0x110, 0x0, 0x0, 511, 9, 511));
                 self.pilot_prn = None;
-                self.attribute = &PRN_ATTRIBUTES[10];
+                self.attribute = Some(PRN_ATTRIBUTES[10]);
             },
-            SIGNAL_INDEX_G3 => {
+            G3 => {
                 // G3/L3OC uses Gold code with length 10230
                 self.data_prn = Some(self.get_gold_code(0x3ff, 0x224, 0x3ff, 0x387, 10230, 10, 10230));
                 self.pilot_prn = Some(self.get_gold_code(0x3ff, 0x224, 0x3ff, 0x387, 10230, 10, 10230));
-                self.attribute = &PRN_ATTRIBUTES[12];
+                self.attribute = Some(PRN_ATTRIBUTES[12]);
             },
             _ => {
                 self.data_prn = None;
                 self.pilot_prn = None;
-                self.attribute = &PRN_ATTRIBUTES[0];
+                self.attribute = Some(PRN_ATTRIBUTES[0]);
             }
         }
     }
@@ -371,8 +390,8 @@ impl PrnGenerate {
         self.pilot_prn.as_ref()
     }
 
-    pub fn get_attribute(&self) -> &PrnAttribute {
-        self.attribute
+    pub fn get_attribute(&self) -> Option<&PrnAttribute> {
+        self.attribute.as_ref()
     }
 }
 

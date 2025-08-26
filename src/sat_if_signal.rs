@@ -7,14 +7,15 @@
 //----------------------------------------------------------------------
 
 use crate::complex_number::ComplexNumber;
-use crate::gnsstime::GpsTime;
-use crate::prngenerate::PrnGenerate;
-use crate::satellite_param::{SatelliteParam, get_travel_time, get_carrier_phase, get_transmit_time};
+use crate::gnsstime::*;
+use crate::prngenerate::*;
+use crate::types::{SatelliteParam, GnssSystem, GnssTime};
+use crate::satellite_param::{get_travel_time, get_carrier_phase, get_transmit_time};
 use crate::satellite_signal::SatelliteSignal;
 use crate::navbit::NavBit;
-use crate::navbit::GnssSystem;
 use crate::constants::*;
 use crate::fastmath::FastMath;
+use crate::ifdatagen::NavBitTrait;
 
 pub struct SatIfSignal {
     sample_number: i32,
@@ -31,9 +32,9 @@ pub struct SatIfSignal {
     glonass_half_cycle: bool,
     start_carrier_phase: f64,
     end_carrier_phase: f64,
-    signal_time: GpsTime,
-    start_transmit_time: GpsTime,
-    end_transmit_time: GpsTime,
+    signal_time: GnssTime,
+    start_transmit_time: GnssTime,
+    end_transmit_time: GnssTime,
     data_signal: ComplexNumber,
     pilot_signal: ComplexNumber,
     half_cycle_flag: i32,
@@ -43,14 +44,14 @@ impl SatIfSignal {
     pub fn new(ms_sample_number: i32, sat_if_freq: i32, sat_system: GnssSystem, sat_signal_index: i32, sat_id: u8) -> Self {
         let prn = PrnGenerate::new(sat_system, sat_signal_index, sat_id as i32);
         let (data_len, pilot_len) = if let Some(attr) = &prn.attribute {
-            let mut dl = (attr.data_period as f64 * attr.chip_rate) as i32;
-            let mut pl = (attr.pilot_period as f64 * attr.chip_rate) as i32;
+            let mut dl = (attr.data_period * attr.chip_rate) as i32;
+            let mut pl = (attr.pilot_period * attr.chip_rate) as i32;
 
-            if sat_system == GnssSystem::GpsSystem && sat_signal_index == SIGNAL_INDEX_L2C {
+            if sat_system == GnssSystem::GpsSystem && sat_signal_index == SIGNAL_INDEX_L2C as i32 {
                 dl = 10230;
                 pl = 10230 * 75;
             }
-            if sat_system == GnssSystem::GpsSystem && sat_signal_index == SIGNAL_INDEX_L2P {
+            if sat_system == GnssSystem::GpsSystem && sat_signal_index == SIGNAL_INDEX_L2P as i32 {
                 dl = 10230 * 2;
                 pl = 1;
             }
@@ -65,7 +66,7 @@ impl SatIfSignal {
             system: sat_system,
             signal_index: sat_signal_index,
             svid: sat_id as i32,
-            sample_array: vec![ComplexNumber::new(0.0, 0.0); ms_sample_number as usize],
+            sample_array: vec![ComplexNumber::new(); ms_sample_number as usize],
             prn_sequence: prn,
             satellite_signal: SatelliteSignal::new(),
             sat_param: None,
@@ -74,11 +75,11 @@ impl SatIfSignal {
             glonass_half_cycle: (sat_if_freq % 1000) != 0,
             start_carrier_phase: 0.0,
             end_carrier_phase: 0.0,
-            signal_time: GpsTime::default(),
-            start_transmit_time: GpsTime::default(),
-            end_transmit_time: GpsTime::default(),
-            data_signal: ComplexNumber::new(0.0, 0.0),
-            pilot_signal: ComplexNumber::new(0.0, 0.0),
+            signal_time: GnssTime::default(),
+            start_transmit_time: GnssTime::default(),
+            end_transmit_time: GnssTime::default(),
+            data_signal: ComplexNumber::new(),
+            pilot_signal: ComplexNumber::new(),
             half_cycle_flag: 0,
         }
     }
@@ -98,7 +99,7 @@ impl SatIfSignal {
         self.half_cycle_flag = 0;
     }
 
-    pub fn get_if_sample(&mut self, cur_time: GpsTime) {
+    pub fn get_if_sample(&mut self, cur_time: GnssTime) {
         let p_sat_param = if let Some(param) = &self.sat_param { param } else { return };
 
         self.signal_time = self.start_transmit_time;
@@ -106,8 +107,8 @@ impl SatIfSignal {
         self.end_carrier_phase = get_carrier_phase(p_sat_param, self.signal_index as usize);
         self.end_transmit_time = get_transmit_time(&cur_time, get_travel_time(p_sat_param, self.signal_index as usize));
 
-        let mut phase_step = (self.start_carrier_phase - self.end_carrier_phase) / self.sample_number as f64;
-        phase_step += self.if_freq as f64 / 1000.0 / self.sample_number as f64;
+        let mut phase_step = (self.start_carrier_phase - self.end_carrier_phase) / (self.sample_number as f64);
+        phase_step += (self.if_freq as f64) / 1000.0 / (self.sample_number as f64);
         let mut cur_phase = self.start_carrier_phase - self.start_carrier_phase.floor();
         cur_phase = 1.0 - cur_phase;
         self.start_carrier_phase = self.end_carrier_phase;
@@ -117,18 +118,18 @@ impl SatIfSignal {
             self.half_cycle_flag = 1 - self.half_cycle_flag;
         }
 
-        let mut transmit_ms_diff = self.end_transmit_time.milliseconds - self.start_transmit_time.milliseconds;
+        let mut transmit_ms_diff = self.end_transmit_time.MilliSeconds - self.start_transmit_time.MilliSeconds;
         if transmit_ms_diff < 0 {
             transmit_ms_diff += 86400000;
         }
         
         let code_attribute = self.prn_sequence.attribute.as_ref().unwrap();
-        let code_diff = (transmit_ms_diff as f64 + self.end_transmit_time.sub_milliseconds - self.start_transmit_time.sub_milliseconds) * code_attribute.chip_rate;
-        let code_step = code_diff / self.sample_number as f64;
-        let mut cur_chip = (self.start_transmit_time.milliseconds as f64 % code_attribute.pilot_period as f64 + self.start_transmit_time.sub_milliseconds) * code_attribute.chip_rate;
+        let code_diff = (transmit_ms_diff as f64 + self.end_transmit_time.SubMilliSeconds - self.start_transmit_time.SubMilliSeconds) * code_attribute.chip_rate as f64;
+        let code_step = code_diff / (self.sample_number as f64);
+        let mut cur_chip = (self.start_transmit_time.MilliSeconds as f64 % code_attribute.pilot_period as f64 + self.start_transmit_time.SubMilliSeconds) * code_attribute.chip_rate as f64;
         self.start_transmit_time = self.end_transmit_time;
 
-        let amp = 10.0_f64.powf((p_sat_param.cn0 as f64 - 3000.0) / 1000.0) / (self.sample_number as f64).sqrt();
+        let amp = 10.0_f64.powf((p_sat_param.CN0 as f64 - 3000.0) / 1000.0) / (self.sample_number as f64).sqrt();
 
         for i in 0..self.sample_number as usize {
             let prn_value = self.get_prn_value(&mut cur_chip, code_step);
@@ -142,7 +143,7 @@ impl SatIfSignal {
             attr
         } else {
             *cur_chip += code_step;
-            return ComplexNumber::new(0.0, 0.0);
+            return ComplexNumber::new();
         };
 
         let chip_count = *cur_chip as i32;
@@ -154,7 +155,7 @@ impl SatIfSignal {
         let is_cboc = (attribute.attribute & PRN_ATTRIBUTE_CBOC) != 0;
         let is_tdm = (attribute.attribute & PRN_ATTRIBUTE_TMD) != 0;
 
-        if self.system == GnssSystem::GlonassSystem && (self.signal_index == SIGNAL_INDEX_G1 || self.signal_index == SIGNAL_INDEX_G2) {
+        if self.system == GnssSystem::GlonassSystem && (self.signal_index == SIGNAL_INDEX_G1 as i32 || self.signal_index == SIGNAL_INDEX_G2 as i32) {
             let data_chip = chip_count % self.data_length;
             let prn_bit = if let Some(data_prn) = &self.prn_sequence.data_prn {
                 if data_chip >= 0 && (data_chip as usize) < data_prn.len() && data_prn[data_chip as usize] != 0 { 1 } else { 0 }
@@ -163,33 +164,33 @@ impl SatIfSignal {
             let nav_bit = if self.data_signal.real < 0.0 { 1 } else { 0 };
             
             let chip_time_ms = *cur_chip / 511.0;
-            let total_ms = self.signal_time.milliseconds + chip_time_ms as i32;
+            let total_ms = self.signal_time.MilliSeconds + chip_time_ms as i32;
             let meander = if (total_ms / 10) % 2 == 0 { 1 } else { 0 };
             
             let modulated_bit = prn_bit ^ nav_bit ^ meander;
             
-            prn_value = ComplexNumber::new(if modulated_bit != 0 { -1.0 } else { 1.0 }, 0.0);
+            prn_value = ComplexNumber { real: if modulated_bit != 0 { -1.0 } else { 1.0 }, imag: 0.0 };
             
             *cur_chip += code_step;
             return prn_value;
         }
 
         if is_tdm {
-            let current_ms = (*cur_chip / attribute.chip_rate) as i32 % 2;
+            let current_ms = (*cur_chip / attribute.chip_rate as f64) as i32 % 2;
             if current_ms == 0 { // Even millisecond - L2CM (data)
                 let data_chip = chip_count % self.data_length;
                 prn_value = if let Some(data_prn) = &self.prn_sequence.data_prn {
                     if data_chip >= 0 && (data_chip as usize) < data_prn.len() {
                         self.data_signal * if data_prn[data_chip as usize] != 0 { -1.0 } else { 1.0 }
-                    } else { ComplexNumber::new(0.0, 0.0) }
-                } else { ComplexNumber::new(0.0, 0.0) };
+                    } else { ComplexNumber::new() }
+                } else { ComplexNumber::new() };
             } else { // Odd millisecond - L2CL (pilot)
                 let pilot_chip = chip_count % self.pilot_length;
                  prn_value = if let Some(pilot_prn) = &self.prn_sequence.pilot_prn {
                     if pilot_chip >= 0 && (pilot_chip as usize) < pilot_prn.len() {
                         self.pilot_signal * if pilot_prn[pilot_chip as usize] != 0 { -1.0 } else { 1.0 }
-                    } else { ComplexNumber::new(0.0, 0.0) }
-                } else { ComplexNumber::new(0.0, 0.0) };
+                    } else { ComplexNumber::new() }
+                } else { ComplexNumber::new() };
             }
             *cur_chip += code_step;
             return prn_value;
@@ -205,8 +206,8 @@ impl SatIfSignal {
                     val *= -1.0;
                 }
                 val
-            } else { ComplexNumber::new(0.0, 0.0) }
-        } else { ComplexNumber::new(0.0, 0.0) };
+            } else { ComplexNumber::new() }
+        } else { ComplexNumber::new() };
 
         if let Some(pilot_prn) = &self.prn_sequence.pilot_prn {
             if self.pilot_length > 0 {
@@ -217,7 +218,7 @@ impl SatIfSignal {
                     let mut pilot_val = self.pilot_signal * if pilot_prn[pilot_chip as usize] != 0 { -1.0 } else { 1.0 };
                     
                     if (is_tmboc || is_qmboc) && is_boc {
-                        let symbol_pos = (self.signal_time.milliseconds % 330) / 10;
+                        let symbol_pos = (self.signal_time.MilliSeconds % 330) / 10;
                         if symbol_pos == 1 || symbol_pos == 5 || symbol_pos == 7 || symbol_pos == 30 {
                             let sub_chip_pos = chip_count % 12;
                             if sub_chip_pos >= 6 { pilot_val *= -1.0; }
@@ -247,7 +248,7 @@ impl SatIfSignal {
         let old_data_chip = data_chip;
         *cur_chip += code_step;
         if self.data_length > 0 && ((*cur_chip as i32) % self.data_length) < old_data_chip {
-            self.signal_time.milliseconds += attribute.data_period;
+            self.signal_time.MilliSeconds += attribute.data_period;
             self.satellite_signal.get_satellite_signal(self.signal_time, &mut self.data_signal, &mut self.pilot_signal);
         }
 

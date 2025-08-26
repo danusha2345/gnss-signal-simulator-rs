@@ -49,6 +49,9 @@ pub struct JsonObjectParser {
     pub string: [c_char; MAX_STRING_LENGTH + 1],
 }
 
+// Alias для совместимости с другими модулями
+pub type JsonObject = JsonObjectParser;
+
 impl JsonObjectParser {
     fn new() -> Box<JsonObjectParser> {
         Box::new(JsonObjectParser {
@@ -77,14 +80,47 @@ pub struct JsonStream {
 
 impl JsonStream {
     pub fn new() -> Self {
-        JsonStream {
+        let mut instance = JsonStream {
             root_object: ptr::null_mut(),
             stream: [0; 256],
             p: ptr::null(),
             reader: None,
             current_line: String::new(),
             line_pos: 0,
+        };
+        // Инициализируем указатель p на stream
+        instance.p = instance.stream.as_ptr();
+        instance
+    }
+
+    pub fn parse_string(&mut self, json_string: &str) -> i32 {
+        // Очистим предыдущий объект
+        if !self.root_object.is_null() {
+            self.delete_tree(self.root_object);
+            self.root_object = ptr::null_mut();
         }
+
+        // Скопируем строку в внутренний буфер
+        let bytes = json_string.as_bytes();
+        let copy_len = std::cmp::min(bytes.len(), self.stream.len() - 1);
+        
+        for i in 0..copy_len {
+            self.stream[i] = bytes[i] as c_char;
+        }
+        self.stream[copy_len] = 0; // null terminator
+        
+        self.p = self.stream.as_ptr();
+        self.reader = None; // убеждаемся что режим файла отключен
+
+        // Парсим объект
+        let result = self.parse_object(false, Self::get_string_stream, ptr::null_mut());
+        self.root_object = result;
+        
+        if result.is_null() { -1 } else { 0 }
+    }
+
+    fn get_string_stream(&mut self, _source: *mut std::ffi::c_void) -> i32 {
+        -1 // Для строкового режима всегда возвращаем EOF
     }
 
     pub fn delete_tree(&mut self, object: *mut JsonObjectParser) {
@@ -348,19 +384,16 @@ impl JsonStream {
             b'r' => b'\r' as c_char,
             b't' => b'\t' as c_char,
             b'u' => {
-                // Unicode escape sequence - simplified implementation
-                let mut hex = 0u32;
-                for _ in 0..4 {
+                // Unicode escape sequence - правильная реализация
+                let mut hex_chars = [0u8; 4];
+                for i in 0..4 {
                     self.advance_char();
-                    let digit = self.current_char() as u8;
-                    hex = hex * 16 + match digit {
-                        b'0'..=b'9' => (digit - b'0') as u32,
-                        b'a'..=b'f' => (digit - b'a' + 10) as u32,
-                        b'A'..=b'F' => (digit - b'A' + 10) as u32,
-                        _ => 0,
-                    };
+                    hex_chars[i] = self.current_char() as u8;
                 }
-                (hex & 0xFF) as c_char
+                // Правильно парсим hex строку в число
+                let hex_str = std::str::from_utf8(&hex_chars).unwrap_or("0000");
+                let hex_value = u32::from_str_radix(hex_str, 16).unwrap_or(0);
+                (hex_value & 0xFF) as c_char
             },
             _ => 0,
         }

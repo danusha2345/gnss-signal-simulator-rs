@@ -9,66 +9,13 @@
 use crate::types::*;
 use crate::constants::*;
 use crate::coordinate::*;
-use crate::ifdatagen::OutputParam;
+use crate::powercontrol::{ElevationAdjust, SignalPower};
 use std::f64::consts::PI;
 
 // Constants
 const USE_POSITION_PREDICTION: bool = false;
 
-// Elevation adjustment types
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum ElevationAdjust {
-    ElevationAdjustNone = 0,
-    ElevationAdjustSinSqrtFade = 1,
-}
-
-// Signal power structure
-#[derive(Debug, Clone, Copy, Default)]
-pub struct SignalPower {
-    pub system: GnssSystem,
-    pub svid: i32,
-    pub cn0: f64,
-}
-
-// Update SatelliteParam to match C++ structure exactly
-#[derive(Debug, Clone, Copy)]
-pub struct SatelliteParam {
-    pub system: GnssSystem,
-    pub svid: i32,
-    pub freq_id: i32,
-    pub cn0: i32,
-    pub pos_time_tag: i32,
-    pub pos_vel: KinematicInfo,
-    pub acc: [f64; 3],
-    pub travel_time: f64,
-    pub iono_delay: f64,
-    pub group_delay: [f64; 8],
-    pub elevation: f64,
-    pub azimuth: f64,
-    pub relative_speed: f64,
-    pub los_vector: [f64; 3],
-}
-
-impl Default for SatelliteParam {
-    fn default() -> Self {
-        SatelliteParam {
-            system: GnssSystem::GpsSystem,
-            svid: 0,
-            freq_id: 0,
-            cn0: 0,
-            pos_time_tag: -1,
-            pos_vel: KinematicInfo::default(),
-            acc: [0.0; 3],
-            travel_time: 0.0,
-            iono_delay: 0.0,
-            group_delay: [0.0; 8],
-            elevation: 0.0,
-            azimuth: 0.0,
-            relative_speed: 0.0,
-            los_vector: [0.0; 3],
-        }
-    }
-}
+// SatelliteParam is defined in types.rs, so we import it instead of redefining
 
 /// Get visible satellites for GPS/BDS/Galileo systems
 pub fn get_visible_satellite(
@@ -96,17 +43,17 @@ pub fn get_visible_satellite(
             // Check mask out based on system
             match system {
                 GnssSystem::GpsSystem => {
-                    if output_param.gps_mask_out & (1u32 << i) != 0 {
+                    if output_param.GpsMaskOut & (1u32 << i) != 0 {
                         continue;
                     }
                 },
                 GnssSystem::BdsSystem => {
-                    if output_param.bds_mask_out & (1u64 << i) != 0 {
+                    if output_param.BdsMaskOut & (1u64 << i) != 0 {
                         continue;
                     }
                 },
                 GnssSystem::GalileoSystem => {
-                    if output_param.galileo_mask_out & (1u64 << i) != 0 {
+                    if output_param.GalileoMaskOut & (1u64 << i) != 0 {
                         continue;
                     }
                 },
@@ -125,7 +72,7 @@ pub fn get_visible_satellite(
             let (elevation, azimuth) = sat_el_az(position, &sat_position);
             
             // Check elevation mask
-            if elevation < output_param.elevation_mask {
+            if elevation < output_param.ElevationMask {
                 continue;
             }
             
@@ -158,7 +105,7 @@ pub fn get_glonass_visible_satellite(
             }
             
             // Check mask out
-            if output_param.glonass_mask_out & (1u32 << i) != 0 {
+            if output_param.GlonassMaskOut & (1u32 << i) != 0 {
                 continue;
             }
             
@@ -174,7 +121,7 @@ pub fn get_glonass_visible_satellite(
             let (elevation, _azimuth) = sat_el_az(position, &sat_position);
             
             // Check elevation mask
-            if elevation < output_param.elevation_mask {
+            if elevation < output_param.ElevationMask {
                 continue;
             }
             
@@ -203,29 +150,29 @@ pub fn get_glonass_satellite_param(
     
     satellite_param.system = GnssSystem::GlonassSystem;
     satellite_param.svid = glo_eph.n as i32;
-    satellite_param.freq_id = glo_eph.freq as i32;
+    satellite_param.FreqID = glo_eph.freq as i32;
     
     // Calculate GLONASS satellite position
     glonass_sat_pos_speed_eph(satellite_time, glo_eph, &mut sat_position, None);
     
-    let mut travel_time = geometry_distance(position_ecef, &sat_position, &mut satellite_param.los_vector) / LIGHT_SPEED;
+    let mut travel_time = geometry_distance(position_ecef, &sat_position, &mut satellite_param.LosVector) / LIGHT_SPEED;
     
     // Correct for satellite motion during signal travel
     sat_position.x -= travel_time * sat_position.vx;
     sat_position.y -= travel_time * sat_position.vy;
     sat_position.z -= travel_time * sat_position.vz;
     
-    travel_time = geometry_distance(position_ecef, &sat_position, &mut satellite_param.los_vector) / LIGHT_SPEED;
+    travel_time = geometry_distance(position_ecef, &sat_position, &mut satellite_param.LosVector) / LIGHT_SPEED;
     let corrected_satellite_time = satellite_time - travel_time;
     
     // Calculate accurate satellite position at transmit time
     glonass_sat_pos_speed_eph(corrected_satellite_time, glo_eph, &mut sat_position, None);
     
-    let distance = geometry_distance(position_ecef, &sat_position, &mut satellite_param.los_vector);
-    let (elevation, azimuth) = sat_el_az_from_los(&satellite_param.los_vector);
+    let distance = geometry_distance(position_ecef, &sat_position, &mut satellite_param.LosVector);
+    let (elevation, azimuth) = sat_el_az_from_los(&satellite_param.LosVector);
     
     // Calculate ionospheric delay
-    satellite_param.iono_delay = gps_iono_delay(iono_param, corrected_satellite_time, position_lla.lat, position_lla.lon, elevation, azimuth);
+    satellite_param.IonoDelay = gps_iono_delay(iono_param, corrected_satellite_time, position_lla.lat, position_lla.lon, elevation, azimuth);
     
     // Add tropospheric delay
     let total_distance = distance + tropo_delay(position_lla.lat, position_lla.alt, elevation);
@@ -234,12 +181,12 @@ pub fn get_glonass_satellite_param(
     travel_time = total_distance / LIGHT_SPEED - glonass_clock_correction(glo_eph, corrected_satellite_time);
     
     // Set final parameters
-    satellite_param.travel_time = travel_time;
-    satellite_param.elevation = elevation;
-    satellite_param.azimuth = azimuth;
+    satellite_param.TravelTime = travel_time;
+    satellite_param.Elevation = elevation;
+    satellite_param.Azimuth = azimuth;
     
     // For GLONASS, use gamma (relative frequency bias) instead of af1
-    satellite_param.relative_speed = sat_relative_speed(position_ecef, &sat_position) - LIGHT_SPEED * glo_eph.gamma;
+    satellite_param.RelativeSpeed = sat_relative_speed(position_ecef, &sat_position) - LIGHT_SPEED * glo_eph.gamma;
 }
 
 /// Calculate satellite parameters
@@ -276,7 +223,7 @@ pub fn get_satellite_param(
     
     // Set satellite ID and frequency ID
     satellite_param.svid = eph.svid as i32;
-    satellite_param.freq_id = 0; // Default for GPS/BDS/Galileo
+    satellite_param.FreqID = 0; // Default for GPS/BDS/Galileo
     
     // First estimate of travel time
     if USE_POSITION_PREDICTION {
@@ -285,36 +232,36 @@ pub fn get_satellite_param(
         gps_sat_pos_speed_eph(system, satellite_time, eph, &mut sat_position, None);
     }
     
-    let mut travel_time = geometry_distance(position_ecef, &sat_position, &mut satellite_param.los_vector) / LIGHT_SPEED;
+    let mut travel_time = geometry_distance(position_ecef, &sat_position, &mut satellite_param.LosVector) / LIGHT_SPEED;
     
     // Correct for satellite motion during signal travel
     sat_position.x -= travel_time * sat_position.vx;
     sat_position.y -= travel_time * sat_position.vy;
     sat_position.z -= travel_time * sat_position.vz;
     
-    travel_time = geometry_distance(position_ecef, &sat_position, &mut satellite_param.los_vector) / LIGHT_SPEED;
+    travel_time = geometry_distance(position_ecef, &sat_position, &mut satellite_param.LosVector) / LIGHT_SPEED;
     satellite_time -= travel_time;
     
     // Calculate accurate satellite position at transmit time
     let time_diff = if USE_POSITION_PREDICTION {
-        let time_diff = satellite_time - satellite_param.pos_time_tag as f64;
-        sat_position.x = satellite_param.pos_vel.x + (satellite_param.pos_vel.vx + satellite_param.acc[0] * time_diff * 0.5) * time_diff;
-        sat_position.y = satellite_param.pos_vel.y + (satellite_param.pos_vel.vy + satellite_param.acc[1] * time_diff * 0.5) * time_diff;
-        sat_position.z = satellite_param.pos_vel.z + (satellite_param.pos_vel.vz + satellite_param.acc[2] * time_diff * 0.5) * time_diff;
-        sat_position.vx = satellite_param.pos_vel.vx + satellite_param.acc[0] * time_diff;
-        sat_position.vy = satellite_param.pos_vel.vy + satellite_param.acc[1] * time_diff;
-        sat_position.vz = satellite_param.pos_vel.vz + satellite_param.acc[2] * time_diff;
+        let time_diff = satellite_time - satellite_param.PosTimeTag as f64;
+        sat_position.x = satellite_param.PosVel.x + (satellite_param.PosVel.vx + satellite_param.Acc[0] * time_diff * 0.5) * time_diff;
+        sat_position.y = satellite_param.PosVel.y + (satellite_param.PosVel.vy + satellite_param.Acc[1] * time_diff * 0.5) * time_diff;
+        sat_position.z = satellite_param.PosVel.z + (satellite_param.PosVel.vz + satellite_param.Acc[2] * time_diff * 0.5) * time_diff;
+        sat_position.vx = satellite_param.PosVel.vx + satellite_param.Acc[0] * time_diff;
+        sat_position.vy = satellite_param.PosVel.vy + satellite_param.Acc[1] * time_diff;
+        sat_position.vz = satellite_param.PosVel.vz + satellite_param.Acc[2] * time_diff;
         time_diff
     } else {
         gps_sat_pos_speed_eph(system, satellite_time, eph, &mut sat_position, None);
         0.0
     };
     
-    let distance = geometry_distance(position_ecef, &sat_position, &mut satellite_param.los_vector);
-    let (elevation, azimuth) = sat_el_az_from_los(&satellite_param.los_vector);
+    let distance = geometry_distance(position_ecef, &sat_position, &mut satellite_param.LosVector);
+    let (elevation, azimuth) = sat_el_az_from_los(&satellite_param.LosVector);
     
     // Calculate ionospheric delay
-    satellite_param.iono_delay = gps_iono_delay(iono_param, satellite_time, position_lla.lat, position_lla.lon, elevation, azimuth);
+    satellite_param.IonoDelay = gps_iono_delay(iono_param, satellite_time, position_lla.lat, position_lla.lon, elevation, azimuth);
     
     // Add tropospheric delay
     let total_distance = distance + tropo_delay(position_lla.lat, position_lla.alt, elevation);
@@ -326,38 +273,38 @@ pub fn get_satellite_param(
     travel_time -= 4.442807633e-10 * eph.ecc * eph.sqrtA * (eph.Ek + time_diff * eph.Ek_dot).sin(); // WGS84 F constant
     
     // Set group delays based on system
-    satellite_param.group_delay = [0.0; 8];
+    satellite_param.GroupDelay = [0.0; 8];
     match system {
         GnssSystem::GpsSystem => {
-            satellite_param.group_delay[SIGNAL_INDEX_L1CA] = eph.tgd;
-            satellite_param.group_delay[SIGNAL_INDEX_L1C] = eph.tgd_ext[1];
-            satellite_param.group_delay[SIGNAL_INDEX_L2C] = eph.tgd2;
-            satellite_param.group_delay[SIGNAL_INDEX_L5] = eph.tgd_ext[3];
+            satellite_param.GroupDelay[SIGNAL_INDEX_L1CA] = eph.tgd;
+            satellite_param.GroupDelay[SIGNAL_INDEX_L1C] = eph.tgd_ext[1];
+            satellite_param.GroupDelay[SIGNAL_INDEX_L2C] = eph.tgd2;
+            satellite_param.GroupDelay[SIGNAL_INDEX_L5] = eph.tgd_ext[3];
         },
         GnssSystem::BdsSystem => {
-            satellite_param.group_delay[SIGNAL_INDEX_B1C] = eph.tgd_ext[1];
-            satellite_param.group_delay[SIGNAL_INDEX_B1I] = eph.tgd;
-            satellite_param.group_delay[SIGNAL_INDEX_B2I] = eph.tgd2;
-            satellite_param.group_delay[SIGNAL_INDEX_B3I] = 0.0;
-            satellite_param.group_delay[SIGNAL_INDEX_B2A] = eph.tgd_ext[3];
-            satellite_param.group_delay[SIGNAL_INDEX_B2B] = eph.tgd_ext[4];
-            satellite_param.group_delay[SIGNAL_INDEX_B2A + 2] = (eph.tgd_ext[3] + eph.tgd_ext[4]) / 2.0; // B2AB
+            satellite_param.GroupDelay[SIGNAL_INDEX_B1C] = eph.tgd_ext[1];
+            satellite_param.GroupDelay[SIGNAL_INDEX_B1I] = eph.tgd;
+            satellite_param.GroupDelay[SIGNAL_INDEX_B2I] = eph.tgd2;
+            satellite_param.GroupDelay[SIGNAL_INDEX_B3I] = 0.0;
+            satellite_param.GroupDelay[SIGNAL_INDEX_B2A] = eph.tgd_ext[3];
+            satellite_param.GroupDelay[SIGNAL_INDEX_B2B] = eph.tgd_ext[4];
+            satellite_param.GroupDelay[SIGNAL_INDEX_B2A + 2] = (eph.tgd_ext[3] + eph.tgd_ext[4]) / 2.0; // B2AB
         },
         GnssSystem::GalileoSystem => {
-            satellite_param.group_delay[SIGNAL_INDEX_E1] = eph.tgd;
-            satellite_param.group_delay[SIGNAL_INDEX_E5A] = eph.tgd_ext[2];
-            satellite_param.group_delay[SIGNAL_INDEX_E5B] = eph.tgd_ext[4];
-            satellite_param.group_delay[3] = (eph.tgd_ext[2] + eph.tgd_ext[4]) / 2.0; // E5
-            satellite_param.group_delay[SIGNAL_INDEX_E6] = eph.tgd_ext[4];
+            satellite_param.GroupDelay[SIGNAL_INDEX_E1] = eph.tgd;
+            satellite_param.GroupDelay[SIGNAL_INDEX_E5A] = eph.tgd_ext[2];
+            satellite_param.GroupDelay[SIGNAL_INDEX_E5B] = eph.tgd_ext[4];
+            satellite_param.GroupDelay[3] = (eph.tgd_ext[2] + eph.tgd_ext[4]) / 2.0; // E5
+            satellite_param.GroupDelay[SIGNAL_INDEX_E6] = eph.tgd_ext[4];
         },
         _ => {}
     }
     
     // Set final parameters
-    satellite_param.travel_time = travel_time;
-    satellite_param.elevation = elevation;
-    satellite_param.azimuth = azimuth;
-    satellite_param.relative_speed = sat_relative_speed(position_ecef, &sat_position) - LIGHT_SPEED * eph.af1;
+    satellite_param.TravelTime = travel_time;
+    satellite_param.Elevation = elevation;
+    satellite_param.Azimuth = azimuth;
+    satellite_param.RelativeSpeed = sat_relative_speed(position_ecef, &sat_position) - LIGHT_SPEED * eph.af1;
 }
 
 /// Set satellite CN0 based on power list and elevation
@@ -371,19 +318,19 @@ pub fn get_satellite_cn0(
     
     // Find matching power entry
     for power in power_list {
-        if (power.svid == satellite_param.svid || power.svid == 0) && power.system == satellite_param.system {
+        if (power.svid == satellite_param.svid || power.svid == 0) && power.system == satellite_param.system as i32 {
             if power.cn0 < 0.0 {
                 cn0 = default_cn0;
                 match adjust {
                     ElevationAdjust::ElevationAdjustNone => {},
                     ElevationAdjust::ElevationAdjustSinSqrtFade => {
-                        cn0 -= (1.0 - satellite_param.elevation.sqrt()) * 25.0;
+                        cn0 -= (1.0 - satellite_param.Elevation.sqrt()) * 25.0;
                     },
                 }
             } else {
                 cn0 = power.cn0;
             }
-            satellite_param.cn0 = (cn0 * 100.0 + 0.5) as i32;
+            satellite_param.CN0 = (cn0 * 100.0 + 0.5) as i32;
             break;
         }
     }
@@ -480,21 +427,21 @@ pub fn get_wave_length(system: GnssSystem, signal_index: usize, freq_id: i32) ->
 
 /// Get travel time including group delay and ionospheric delay
 pub fn get_travel_time(satellite_param: &SatelliteParam, signal_index: usize) -> f64 {
-    let mut travel_time = satellite_param.travel_time + satellite_param.group_delay[signal_index];
-    travel_time += get_iono_delay(satellite_param.iono_delay, satellite_param.system, signal_index) / LIGHT_SPEED;
+    let mut travel_time = satellite_param.TravelTime + satellite_param.GroupDelay[signal_index];
+    travel_time += get_iono_delay(satellite_param.IonoDelay, satellite_param.system, signal_index) / LIGHT_SPEED;
     travel_time
 }
 
 /// Get carrier phase measurement
 pub fn get_carrier_phase(satellite_param: &SatelliteParam, signal_index: usize) -> f64 {
-    let mut travel_time = satellite_param.travel_time + satellite_param.group_delay[signal_index];
-    travel_time = travel_time * LIGHT_SPEED - get_iono_delay(satellite_param.iono_delay, satellite_param.system, signal_index);
-    travel_time / get_wave_length(satellite_param.system, signal_index, satellite_param.freq_id)
+    let mut travel_time = satellite_param.TravelTime + satellite_param.GroupDelay[signal_index];
+    travel_time = travel_time * LIGHT_SPEED - get_iono_delay(satellite_param.IonoDelay, satellite_param.system, signal_index);
+    travel_time / get_wave_length(satellite_param.system, signal_index, satellite_param.FreqID)
 }
 
 /// Get Doppler frequency
 pub fn get_doppler(satellite_param: &SatelliteParam, signal_index: usize) -> f64 {
-    -satellite_param.relative_speed / get_wave_length(satellite_param.system, signal_index, satellite_param.freq_id)
+    -satellite_param.RelativeSpeed / get_wave_length(satellite_param.system, signal_index, satellite_param.FreqID)
 }
 
 /// Get transmit time from receiver time and travel time
@@ -531,7 +478,7 @@ fn sat_el_az(receiver_pos: &KinematicInfo, sat_pos: &KinematicInfo) -> (f64, f64
     let los_z = sat_pos.z - receiver_pos.z;
     
     // Convert to local ENU coordinates
-    let convert_matrix = calc_conv_matrix_from_lla(&receiver_lla);
+    let convert_matrix = calc_conv_matrix_lla(&receiver_lla);
     
     let e = convert_matrix.x2e * los_x + convert_matrix.y2e * los_y;
     let n = convert_matrix.x2n * los_x + convert_matrix.y2n * los_y + convert_matrix.z2n * los_z;
@@ -626,7 +573,7 @@ pub fn get_sat_pos_vel(
     satellite_param: &mut SatelliteParam,
     pos_vel: &mut KinematicInfo,
 ) {
-    let mut time_diff = satellite_time - satellite_param.pos_time_tag as f64;
+    let mut time_diff = satellite_time - satellite_param.PosTimeTag as f64;
     
     // Compensate week round
     if time_diff > 600000.0 {
@@ -635,36 +582,36 @@ pub fn get_sat_pos_vel(
         time_diff += 604800.0;
     }
     
-    if satellite_param.pos_time_tag >= 0 && time_diff.abs() <= 0.5 {
+    if satellite_param.PosTimeTag >= 0 && time_diff.abs() <= 0.5 {
         // Do prediction using stored position, velocity and acceleration
-        pos_vel.x = satellite_param.pos_vel.x + 
-                   (satellite_param.pos_vel.vx + satellite_param.acc[0] * time_diff * 0.5) * time_diff;
-        pos_vel.y = satellite_param.pos_vel.y + 
-                   (satellite_param.pos_vel.vy + satellite_param.acc[1] * time_diff * 0.5) * time_diff;
-        pos_vel.z = satellite_param.pos_vel.z + 
-                   (satellite_param.pos_vel.vz + satellite_param.acc[2] * time_diff * 0.5) * time_diff;
-        pos_vel.vx = satellite_param.pos_vel.vx + satellite_param.acc[0] * time_diff;
-        pos_vel.vy = satellite_param.pos_vel.vy + satellite_param.acc[1] * time_diff;
-        pos_vel.vz = satellite_param.pos_vel.vz + satellite_param.acc[2] * time_diff;
+        pos_vel.x = satellite_param.PosVel.x + 
+                   (satellite_param.PosVel.vx + satellite_param.Acc[0] * time_diff * 0.5) * time_diff;
+        pos_vel.y = satellite_param.PosVel.y + 
+                   (satellite_param.PosVel.vy + satellite_param.Acc[1] * time_diff * 0.5) * time_diff;
+        pos_vel.z = satellite_param.PosVel.z + 
+                   (satellite_param.PosVel.vz + satellite_param.Acc[2] * time_diff * 0.5) * time_diff;
+        pos_vel.vx = satellite_param.PosVel.vx + satellite_param.Acc[0] * time_diff;
+        pos_vel.vy = satellite_param.PosVel.vy + satellite_param.Acc[1] * time_diff;
+        pos_vel.vz = satellite_param.PosVel.vz + satellite_param.Acc[2] * time_diff;
     } else {
         // New calculation
         let time_tag = (satellite_time + 0.5) as i32;
-        gps_sat_pos_speed_eph(system, time_tag as f64, eph, &mut satellite_param.pos_vel, Some(&mut satellite_param.acc));
-        satellite_param.pos_time_tag = time_tag;
+        gps_sat_pos_speed_eph(system, time_tag as f64, eph, &mut satellite_param.PosVel, Some(&mut satellite_param.Acc));
+        satellite_param.PosTimeTag = time_tag;
         time_diff = satellite_time - time_tag as f64;
         
         if time_diff != 0.0 {
-            pos_vel.x = satellite_param.pos_vel.x + 
-                       (satellite_param.pos_vel.vx + satellite_param.acc[0] * time_diff * 0.5) * time_diff;
-            pos_vel.y = satellite_param.pos_vel.y + 
-                       (satellite_param.pos_vel.vy + satellite_param.acc[1] * time_diff * 0.5) * time_diff;
-            pos_vel.z = satellite_param.pos_vel.z + 
-                       (satellite_param.pos_vel.vz + satellite_param.acc[2] * time_diff * 0.5) * time_diff;
-            pos_vel.vx = satellite_param.pos_vel.vx + satellite_param.acc[0] * time_diff;
-            pos_vel.vy = satellite_param.pos_vel.vy + satellite_param.acc[1] * time_diff;
-            pos_vel.vz = satellite_param.pos_vel.vz + satellite_param.acc[2] * time_diff;
+            pos_vel.x = satellite_param.PosVel.x + 
+                       (satellite_param.PosVel.vx + satellite_param.Acc[0] * time_diff * 0.5) * time_diff;
+            pos_vel.y = satellite_param.PosVel.y + 
+                       (satellite_param.PosVel.vy + satellite_param.Acc[1] * time_diff * 0.5) * time_diff;
+            pos_vel.z = satellite_param.PosVel.z + 
+                       (satellite_param.PosVel.vz + satellite_param.Acc[2] * time_diff * 0.5) * time_diff;
+            pos_vel.vx = satellite_param.PosVel.vx + satellite_param.Acc[0] * time_diff;
+            pos_vel.vy = satellite_param.PosVel.vy + satellite_param.Acc[1] * time_diff;
+            pos_vel.vz = satellite_param.PosVel.vz + satellite_param.Acc[2] * time_diff;
         } else {
-            *pos_vel = satellite_param.pos_vel;
+            *pos_vel = satellite_param.PosVel;
         }
     }
 }
@@ -691,7 +638,7 @@ pub fn get_satellite_param_with_prediction(
         // This would need proper GLONASS ephemeris handling
         // For now, use placeholder
         satellite_param.svid = 1; // Would be GloEph->n
-        satellite_param.freq_id = 0; // Would be GloEph->freq
+        satellite_param.FreqID = 0; // Would be GloEph->freq
         // glonass_sat_pos_speed_eph(satellite_time, glo_eph, &sat_position, None);
         return;
     }
@@ -715,7 +662,7 @@ pub fn get_satellite_param_with_prediction(
     
     // Set satellite ID and frequency ID
     satellite_param.svid = eph.svid as i32;
-    satellite_param.freq_id = 0; // Default for GPS/BDS/Galileo
+    satellite_param.FreqID = 0; // Default for GPS/BDS/Galileo
     
     // First estimate of travel time
     if use_position_prediction {
@@ -724,14 +671,14 @@ pub fn get_satellite_param_with_prediction(
         gps_sat_pos_speed_eph(system, satellite_time, eph, &mut sat_position, None);
     }
     
-    let mut travel_time = geometry_distance(position_ecef, &sat_position, &mut satellite_param.los_vector) / LIGHT_SPEED;
+    let mut travel_time = geometry_distance(position_ecef, &sat_position, &mut satellite_param.LosVector) / LIGHT_SPEED;
     
     // Correct for satellite motion during signal travel
     sat_position.x -= travel_time * sat_position.vx;
     sat_position.y -= travel_time * sat_position.vy;
     sat_position.z -= travel_time * sat_position.vz;
     
-    travel_time = geometry_distance(position_ecef, &sat_position, &mut satellite_param.los_vector) / LIGHT_SPEED;
+    travel_time = geometry_distance(position_ecef, &sat_position, &mut satellite_param.LosVector) / LIGHT_SPEED;
     satellite_time -= travel_time;
     
     // Calculate accurate satellite position at transmit time
@@ -739,17 +686,17 @@ pub fn get_satellite_param_with_prediction(
         let mut pos_vel_temp = KinematicInfo::default();
         get_sat_pos_vel(system, satellite_time, eph, satellite_param, &mut pos_vel_temp);
         sat_position = pos_vel_temp;
-        satellite_time - satellite_param.pos_time_tag as f64
+        satellite_time - satellite_param.PosTimeTag as f64
     } else {
         gps_sat_pos_speed_eph(system, satellite_time, eph, &mut sat_position, None);
         0.0
     };
     
-    let distance = geometry_distance(position_ecef, &sat_position, &mut satellite_param.los_vector);
-    let (elevation, azimuth) = sat_el_az_from_los(&satellite_param.los_vector);
+    let distance = geometry_distance(position_ecef, &sat_position, &mut satellite_param.LosVector);
+    let (elevation, azimuth) = sat_el_az_from_los(&satellite_param.LosVector);
     
     // Calculate ionospheric delay
-    satellite_param.iono_delay = gps_iono_delay(iono_param, satellite_time, position_lla.lat, position_lla.lon, elevation, azimuth);
+    satellite_param.IonoDelay = gps_iono_delay(iono_param, satellite_time, position_lla.lat, position_lla.lon, elevation, azimuth);
     
     // Add tropospheric delay
     let total_distance = distance + tropo_delay(position_lla.lat, position_lla.alt, elevation);
@@ -765,44 +712,44 @@ pub fn get_satellite_param_with_prediction(
     }
     
     // Set group delays based on system (same as before)
-    satellite_param.group_delay = [0.0; 8];
+    satellite_param.GroupDelay = [0.0; 8];
     match system {
         GnssSystem::GpsSystem => {
-            satellite_param.group_delay[SIGNAL_INDEX_L1CA] = eph.tgd;
-            satellite_param.group_delay[SIGNAL_INDEX_L1C] = eph.tgd_ext[1];
-            satellite_param.group_delay[SIGNAL_INDEX_L2C] = eph.tgd2;
-            satellite_param.group_delay[SIGNAL_INDEX_L5] = eph.tgd_ext[3];
+            satellite_param.GroupDelay[SIGNAL_INDEX_L1CA] = eph.tgd;
+            satellite_param.GroupDelay[SIGNAL_INDEX_L1C] = eph.tgd_ext[1];
+            satellite_param.GroupDelay[SIGNAL_INDEX_L2C] = eph.tgd2;
+            satellite_param.GroupDelay[SIGNAL_INDEX_L5] = eph.tgd_ext[3];
         },
         GnssSystem::BdsSystem => {
-            satellite_param.group_delay[SIGNAL_INDEX_B1C] = eph.tgd_ext[1];
-            satellite_param.group_delay[SIGNAL_INDEX_B1I] = eph.tgd;
-            satellite_param.group_delay[SIGNAL_INDEX_B2I] = eph.tgd2;
-            satellite_param.group_delay[SIGNAL_INDEX_B3I] = 0.0;
-            satellite_param.group_delay[SIGNAL_INDEX_B2A] = eph.tgd_ext[3];
-            satellite_param.group_delay[SIGNAL_INDEX_B2B] = eph.tgd_ext[4];
-            satellite_param.group_delay[SIGNAL_INDEX_B2A + 2] = (eph.tgd_ext[3] + eph.tgd_ext[4]) / 2.0; // B2AB
+            satellite_param.GroupDelay[SIGNAL_INDEX_B1C] = eph.tgd_ext[1];
+            satellite_param.GroupDelay[SIGNAL_INDEX_B1I] = eph.tgd;
+            satellite_param.GroupDelay[SIGNAL_INDEX_B2I] = eph.tgd2;
+            satellite_param.GroupDelay[SIGNAL_INDEX_B3I] = 0.0;
+            satellite_param.GroupDelay[SIGNAL_INDEX_B2A] = eph.tgd_ext[3];
+            satellite_param.GroupDelay[SIGNAL_INDEX_B2B] = eph.tgd_ext[4];
+            satellite_param.GroupDelay[SIGNAL_INDEX_B2A + 2] = (eph.tgd_ext[3] + eph.tgd_ext[4]) / 2.0; // B2AB
         },
         GnssSystem::GalileoSystem => {
-            satellite_param.group_delay[SIGNAL_INDEX_E1] = eph.tgd;
-            satellite_param.group_delay[SIGNAL_INDEX_E5A] = eph.tgd_ext[2];
-            satellite_param.group_delay[SIGNAL_INDEX_E5B] = eph.tgd_ext[4];
-            satellite_param.group_delay[3] = (eph.tgd_ext[2] + eph.tgd_ext[4]) / 2.0; // E5
-            satellite_param.group_delay[SIGNAL_INDEX_E6] = eph.tgd_ext[4];
+            satellite_param.GroupDelay[SIGNAL_INDEX_E1] = eph.tgd;
+            satellite_param.GroupDelay[SIGNAL_INDEX_E5A] = eph.tgd_ext[2];
+            satellite_param.GroupDelay[SIGNAL_INDEX_E5B] = eph.tgd_ext[4];
+            satellite_param.GroupDelay[3] = (eph.tgd_ext[2] + eph.tgd_ext[4]) / 2.0; // E5
+            satellite_param.GroupDelay[SIGNAL_INDEX_E6] = eph.tgd_ext[4];
         },
         _ => {}
     }
     
     // Set final parameters
-    satellite_param.travel_time = travel_time;
-    satellite_param.elevation = elevation;
-    satellite_param.azimuth = azimuth;
+    satellite_param.TravelTime = travel_time;
+    satellite_param.Elevation = elevation;
+    satellite_param.Azimuth = azimuth;
     
     // Calculate relative speed with proper clock drift correction
     if system == GnssSystem::GlonassSystem {
         // For GLONASS, use gamma (relative frequency bias) instead of af1
-        // satellite_param.relative_speed = sat_relative_speed(position_ecef, &sat_position) - LIGHT_SPEED * glo_eph.gamma;
-        satellite_param.relative_speed = sat_relative_speed(position_ecef, &sat_position); // Placeholder
+        // satellite_param.RelativeSpeed = sat_relative_speed(position_ecef, &sat_position) - LIGHT_SPEED * glo_eph.gamma;
+        satellite_param.RelativeSpeed = sat_relative_speed(position_ecef, &sat_position); // Placeholder
     } else {
-        satellite_param.relative_speed = sat_relative_speed(position_ecef, &sat_position) - LIGHT_SPEED * eph.af1;
+        satellite_param.RelativeSpeed = sat_relative_speed(position_ecef, &sat_position) - LIGHT_SPEED * eph.af1;
     }
 }

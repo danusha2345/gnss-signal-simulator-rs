@@ -1,6 +1,8 @@
-// use std::f64::consts::PI;
-
 // Common GNSS types
+pub type Bool = i32;
+pub const TRUE: Bool = 1;
+pub const FALSE: Bool = 0;
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum AlmanacType {
     AlmanacGps,
@@ -13,12 +15,59 @@ pub enum AlmanacType {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum GnssSystem {
     GpsSystem,
-    GlonassSystem,
-    GalileoSystem,
     BdsSystem,
+    GalileoSystem,
+    GlonassSystem,
+    SbasSystem,
     QzssSystem,
-    IrnssSystem,
-    UnknownSystem,
+    NavICSystem,
+}
+
+impl Default for GnssSystem {
+    fn default() -> Self {
+        GnssSystem::GpsSystem
+    }
+}
+
+// Signal index constants moved to constants.rs
+
+// Velocity structures
+#[derive(Debug, Clone, Copy, Default)]
+pub struct LocalSpeed {
+    pub ve: f64,
+    pub vn: f64,
+    pub vu: f64,
+    pub speed: f64,
+    pub course: f64,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct KinematicInfo {
+    pub x: f64,
+    pub y: f64,
+    pub z: f64,
+    pub vx: f64,
+    pub vy: f64,
+    pub vz: f64,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct LlaPosition {
+    pub lat: f64,
+    pub lon: f64,
+    pub alt: f64,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ConvertMatrix {
+    pub x2e: f64,
+    pub y2e: f64,
+    pub x2n: f64,
+    pub y2n: f64,
+    pub z2n: f64,
+    pub x2u: f64,
+    pub y2u: f64,
+    pub z2u: f64,
 }
 
 // Time structures
@@ -47,43 +96,7 @@ pub struct GlonassTime {
     pub SubMilliSeconds: f64,
 }
 
-// Almanac structures
-#[derive(Debug, Clone, Copy, Default)]
-pub struct GpsAlmanac {
-    pub valid: u8,
-    pub health: u8,
-    pub svid: u8,
-    pub flag: u8,
-    pub week: i32,
-    pub toa: i32,
-    pub ecc: f64,
-    pub sqrtA: f64,
-    pub omega0: f64,
-    pub omega_dot: f64,
-    pub w: f64,
-    pub M0: f64,
-    pub i0: f64,
-    pub af0: f64,
-    pub af1: f64,
-}
-
-#[derive(Debug, Clone, Copy, Default)]
-pub struct GlonassAlmanac {
-    pub flag: u8,
-    pub freq: i8,
-    pub leap_year: i16,
-    pub day: i16,
-    pub t: f64,
-    pub lambda: f64,
-    pub di: f64,
-    pub ecc: f64,
-    pub w: f64,
-    pub dt: f64,
-    pub dt_dot: f64,
-    pub clock_error: f64,
-}
-
-// Ephemeris structures
+// GPS ephemeris (also used by BDS, Galileo, QZSS and NavIC)
 #[derive(Debug, Clone, Copy, Default)]
 pub struct GpsEphemeris {
     pub ura: i16,
@@ -133,18 +146,43 @@ pub struct GpsEphemeris {
     pub Ek_dot: f64,
 }
 
-impl GpsEphemeris {
-    pub fn new() -> Self {
-        Self::default()
-    }
+// Definitions for source field
+pub const EPH_SOURCE_LNAV: u8 = 0;
+pub const EPH_SOURCE_D1D2: u8 = 0;
+pub const EPH_SOURCE_INAV: u8 = 0;
+pub const EPH_SOURCE_CNAV: u8 = 1;
+pub const EPH_SOURCE_CNV1: u8 = 1;
+pub const EPH_SOURCE_FNAV: u8 = 1;
+pub const EPH_SOURCE_CNV2: u8 = 2;
+pub const EPH_SOURCE_CNV3: u8 = 3;
+
+// GPS almanac
+#[derive(Debug, Clone, Copy, Default)]
+pub struct GpsAlmanac {
+    pub valid: u8,
+    pub flag: u8,
+    pub health: u8,
+    pub svid: u8,
+    pub toa: i32,
+    pub week: i32,
+    pub M0: f64,
+    pub ecc: f64,
+    pub sqrtA: f64,
+    pub omega0: f64,
+    pub i0: f64,
+    pub w: f64,
+    pub omega_dot: f64,
+    pub af0: f64,
+    pub af1: f64,
 }
 
+// GLONASS ephemeris
 #[derive(Debug, Clone, Copy, Default)]
 pub struct GlonassEphemeris {
     pub valid: u8,
-    pub slot: u8,
     pub flag: u8,
     pub freq: i8,
+    pub slot: u8,
     pub P: u8,
     pub M: u8,
     pub Ft: u8,
@@ -166,9 +204,195 @@ pub struct GlonassEphemeris {
     pub ax: f64,
     pub ay: f64,
     pub az: f64,
-    // calculated values
+    // derived variables
     pub tc: f64,
-    pub pos_vel_t: KinematicInfo,
+    pub PosVelT: KinematicInfo,
+}
+
+// GLONASS almanac
+#[derive(Debug, Clone, Copy, Default)]
+pub struct GlonassAlmanac {
+    pub flag: u8,
+    pub freq: i8,
+    pub leap_year: i16,
+    pub day: i16,
+    pub t: f64,
+    pub lambda: f64,
+    pub di: f64,
+    pub ecc: f64,
+    pub w: f64,
+    pub dt: f64,
+    pub dt_dot: f64,
+    pub clock_error: f64,
+}
+
+// Ionospheric parameters
+#[derive(Debug, Clone, Copy, Default)]
+pub struct IonoParam {
+    pub a0: f64,
+    pub a1: f64,
+    pub a2: f64,
+    pub a3: f64,
+    pub b0: f64,
+    pub b1: f64,
+    pub b2: f64,
+    pub b3: f64,
+    pub flag: u32,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct IonoNequick {
+    pub ai0: f64,
+    pub ai1: f64,
+    pub ai2: f64,
+    pub flag: u32,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct IonoBdgim {
+    pub alpha1: f64,
+    pub alpha2: f64,
+    pub alpha3: f64,
+    pub alpha4: f64,
+    pub alpha5: f64,
+    pub alpha6: f64,
+    pub alpha7: f64,
+    pub alpha8: f64,
+    pub alpha9: f64,
+    pub flag: u32,
+}
+
+// UTC parameters
+#[derive(Debug, Clone, Copy, Default)]
+pub struct UtcParam {
+    pub A0: f64,
+    pub A1: f64,
+    pub A2: f64,
+    pub WN: i16,
+    pub WNLSF: i16,
+    pub tot: u8,
+    pub TLS: i8,
+    pub TLSF: i8,
+    pub DN: u8,
+    pub flag: u32,
+}
+
+pub const MAX_OBS_NUMBER: usize = 6;
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SatObservation {
+    pub system: i32,
+    pub svid: i32,
+    pub ValidMask: u32,
+    pub PseudoRange: [f64; MAX_OBS_NUMBER],
+    pub CarrierPhase: [f64; MAX_OBS_NUMBER],
+    pub Doppler: [f64; MAX_OBS_NUMBER],
+    pub CN0: [f64; MAX_OBS_NUMBER],
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum OutputType {
+    OutputTypePosition,
+    OutputTypeObservation,
+    OutputTypeIFdata,
+    OutputTypeBaseband,
+}
+
+impl Default for OutputType {
+    fn default() -> Self {
+        OutputType::OutputTypePosition
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum OutputFormat {
+    OutputFormatEcef,
+    OutputFormatLla,
+    OutputFormatNmea,
+    OutputFormatKml,
+    OutputFormatRinex,
+    OutputFormatIQ8,
+    OutputFormatIQ4,
+}
+
+impl Default for OutputFormat {
+    fn default() -> Self {
+        OutputFormat::OutputFormatEcef
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct OutputParam {
+    pub filename: [u8; 256],
+    pub Type: OutputType,
+    pub Format: OutputFormat,
+    pub GpsMaskOut: u32,
+    pub GlonassMaskOut: u32,
+    pub BdsMaskOut: u64,
+    pub GalileoMaskOut: u64,
+    pub ElevationMask: f64,
+    pub Interval: i32,
+    pub SampleFreq: i32,
+    pub CenterFreq: i32,
+    pub FreqSelect: [u32; 4],
+}
+
+impl Default for OutputParam {
+    fn default() -> Self {
+        Self {
+            filename: [0u8; 256],
+            Type: OutputType::default(),
+            Format: OutputFormat::default(),
+            GpsMaskOut: 0,
+            GlonassMaskOut: 0,
+            BdsMaskOut: 0,
+            GalileoMaskOut: 0,
+            ElevationMask: 0.0,
+            Interval: 0,
+            SampleFreq: 0,
+            CenterFreq: 0,
+            FreqSelect: [0; 4],
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct DelayConfig {
+    pub SystemDelay: [f64; 4],
+    pub ReceiverDelay: [[f64; 8]; 4],
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SatelliteParam {
+    pub system: GnssSystem,
+    pub svid: i32,
+    pub FreqID: i32,
+    pub CN0: i32,
+    pub PosTimeTag: i32,
+    pub PosVel: KinematicInfo,
+    pub Acc: [f64; 3],
+    pub TravelTime: f64,
+    pub IonoDelay: f64,
+    pub GroupDelay: [f64; 8],
+    pub Elevation: f64,
+    pub Azimuth: f64,
+    pub RelativeSpeed: f64,
+    pub LosVector: [f64; 3],
+}
+
+// Type aliases for backwards compatibility
+pub type Ephemeris = GpsEphemeris;
+
+impl KinematicInfo {
+    pub fn pos_vel(&self) -> [f64; 6] {
+        [self.x, self.y, self.z, self.vx, self.vy, self.vz]
+    }
+}
+
+impl GpsEphemeris {
+    pub fn new() -> Self {
+        Self::default()
+    }
 }
 
 impl GlonassEphemeris {
@@ -176,80 +400,3 @@ impl GlonassEphemeris {
         Self::default()
     }
 }
-
-// Kinematic information
-#[derive(Debug, Clone, Copy, Default)]
-pub struct KinematicInfo {
-    pub x: f64,
-    pub y: f64,
-    pub z: f64,
-    pub vx: f64,
-    pub vy: f64,
-    pub vz: f64,
-}
-
-impl KinematicInfo {
-    pub fn pos_vel(&self) -> [f64; 3] {
-        [self.x, self.y, self.z]
-    }
-}
-
-#[derive(Debug, Clone, Copy, Default)]
-pub struct LlaPosition {
-    pub lat: f64,  // latitude in radians
-    pub lon: f64,  // longitude in radians
-    pub alt: f64,  // altitude in meters
-}
-
-#[derive(Debug, Clone, Copy, Default)]
-pub struct ConvertMatrix {
-    pub x2e: f64,
-    pub y2e: f64,
-    pub x2n: f64,
-    pub y2n: f64,
-    pub z2n: f64,
-    pub x2u: f64,
-    pub y2u: f64,
-    pub z2u: f64,
-}
-
-#[derive(Debug, Clone, Copy, Default)]
-pub struct LocalSpeed {
-    pub ve: f64,     // east velocity
-    pub vn: f64,     // north velocity
-    pub vu: f64,     // up velocity
-    pub speed: f64,  // horizontal speed
-    pub course: f64, // course angle
-}
-
-// Ionosphere and UTC parameters
-#[derive(Debug, Clone, Copy, Default)]
-pub struct IonoParam {
-    pub a0: f64,  // 2^-30
-    pub a1: f64,  // 2^-27
-    pub a2: f64,  // 2^-24
-    pub a3: f64,  // 2^-24
-    pub b0: f64,  // 2^11
-    pub b1: f64,  // 2^14
-    pub b2: f64,  // 2^16
-    pub b3: f64,  // 2^16
-    pub flag: u32, // bit0:1 available, bit8~13: svid
-}
-
-#[derive(Debug, Clone, Copy, Default)]
-pub struct UtcParam {
-    pub A0: f64,  // second
-    pub A1: f64,  // second/second
-    pub A2: f64,  // second/second^2
-    pub WN: i16,
-    pub WNLSF: i16,
-    pub tot: u8,  // scale factor 2^12 for GPS/BDS and 3600 for Galileo
-    pub TLS: i8,  // leap second
-    pub TLSF: i8,
-    pub DN: u8,
-    pub flag: u32, // bit0: UTC parameter available, bit1: leap second available
-}
-
-// Type aliases for compatibility with C++ code
-pub type PionoParam = *const IonoParam;
-pub type PutcParam = *const UtcParam;

@@ -121,21 +121,22 @@ impl LNavBit {
         if svid < 1 || svid > 32 || eph.valid == 0 {
             return 0;
         }
-        self.compose_gps_stream123(eph, &mut self.gps_stream123[(svid - 1) as usize]);
+        Self::compose_gps_stream123(eph, &mut self.gps_stream123[(svid - 1) as usize]);
         svid
     }
 
     pub fn set_almanac(&mut self, alm: &[GpsAlmanac; 32]) -> i32 {
         for i in 0..24 {
-            self.fill_gps_almanac_page(&alm[i], &mut self.gps_stream45[1][i]);
+            Self::fill_gps_almanac_page(&alm[i], &mut self.gps_stream45[1][i]);
         }
         for i in 24..28 {
-            self.fill_gps_almanac_page(&alm[i], &mut self.gps_stream45[0][i - 23]);
+            Self::fill_gps_almanac_page(&alm[i], &mut self.gps_stream45[0][i - 23]);
         }
         for i in 28..32 {
-            self.fill_gps_almanac_page(&alm[i], &mut self.gps_stream45[0][i - 22]);
+            Self::fill_gps_almanac_page(&alm[i], &mut self.gps_stream45[0][i - 22]);
         }
-        self.fill_gps_health_page(alm, &mut self.gps_stream45[0][24], &mut self.gps_stream45[1][24]);
+        let (stream4_ref, stream5_ref) = self.gps_stream45.split_at_mut(1);
+        Self::fill_gps_health_page(alm, &mut stream4_ref[0][24], &mut stream5_ref[0][24]);
 
         0
     }
@@ -147,48 +148,48 @@ impl LNavBit {
 
         let stream = &mut self.gps_stream45[0][17]; // Ionosphere and UTC parameter in page 18 (indexed at 17)
 
-        stream[0] = self.compose_bits(56 + 0x40, 16, 8);
-        let int_value = self.unscale_int(iono_param.a0, -30);
-        stream[0] |= self.compose_bits(int_value, 8, 8);
-        let int_value = self.unscale_int(iono_param.a1, -27);
-        stream[0] |= self.compose_bits(int_value, 0, 8);
-        let int_value = self.unscale_int(iono_param.a2, -24);
-        stream[1] = self.compose_bits(int_value, 16, 8);
-        let int_value = self.unscale_int(iono_param.a3, -24);
-        stream[1] |= self.compose_bits(int_value, 8, 8);
-        let int_value = self.unscale_int(iono_param.b0, 11);
-        stream[1] |= self.compose_bits(int_value, 0, 8);
-        let int_value = self.unscale_int(iono_param.b1, 14);
-        stream[2] = self.compose_bits(int_value, 16, 8);
-        let int_value = self.unscale_int(iono_param.b2, 16);
-        stream[2] |= self.compose_bits(int_value, 8, 8);
-        let int_value = self.unscale_int(iono_param.b3, 16);
-        stream[2] |= self.compose_bits(int_value, 0, 8);
-        let int_value = self.unscale_int(utc_param.A1, -50);
-        stream[3] = self.compose_bits(int_value, 0, 24);
-        let int_value = self.unscale_int(utc_param.A0, -30);
-        stream[4] = self.compose_bits(int_value >> 8, 0, 24);
-        stream[5] = self.compose_bits(int_value & 0xff, 16, 8);
-        stream[5] |= self.compose_bits(utc_param.tot as i32, 8, 8);
-        stream[5] |= self.compose_bits(utc_param.WN.into(), 0, 8);
-        stream[6] = self.compose_bits(utc_param.TLS.into(), 16, 8);
-        stream[6] |= self.compose_bits(utc_param.WNLSF.into(), 8, 8);
-        stream[6] |= self.compose_bits(utc_param.DN.into(), 0, 8);
-        stream[7] = self.compose_bits(utc_param.TLSF.into(), 16, 8);
+        stream[0] = Self::compose_bits(56 + 0x40, 16, 8);
+        let int_value = Self::unscale_int(iono_param.a0, -30);
+        stream[0] |= Self::compose_bits(int_value, 8, 8);
+        let int_value = Self::unscale_int(iono_param.a1, -27);
+        stream[0] |= Self::compose_bits(int_value, 0, 8);
+        let int_value = Self::unscale_int(iono_param.a2, -24);
+        stream[1] = Self::compose_bits(int_value, 16, 8);
+        let int_value = Self::unscale_int(iono_param.a3, -24);
+        stream[1] |= Self::compose_bits(int_value, 8, 8);
+        let int_value = Self::unscale_int(iono_param.b0, 11);
+        stream[1] |= Self::compose_bits(int_value, 0, 8);
+        let int_value = Self::unscale_int(iono_param.b1, 14);
+        stream[2] = Self::compose_bits(int_value, 16, 8);
+        let int_value = Self::unscale_int(iono_param.b2, 16);
+        stream[2] |= Self::compose_bits(int_value, 8, 8);
+        let int_value = Self::unscale_int(iono_param.b3, 16);
+        stream[2] |= Self::compose_bits(int_value, 0, 8);
+        let int_value = Self::unscale_int(utc_param.A1, -50);
+        stream[3] = Self::compose_bits(int_value, 0, 24);
+        let int_value = Self::unscale_int(utc_param.A0, -30);
+        stream[4] = Self::compose_bits(int_value >> 8, 0, 24);
+        stream[5] = Self::compose_bits(int_value & 0xff, 16, 8);
+        stream[5] |= Self::compose_bits(utc_param.tot as i32, 8, 8);
+        stream[5] |= Self::compose_bits(utc_param.WN.into(), 0, 8);
+        stream[6] = Self::compose_bits(utc_param.TLS.into(), 16, 8);
+        stream[6] |= Self::compose_bits(utc_param.WNLSF.into(), 8, 8);
+        stream[6] |= Self::compose_bits(utc_param.DN.into(), 0, 8);
+        stream[7] = Self::compose_bits(utc_param.TLSF.into(), 16, 8);
 
         0
     }
 
     // Helper methods
-    fn compose_bits(&self, value: i32, position: i32, length: i32) -> u32 {
+    fn compose_bits(value: i32, position: i32, length: i32) -> u32 {
         ((value as u32) & ((1u32 << length) - 1)) << position
     }
 
-    fn unscale_int(&self, value: f64, scale_factor: i32) -> i32 {
+    fn unscale_int(value: f64, scale_factor: i32) -> i32 {
         (value * 2.0_f64.powi(-scale_factor)).round() as i32
     }
 
-    fn unscale_uint(&self, value: f64, scale_factor: i32) -> u32 {
+    fn unscale_uint(value: f64, scale_factor: i32) -> u32 {
         (value * 2.0_f64.powi(-scale_factor)).round() as u32
     }
 
@@ -201,106 +202,106 @@ impl LNavBit {
     // Fill ephemeris data into subframe 1/2/3
     // Word1/2 removed, parity not included
     // 24 information bits occupies bit0~23 of each DWORD in Stream[]
-    fn compose_gps_stream123(&self, ephemeris: &GpsEphemeris, stream: &mut [[u32; 8]; 3]) -> i32 {
+    fn compose_gps_stream123(ephemeris: &GpsEphemeris, stream: &mut [[u32; 8]; 3]) -> i32 {
         // subframe 1, Stream[0]~Stream[7]
         let int_value = (ephemeris.flag & 3) as i32;
-        stream[0][0] = self.compose_bits(int_value, 12, 2);
+        stream[0][0] = Self::compose_bits(int_value, 12, 2);
         let int_value = (ephemeris.ura & 0xf) as i32;
-        stream[0][0] |= self.compose_bits(int_value, 8, 4);
-        stream[0][0] |= self.compose_bits(ephemeris.health as i32, 2, 6);
+        stream[0][0] |= Self::compose_bits(int_value, 8, 4);
+        stream[0][0] |= Self::compose_bits(ephemeris.health as i32, 2, 6);
         let int_value = (ephemeris.iodc >> 8) as i32;
-        stream[0][0] |= self.compose_bits(int_value, 0, 2);
+        stream[0][0] |= Self::compose_bits(int_value, 0, 2);
         let int_value = (ephemeris.flag >> 2) as i32;
-        stream[0][1] = self.compose_bits(int_value, 23, 1);
-        let int_value = self.unscale_int(ephemeris.tgd, -31);
-        stream[0][4] = self.compose_bits(int_value, 0, 8);
-        stream[0][5] = self.compose_bits(ephemeris.iodc as i32, 16, 8);
-        stream[0][5] |= self.compose_bits((ephemeris.toc as i32) >> 4, 0, 16);
-        let int_value = self.unscale_int(ephemeris.af2, -55);
-        stream[0][6] = self.compose_bits(int_value, 16, 8);
-        let int_value = self.unscale_int(ephemeris.af1, -43);
-        stream[0][6] |= self.compose_bits(int_value, 0, 16);
-        let int_value = self.unscale_int(ephemeris.af0, -31);
-        stream[0][7] = self.compose_bits(int_value, 2, 22);
+        stream[0][1] = Self::compose_bits(int_value, 23, 1);
+        let int_value = Self::unscale_int(ephemeris.tgd, -31);
+        stream[0][4] = Self::compose_bits(int_value, 0, 8);
+        stream[0][5] = Self::compose_bits(ephemeris.iodc as i32, 16, 8);
+        stream[0][5] |= Self::compose_bits((ephemeris.toc as i32) >> 4, 0, 16);
+        let int_value = Self::unscale_int(ephemeris.af2, -55);
+        stream[0][6] = Self::compose_bits(int_value, 16, 8);
+        let int_value = Self::unscale_int(ephemeris.af1, -43);
+        stream[0][6] |= Self::compose_bits(int_value, 0, 16);
+        let int_value = Self::unscale_int(ephemeris.af0, -31);
+        stream[0][7] = Self::compose_bits(int_value, 2, 22);
 
         // subframe 2, Stream[8]~Stream[15]
-        stream[1][0] = self.compose_bits(ephemeris.iode as i32, 16, 8);
-        let int_value = self.unscale_int(ephemeris.crs, -5);
-        stream[1][0] |= self.compose_bits(int_value, 0, 16);
-        let int_value = self.unscale_int(ephemeris.delta_n / PI, -43);
-        stream[1][1] = self.compose_bits(int_value, 8, 16);
-        let int_value = self.unscale_int(ephemeris.M0 / PI, -31);
-        stream[1][1] |= self.compose_bits(int_value >> 24, 0, 8);
-        stream[1][2] = self.compose_bits(int_value, 0, 24);
-        let int_value = self.unscale_int(ephemeris.cuc, -29);
-        stream[1][3] = self.compose_bits(int_value, 8, 16);
-        let uint_value = self.unscale_uint(ephemeris.ecc, -33);
-        stream[1][3] |= self.compose_bits((uint_value >> 24) as i32, 0, 8);
-        stream[1][4] = self.compose_bits(uint_value as i32, 0, 24);
-        let int_value = self.unscale_int(ephemeris.cus, -29);
-        stream[1][5] = self.compose_bits(int_value, 8, 16);
-        let uint_value = self.unscale_uint(ephemeris.sqrtA, -19);
-        stream[1][5] |= self.compose_bits((uint_value >> 24) as i32, 0, 8);
-        stream[1][6] = self.compose_bits(uint_value as i32, 0, 24);
-        stream[1][7] = self.compose_bits((ephemeris.toe as i32) >> 4, 8, 16);
-        stream[1][7] |= self.compose_bits((ephemeris.flag >> 3) as i32, 7, 1);
+        stream[1][0] = Self::compose_bits(ephemeris.iode as i32, 16, 8);
+        let int_value = Self::unscale_int(ephemeris.crs, -5);
+        stream[1][0] |= Self::compose_bits(int_value, 0, 16);
+        let int_value = Self::unscale_int(ephemeris.delta_n / PI, -43);
+        stream[1][1] = Self::compose_bits(int_value, 8, 16);
+        let int_value = Self::unscale_int(ephemeris.M0 / PI, -31);
+        stream[1][1] |= Self::compose_bits(int_value >> 24, 0, 8);
+        stream[1][2] = Self::compose_bits(int_value, 0, 24);
+        let int_value = Self::unscale_int(ephemeris.cuc, -29);
+        stream[1][3] = Self::compose_bits(int_value, 8, 16);
+        let uint_value = Self::unscale_uint(ephemeris.ecc, -33);
+        stream[1][3] |= Self::compose_bits((uint_value >> 24) as i32, 0, 8);
+        stream[1][4] = Self::compose_bits(uint_value as i32, 0, 24);
+        let int_value = Self::unscale_int(ephemeris.cus, -29);
+        stream[1][5] = Self::compose_bits(int_value, 8, 16);
+        let uint_value = Self::unscale_uint(ephemeris.sqrtA, -19);
+        stream[1][5] |= Self::compose_bits((uint_value >> 24) as i32, 0, 8);
+        stream[1][6] = Self::compose_bits(uint_value as i32, 0, 24);
+        stream[1][7] = Self::compose_bits((ephemeris.toe as i32) >> 4, 8, 16);
+        stream[1][7] |= Self::compose_bits((ephemeris.flag >> 3) as i32, 7, 1);
 
         // subframe 3, Stream[16]~Stream[23]
-        let int_value = self.unscale_int(ephemeris.cic, -29);
-        stream[2][0] = self.compose_bits(int_value, 8, 16);
-        let int_value = self.unscale_int(ephemeris.omega0 / PI, -31);
-        stream[2][0] |= self.compose_bits(int_value >> 24, 0, 8);
-        stream[2][1] = self.compose_bits(int_value, 0, 24);
-        let int_value = self.unscale_int(ephemeris.cis, -29);
-        stream[2][2] = self.compose_bits(int_value, 8, 16);
-        let int_value = self.unscale_int(ephemeris.i0 / PI, -31);
-        stream[2][2] |= self.compose_bits(int_value >> 24, 0, 8);
-        stream[2][3] = self.compose_bits(int_value, 0, 24);
-        let int_value = self.unscale_int(ephemeris.crc, -5);
-        stream[2][4] = self.compose_bits(int_value, 8, 16);
-        let int_value = self.unscale_int(ephemeris.w / PI, -31);
-        stream[2][4] |= self.compose_bits(int_value >> 24, 0, 8);
-        stream[2][5] = self.compose_bits(int_value, 0, 24);
-        let int_value = self.unscale_int(ephemeris.omega_dot / PI, -43);
-        stream[2][6] = self.compose_bits(int_value, 0, 24);
-        stream[2][7] = self.compose_bits(ephemeris.iode as i32, 16, 8);
-        let int_value = self.unscale_int(ephemeris.idot / PI, -43);
-        stream[2][7] |= self.compose_bits(int_value, 2, 14);
+        let int_value = Self::unscale_int(ephemeris.cic, -29);
+        stream[2][0] = Self::compose_bits(int_value, 8, 16);
+        let int_value = Self::unscale_int(ephemeris.omega0 / PI, -31);
+        stream[2][0] |= Self::compose_bits(int_value >> 24, 0, 8);
+        stream[2][1] = Self::compose_bits(int_value, 0, 24);
+        let int_value = Self::unscale_int(ephemeris.cis, -29);
+        stream[2][2] = Self::compose_bits(int_value, 8, 16);
+        let int_value = Self::unscale_int(ephemeris.i0 / PI, -31);
+        stream[2][2] |= Self::compose_bits(int_value >> 24, 0, 8);
+        stream[2][3] = Self::compose_bits(int_value, 0, 24);
+        let int_value = Self::unscale_int(ephemeris.crc, -5);
+        stream[2][4] = Self::compose_bits(int_value, 8, 16);
+        let int_value = Self::unscale_int(ephemeris.w / PI, -31);
+        stream[2][4] |= Self::compose_bits(int_value >> 24, 0, 8);
+        stream[2][5] = Self::compose_bits(int_value, 0, 24);
+        let int_value = Self::unscale_int(ephemeris.omega_dot / PI, -43);
+        stream[2][6] = Self::compose_bits(int_value, 0, 24);
+        stream[2][7] = Self::compose_bits(ephemeris.iode as i32, 16, 8);
+        let int_value = Self::unscale_int(ephemeris.idot / PI, -43);
+        stream[2][7] |= Self::compose_bits(int_value, 2, 14);
 
         0
     }
 
-    fn fill_gps_almanac_page(&self, almanac: &GpsAlmanac, stream: &mut [u32; 8]) -> i32 {
+    fn fill_gps_almanac_page(almanac: &GpsAlmanac, stream: &mut [u32; 8]) -> i32 {
         if (almanac.valid & 1) == 0 {
             return 0;
         }
-        stream[0] = self.compose_bits(almanac.svid as i32 + 0x40, 16, 8);
-        let uint_value = self.unscale_uint(almanac.ecc, -21);
-        stream[0] |= self.compose_bits(uint_value as i32, 0, 16);
-        stream[1] = self.compose_bits((almanac.toa >> 12) as i32, 16, 8);
-        let int_value = self.unscale_int(almanac.i0 / PI - 0.3, -19);
-        stream[1] |= self.compose_bits(int_value, 0, 16);
-        let int_value = self.unscale_int(almanac.omega_dot / PI, -38);
-        stream[2] = self.compose_bits(int_value, 8, 16);
-        stream[2] |= self.compose_bits(almanac.health as i32, 0, 8);
-        let uint_value = self.unscale_uint(almanac.sqrtA, -11);
-        stream[3] = self.compose_bits(uint_value as i32, 0, 24);
-        let int_value = self.unscale_int(almanac.omega0 / PI, -23);
-        stream[4] = self.compose_bits(int_value, 0, 24);
-        let int_value = self.unscale_int(almanac.w / PI, -23);
-        stream[5] = self.compose_bits(int_value, 0, 24);
-        let int_value = self.unscale_int(almanac.M0 / PI, -23);
-        stream[6] = self.compose_bits(int_value, 0, 24);
-        let int_value = self.unscale_int(almanac.af0, -20);
-        stream[7] = self.compose_bits(int_value >> 3, 16, 8);
-        stream[7] |= self.compose_bits(int_value & 0x7, 2, 3);
-        let int_value = self.unscale_int(almanac.af1, -38);
-        stream[7] |= self.compose_bits(int_value, 5, 11);
+        stream[0] = Self::compose_bits(almanac.svid as i32 + 0x40, 16, 8);
+        let uint_value = Self::unscale_uint(almanac.ecc, -21);
+        stream[0] |= Self::compose_bits(uint_value as i32, 0, 16);
+        stream[1] = Self::compose_bits((almanac.toa >> 12) as i32, 16, 8);
+        let int_value = Self::unscale_int(almanac.i0 / PI - 0.3, -19);
+        stream[1] |= Self::compose_bits(int_value, 0, 16);
+        let int_value = Self::unscale_int(almanac.omega_dot / PI, -38);
+        stream[2] = Self::compose_bits(int_value, 8, 16);
+        stream[2] |= Self::compose_bits(almanac.health as i32, 0, 8);
+        let uint_value = Self::unscale_uint(almanac.sqrtA, -11);
+        stream[3] = Self::compose_bits(uint_value as i32, 0, 24);
+        let int_value = Self::unscale_int(almanac.omega0 / PI, -23);
+        stream[4] = Self::compose_bits(int_value, 0, 24);
+        let int_value = Self::unscale_int(almanac.w / PI, -23);
+        stream[5] = Self::compose_bits(int_value, 0, 24);
+        let int_value = Self::unscale_int(almanac.M0 / PI, -23);
+        stream[6] = Self::compose_bits(int_value, 0, 24);
+        let int_value = Self::unscale_int(almanac.af0, -20);
+        stream[7] = Self::compose_bits(int_value >> 3, 16, 8);
+        stream[7] |= Self::compose_bits(int_value & 0x7, 2, 3);
+        let int_value = Self::unscale_int(almanac.af1, -38);
+        stream[7] |= Self::compose_bits(int_value, 5, 11);
 
         0
     }
 
-    fn fill_gps_health_page(&self, almanac: &[GpsAlmanac; 32], stream4: &mut [u32; 8], stream5: &mut [u32; 8]) -> i32 {
+    fn fill_gps_health_page(almanac: &[GpsAlmanac; 32], stream4: &mut [u32; 8], stream5: &mut [u32; 8]) -> i32 {
         let mut toa = 0;
         let mut week = 0;
 
@@ -314,31 +315,31 @@ impl LNavBit {
         }
 
         // subframe 5 page 25
-        stream5[0] = self.compose_bits(0x73, 16, 8); // DataID = 01, PageID = 51
-        stream5[0] |= self.compose_bits(toa, 8, 8);
-        stream5[0] |= self.compose_bits(week, 0, 8);
+        stream5[0] = Self::compose_bits(0x73, 16, 8); // DataID = 01, PageID = 51
+        stream5[0] |= Self::compose_bits(toa, 8, 8);
+        stream5[0] |= Self::compose_bits(week, 0, 8);
         for i in (0..24).step_by(4) {
-            stream5[i / 4 + 1] = self.compose_bits(if (almanac[i].valid & 1) != 0 { 0 } else { 0x3f }, 18, 6);
-            stream5[i / 4 + 1] |= self.compose_bits(if (almanac[i + 1].valid & 1) != 0 { 0 } else { 0x3f }, 12, 6);
-            stream5[i / 4 + 1] |= self.compose_bits(if (almanac[i + 2].valid & 1) != 0 { 0 } else { 0x3f }, 6, 6);
-            stream5[i / 4 + 1] |= self.compose_bits(if (almanac[i + 3].valid & 1) != 0 { 0 } else { 0x3f }, 0, 6);
+            stream5[i / 4 + 1] = Self::compose_bits(if (almanac[i].valid & 1) != 0 { 0 } else { 0x3f }, 18, 6);
+            stream5[i / 4 + 1] |= Self::compose_bits(if (almanac[i + 1].valid & 1) != 0 { 0 } else { 0x3f }, 12, 6);
+            stream5[i / 4 + 1] |= Self::compose_bits(if (almanac[i + 2].valid & 1) != 0 { 0 } else { 0x3f }, 6, 6);
+            stream5[i / 4 + 1] |= Self::compose_bits(if (almanac[i + 3].valid & 1) != 0 { 0 } else { 0x3f }, 0, 6);
         }
 
         // subframe 4 page 25
         // assign AS flag 1100 as AS on and all signal capability
-        stream4[0] = self.compose_bits(0x7f, 16, 8); // DataID = 01, PageID = 63
+        stream4[0] = Self::compose_bits(0x7f, 16, 8); // DataID = 01, PageID = 63
         stream4[0] |= 0xcccc;
         for i in 1..5 {
             stream4[i] = 0xcccccc;
         }
         stream4[5] = 0xcccc00 + if (almanac[24].valid & 1) != 0 { 0 } else { 0x3f }; // SV25 health
-        stream4[6] = self.compose_bits(if (almanac[25].valid & 1) != 0 { 0 } else { 0x3f }, 18, 6);
-        stream4[6] |= self.compose_bits(if (almanac[26].valid & 1) != 0 { 0 } else { 0x3f }, 12, 6);
-        stream4[6] |= self.compose_bits(if (almanac[27].valid & 1) != 0 { 0 } else { 0x3f }, 6, 6);
-        stream4[6] |= self.compose_bits(if (almanac[28].valid & 1) != 0 { 0 } else { 0x3f }, 0, 6);
-        stream4[7] = self.compose_bits(if (almanac[29].valid & 1) != 0 { 0 } else { 0x3f }, 18, 6);
-        stream4[7] |= self.compose_bits(if (almanac[30].valid & 1) != 0 { 0 } else { 0x3f }, 12, 6);
-        stream4[7] |= self.compose_bits(if (almanac[31].valid & 1) != 0 { 0 } else { 0x3f }, 6, 6);
+        stream4[6] = Self::compose_bits(if (almanac[25].valid & 1) != 0 { 0 } else { 0x3f }, 18, 6);
+        stream4[6] |= Self::compose_bits(if (almanac[26].valid & 1) != 0 { 0 } else { 0x3f }, 12, 6);
+        stream4[6] |= Self::compose_bits(if (almanac[27].valid & 1) != 0 { 0 } else { 0x3f }, 6, 6);
+        stream4[6] |= Self::compose_bits(if (almanac[28].valid & 1) != 0 { 0 } else { 0x3f }, 0, 6);
+        stream4[7] = Self::compose_bits(if (almanac[29].valid & 1) != 0 { 0 } else { 0x3f }, 18, 6);
+        stream4[7] |= Self::compose_bits(if (almanac[30].valid & 1) != 0 { 0 } else { 0x3f }, 12, 6);
+        stream4[7] |= Self::compose_bits(if (almanac[31].valid & 1) != 0 { 0 } else { 0x3f }, 6, 6);
 
         0
     }

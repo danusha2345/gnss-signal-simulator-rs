@@ -5,8 +5,8 @@ use std::f64::consts::PI;
 use crate::constants::*;
 use crate::types::*;
 
-pub fn CheckAlmnanacType(mut file: File) -> AlmanacType {
-    let mut reader = BufReader::new(&mut file);
+pub fn CheckAlmnanacType(file: &mut File) -> AlmanacType {
+    let mut reader = BufReader::new(file);
     let mut line = String::new();
     
     if let Err(_) = reader.read_line(&mut line) {
@@ -627,21 +627,32 @@ pub fn ConvertAlmanacFromEphemerisGeo(alm: &mut GpsAlmanac, eph: &GpsEphemeris, 
     true
 }
 
+pub fn ReadAlmanac(mut file: File, system: GnssSystem, alm_gps: &mut [GpsAlmanac; 32], alm_bds: &mut [GpsAlmanac; 63], alm_gal: &mut [GpsAlmanac; 36], alm_glo: &mut [GlonassAlmanac; 24]) -> i32 {
+    let alm_type = CheckAlmnanacType(&mut file);
+    match alm_type {
+        AlmanacType::AlmanacGps => ReadAlmanacGps(file, alm_gps),
+        AlmanacType::AlmanacBds => ReadAlmanacBds(file, alm_bds),
+        AlmanacType::AlmanacGalileo => ReadAlmanacGalileo(file, alm_gal),
+        AlmanacType::AlmanacGlonass => ReadAlmanacGlonass(file, alm_glo),
+        _ => 0,
+    }
+}
+
 // Placeholder functions that would need to be implemented based on external dependencies
 pub fn UtcToGalileoTime(_utc: UtcTime) -> GnssTime {
-    // This would need actual implementation
+    // This would need actual implementation from gnsstime module
     GnssTime { Week: 0, MilliSeconds: 0, SubMilliSeconds: 0.0 }
 }
 
 pub fn UtcToGlonassTime(_utc: UtcTime) -> GlonassTime {
-    // This would need actual implementation
+    // This would need actual implementation from gnsstime module
     GlonassTime { LeapYear: 0, Day: 0, MilliSeconds: 0, SubMilliSeconds: 0.0 }
 }
 
 pub fn GlonassSatPosSpeedEph(_t: f64, _eph: &GlonassEphemeris, _pos_vel: &mut KinematicInfo) {
-    // This would need actual implementation
+    // This would need actual implementation from satellite_param module
 }
 
 pub fn GpsSatPosSpeedEph(_system: GnssSystem, _time: f64, _eph: &GpsEphemeris, _pos_vel: &mut KinematicInfo) {
-    // This would need actual implementation
+    // This would need actual implementation from satellite_param module
 }

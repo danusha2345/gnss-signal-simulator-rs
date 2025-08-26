@@ -12,6 +12,7 @@ use crate::COMPOSE_BITS;
 
 pub const B2A_SYMBOL_LENGTH: usize = 48;
 
+#[derive(Clone)]
 pub struct BCNav2Bit {
     // Ephemeris parameters part 1 (63 satellites, 9 parameters each)
     pub Ephemeris1: [[u32; 9]; 63],

@@ -7,8 +7,8 @@ fn main() {
     // Test Almanac functionality
     println!("\n=== Testing Almanac Module ===");
     match File::open("test_almanac.txt") {
-        Ok(file) => {
-            let almanac_type = CheckAlmnanacType(file);
+        Ok(mut file) => {
+            let almanac_type = CheckAlmnanacType(&mut file);
             println!("Detected almanac type: {:?}", almanac_type);
         }
         Err(e) => {

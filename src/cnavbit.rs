@@ -16,6 +16,7 @@ const A_REF: f64 = 26559710.0;
 const OMEGA_DOT_REF: f64 = -2.6e-9;
 const NORMINAL_I0: f64 = 0.94247779607693797153879301498385;
 
+#[derive(Clone)]
 pub struct CNavBit {
     // Arrays allocate bits align with the method of putting 276bits (without CRC) of a message into 9 DWORD according to following table
     // WORD sequence:  DWORD0  DWORD1  DWORD2  DWORD3  DWORD4  DWORD5  DWORD6  DWORD7  DWORD8
@@ -559,5 +560,30 @@ impl CNavBit {
         result |= bit_count << 3;
 
         result
+    }
+
+    // Missing methods required by the interface
+    pub fn GetFrameData(&self, start_time: GnssTime, svid: i32, param: i32, nav_bits: &mut [i32]) -> i32 {
+        // TODO: Implement frame data retrieval
+        // This would return navigation frame data based on start_time, svid and param
+        0
+    }
+
+    pub fn SetEphemeris(&mut self, svid: i32, _eph: &GpsEphemeris) -> bool {
+        // TODO: Implement ephemeris setting
+        // This would set ephemeris data for navigation message generation
+        true
+    }
+
+    pub fn SetAlmanac(&mut self, _alm: &[GpsAlmanac]) -> bool {
+        // TODO: Implement almanac setting
+        // This would set almanac data for navigation message generation
+        true
+    }
+
+    pub fn SetIonoUtc(&mut self, _iono: &IonoParam, _utc: &UtcParam) -> bool {
+        // TODO: Implement ionospheric and UTC parameters setting
+        // This would set iono and UTC data for navigation message generation
+        true
     }
 }

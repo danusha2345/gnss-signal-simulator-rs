@@ -7,10 +7,10 @@
 //----------------------------------------------------------------------
 
 use std::os::raw::c_char;
-use crate::constants::*;
 use crate::trajectory::CTrajectory;
-use crate::{utc_to_gps_time, utc_to_glonass_time_corrected, utc_to_bds_time, lla_to_ecef, speed_local_to_ecef, gps_time_to_utc, bds_time_to_utc, glonass_time_to_utc, speed_ecef_to_local, ecef_to_lla};
-use std::ffi::CString;
+use crate::types::*;
+use crate::powercontrol::SignalPower;
+use crate::{lla_to_ecef, gps_time_to_utc, bds_time_to_utc, glonass_time_to_utc, speed_ecef_to_local, ecef_to_lla};
 
 // Constants for dictionary lookups
 static KEY_DICTIONARY_LIST_PARAM: &[&str] = &[
@@ -76,57 +76,7 @@ static DICTIONARY_LIST_POWER_UNIT: &[&str] = &[
     "dBHz", "dBm", "dBW",
 ];
 
-// Type definitions
-#[repr(C)]
-pub struct UtcTime {
-    pub year: i32,
-    pub month: i32,
-    pub day: i32,
-    pub hour: i32,
-    pub minute: i32,
-    pub second: f64,
-}
-
-#[repr(C)]
-pub struct LlaPosition {
-    pub lat: f64,
-    pub lon: f64,
-    pub alt: f64,
-}
-
-#[repr(C)]
-pub struct LocalSpeed {
-    pub speed: f64,
-    pub course: f64,
-    pub ve: f64,
-    pub vn: f64,
-    pub vu: f64,
-}
-
-#[repr(C)]
-pub struct KinematicInfo {
-    pub x: f64,
-    pub y: f64,
-    pub z: f64,
-    pub vx: f64,
-    pub vy: f64,
-    pub vz: f64,
-}
-
-#[repr(C)]
-pub struct GnssTime {
-    pub week: i32,
-    pub milli_seconds: i32,
-    pub sub_milli_seconds: f64,
-}
-
-#[repr(C)]
-pub struct GlonassTime {
-    pub leap_year: i32,
-    pub day: i32,
-    pub milli_seconds: i32,
-    pub sub_milli_seconds: f64,
-}
+// Use types from types.rs instead of redefining them
 
 #[repr(C)]
 pub struct OutputParam {
@@ -149,18 +99,9 @@ pub struct DelayConfig {
     // Add fields as needed
 }
 
-#[repr(C)]
-pub struct SignalPower {
-    pub system: i32,
-    pub svid: i32,
-    pub time: i32,
-    pub cn0: f64,
-}
+// SignalPower is imported from powercontrol module
 
-#[repr(C)]
-pub struct ConvertMatrix {
-    // Add matrix fields as needed
-}
+// Use ConvertMatrix from types.rs
 
 // Enums
 #[repr(C)]
@@ -184,13 +125,7 @@ pub enum TrajectoryDataType {
     TrajDataRadius = 6,
 }
 
-#[repr(C)]
-pub enum GnssSystem {
-    GpsSystem = 0,
-    BdsSystem = 1,
-    GalileoSystem = 2,
-    GlonassSystem = 3,
-}
+// GnssSystem is imported from types.rs
 
 #[repr(C)]
 pub enum OutputType {
@@ -241,11 +176,11 @@ fn get_double_value(_object: *mut JsonObject) -> f64 {
     0.0 // placeholder
 }
 
+// Import coordinate functions
+use crate::coordinate::{calc_conv_matrix_lla, speed_course_to_enu, speed_enu_to_course};
+
 // External function declarations (would be implemented elsewhere)
 extern "C" {
-    fn calc_conv_matrix(lla_pos: LlaPosition) -> ConvertMatrix;
-    fn speed_course_to_enu(start_vel: &mut LocalSpeed);
-    fn speed_enu_to_course(start_vel: &mut LocalSpeed);
     fn json_stream_get_first_object(object: *mut JsonObject) -> *mut JsonObject;
     fn json_stream_get_next_object(object: *mut JsonObject) -> *mut JsonObject;
 }
@@ -253,14 +188,14 @@ extern "C" {
 // Main function - equivalent to AssignParameters
 pub fn assign_parameters(
     object: *mut JsonObject,
-    utc_time: Option<&mut UtcTime>,
-    start_pos: Option<&mut LlaPosition>,
-    start_vel: Option<&mut LocalSpeed>,
-    trajectory: Option<&mut CTrajectory>,
-    nav_data: Option<&mut CNavData>,
-    output_param: Option<&mut OutputParam>,
-    power_control: Option<&mut CPowerControl>,
-    delay_config: Option<&mut DelayConfig>,
+    mut utc_time: Option<&mut UtcTime>,
+    mut start_pos: Option<&mut LlaPosition>,
+    mut start_vel: Option<&mut LocalSpeed>,
+    mut trajectory: Option<&mut CTrajectory>,
+    mut nav_data: Option<&mut CNavData>,
+    mut output_param: Option<&mut OutputParam>,
+    mut power_control: Option<&mut CPowerControl>,
+    mut delay_config: Option<&mut DelayConfig>,
 ) -> bool {
     unsafe {
         let mut current_object = json_stream_get_first_object(object);
@@ -316,15 +251,15 @@ fn assign_start_time(object: *mut JsonObject, utc_time: &mut UtcTime) -> bool {
     let mut week = 0;
     let mut leap_year = 0;
     let mut gnss_time = GnssTime {
-        week: 0,
-        milli_seconds: 0,
-        sub_milli_seconds: 0.0,
+        Week: 0,
+        MilliSeconds: 0,
+        SubMilliSeconds: 0.0,
     };
     let mut glonass_time = GlonassTime {
-        leap_year: 0,
-        day: 0,
-        milli_seconds: 0,
-        sub_milli_seconds: 0.0,
+        LeapYear: 0,
+        Day: 0,
+        MilliSeconds: 0,
+        SubMilliSeconds: 0.0,
     };
 
     unsafe {
@@ -342,25 +277,25 @@ fn assign_start_time(object: *mut JsonObject, utc_time: &mut UtcTime) -> bool {
                     week = get_object_int(current_object);
                 },
                 2 => { // "second"
-                    utc_time.second = get_double_value(current_object);
+                    utc_time.Second = get_double_value(current_object);
                 },
                 3 => { // "leapYear"
                     leap_year = get_object_int(current_object);
                 },
                 4 => { // "day"
-                    utc_time.day = get_object_int(current_object);
+                    utc_time.Day = get_object_int(current_object);
                 },
                 5 => { // "year"
-                    utc_time.year = get_object_int(current_object);
+                    utc_time.Year = get_object_int(current_object);
                 },
                 6 => { // "month"
-                    utc_time.month = get_object_int(current_object);
+                    utc_time.Month = get_object_int(current_object);
                 },
                 7 => { // "hour"
-                    utc_time.hour = get_object_int(current_object);
+                    utc_time.Hour = get_object_int(current_object);
                 },
                 8 => { // "minute"
-                    utc_time.minute = get_object_int(current_object);
+                    utc_time.Minute = get_object_int(current_object);
                 },
                 _ => {}
             }
@@ -370,32 +305,26 @@ fn assign_start_time(object: *mut JsonObject, utc_time: &mut UtcTime) -> bool {
 
     match time_type {
         1 | 3 => { // GPS Time or Galileo Time
-            gnss_time.week = week;
-            gnss_time.sub_milli_seconds = utc_time.second * 1000.0;
-            gnss_time.milli_seconds = gnss_time.sub_milli_seconds as i32;
-            gnss_time.sub_milli_seconds -= gnss_time.milli_seconds as f64;
-            unsafe {
-                *utc_time = gps_time_to_utc(gnss_time);
-            }
+            gnss_time.Week = week;
+            gnss_time.SubMilliSeconds = utc_time.Second * 1000.0;
+            gnss_time.MilliSeconds = gnss_time.SubMilliSeconds as i32;
+            gnss_time.SubMilliSeconds -= gnss_time.MilliSeconds as f64;
+            *utc_time = gps_time_to_utc(gnss_time, true);
         },
         2 => { // BDS Time
-            gnss_time.week = week;
-            gnss_time.sub_milli_seconds = utc_time.second * 1000.0;
-            gnss_time.milli_seconds = gnss_time.sub_milli_seconds as i32;
-            gnss_time.sub_milli_seconds -= gnss_time.milli_seconds as f64;
-            unsafe {
-                *utc_time = bds_time_to_utc(gnss_time);
-            }
+            gnss_time.Week = week;
+            gnss_time.SubMilliSeconds = utc_time.Second * 1000.0;
+            gnss_time.MilliSeconds = gnss_time.SubMilliSeconds as i32;
+            gnss_time.SubMilliSeconds -= gnss_time.MilliSeconds as f64;
+            *utc_time = bds_time_to_utc(gnss_time);
         },
         4 => { // GLONASS Time
-            glonass_time.leap_year = leap_year;
-            glonass_time.day = utc_time.day;
-            glonass_time.sub_milli_seconds = utc_time.second * 1000.0;
-            glonass_time.milli_seconds = glonass_time.sub_milli_seconds as i32;
-            glonass_time.sub_milli_seconds -= glonass_time.milli_seconds as f64;
-            unsafe {
-                *utc_time = glonass_time_to_utc(glonass_time);
-            }
+            glonass_time.LeapYear = leap_year;
+            glonass_time.Day = utc_time.Day;
+            glonass_time.SubMilliSeconds = utc_time.Second * 1000.0;
+            glonass_time.MilliSeconds = glonass_time.SubMilliSeconds as i32;
+            glonass_time.SubMilliSeconds -= glonass_time.MilliSeconds as f64;
+            *utc_time = glonass_time_to_utc(glonass_time);
         },
         _ => {}
     }
@@ -434,8 +363,8 @@ fn set_trajectory_name(trajectory: &mut CTrajectory, name: &str) {
     trajectory.set_trajectory_name(name);
 }
 
-fn set_init_pos_vel(trajectory: &mut CTrajectory, pos: LlaPosition, vel: LocalSpeed, flag: bool) {
-    trajectory.set_init_pos_vel_lla(pos, vel, flag);
+fn set_init_pos_vel(trajectory: &mut CTrajectory, pos: &LlaPosition, vel: &LocalSpeed, flag: bool) {
+    trajectory.set_init_pos_vel_lla(*pos, *vel, flag);
 }
 
 // Placeholder functions for nav data
@@ -455,7 +384,7 @@ fn set_trajectory(
 ) -> bool {
     let mut content = 0;
     let mut velocity_type = 0;
-    let mut convert_matrix = ConvertMatrix {};
+    let mut convert_matrix = ConvertMatrix::default();
     let mut position = KinematicInfo {
         x: 0.0, y: 0.0, z: 0.0,
         vx: 0.0, vy: 0.0, vz: 0.0,
@@ -489,15 +418,15 @@ fn set_trajectory(
                         return false;
                     }
                     if velocity_type == 1 { // velocity in ECEF format and stored in velocity
-                        convert_matrix = calc_conv_matrix(*start_pos);
-                        position = lla_to_ecef(*start_pos);
+                        convert_matrix = calc_conv_matrix_lla(start_pos);
+                        position = lla_to_ecef(start_pos);
                         position.vx = velocity.vx;
                         position.vy = velocity.vy;
                         position.vz = velocity.vz;
-                        speed_ecef_to_local(convert_matrix, position, start_vel);
+                        speed_ecef_to_local(&convert_matrix, &position, start_vel);
                     }
-                    set_init_pos_vel(trajectory, *start_pos, *start_vel, false);
-                    assign_trajectory_list(json_stream_get_first_object(current_object), trajectory);
+                    set_init_pos_vel(trajectory, start_pos, start_vel, false);
+                    unsafe { assign_trajectory_list(json_stream_get_first_object(current_object), trajectory); }
                 },
                 _ => {}
             }
@@ -703,9 +632,7 @@ fn assign_start_position(object: *mut JsonObject, start_pos: &mut LlaPosition) -
     start_pos.lon = format_lon_lat(longitude, format);
     start_pos.lat = format_lon_lat(latitude, format);
     if position_type != 0 {
-        unsafe {
-            *start_pos = ecef_to_lla(position);
-        }
+        *start_pos = ecef_to_lla(&position);
     }
 
     true
@@ -772,13 +699,9 @@ fn assign_start_velocity(
     }
 
     if velocity_type == 2 {
-        unsafe {
-            speed_course_to_enu(start_vel);
-        }
+        unsafe { speed_course_to_enu(start_vel); }
     } else if velocity_type == 3 {
-        unsafe {
-            speed_enu_to_course(start_vel);
-        }
+        unsafe { speed_enu_to_course(start_vel); }
     }
     velocity_type
 }
@@ -1046,7 +969,7 @@ fn process_power_value(
         system,
         svid: 0,
         time: 0,
-        cn0: get_init_cn0(power_control),
+        cn0: unsafe { get_init_cn0(power_control) },
     };
 
     unsafe {
@@ -1080,11 +1003,11 @@ fn process_power_value(
 
     if sv_number == 0 { // svlist is empty means for all satellites
         signal_power.svid = 0;
-        add_control_element(power_control, &signal_power);
+        unsafe { add_control_element(power_control, &signal_power); }
     } else {
         for i in 0..sv_number {
             signal_power.svid = svlist[i];
-            add_control_element(power_control, &signal_power);
+            unsafe { add_control_element(power_control, &signal_power); }
         }
     }
 

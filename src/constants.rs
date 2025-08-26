@@ -1,42 +1,41 @@
 use std::f64::consts::PI;
 
 // Mathematical constants
+pub const LIGHT_SPEED: f64 = 299792458.0;
 pub const PI2: f64 = 2.0 * PI;
+pub const RAD2DEG: fn(f64) -> f64 = |r| r * (180.0 / PI);
+pub const DEG2RAD: fn(f64) -> f64 = |d| d * (PI / 180.0);
+
+// WGS84 constants
+pub const WGS_PI: f64 = 3.1415926535898;
+pub const WGS_AXIS_A: f64 = 6378137.0;
+pub const WGS_AXIS_B: f64 = 6356752.3142451795;
+pub const WGS_E1_SQR: f64 = 0.006694379990141317;
+pub const WGS_E2_SQR: f64 = 0.006739496742276435;
+pub const WGS_SQRT_GM: f64 = 19964981.8432173887;
+pub const WGS_OMEGDOTE: f64 = 7.2921151467e-5;
+pub const WGS_F_GTR: f64 = -4.442807633e-10;
+
+// CGCS2000 constants
+pub const CGCS2000_SQRT_GM: f64 = 19964980.3856652962;
+pub const CGCS2000_OMEGDOTE: f64 = 7.292115e-5;
+
+// PZ90 constants
+pub const PZ90_AE: f64 = 6378136.0;
+pub const PZ90_AE2: f64 = PZ90_AE * PZ90_AE;
+pub const PZ90_GM: f64 = 3.9860044e+14;
+pub const PZ90_C20: f64 = 1082.63e-6;
+pub const PZ90_C20AE2: f64 = PZ90_C20 * PZ90_AE2;
+pub const PZ90_OMEGDOTE: f64 = 7.292115e-5;
 
 // Almanac constants
 pub const SQRT_A0: f64 = 5440.588203494177338011974948823;
 pub const NORMINAL_I0: f64 = 0.97738438111682456307726683035362;
 
-// GNSS system constants
-pub const PZ90_OMEGDOTE: f64 = 7.2921151467e-5;
-pub const PZ90_GM: f64 = 3.9860044e14;
-pub const PZ90_C20: f64 = -1.08263e-3;
-pub const PZ90_AE2: f64 = 4.0680631590769e13;
-
-pub const CGCS2000_OMEGDOTE: f64 = 7.2921150e-5;
-pub const CGCS2000_SQRT_GM: f64 = 6.3140131e7;
-
-pub const WGS_SQRT_GM: f64 = 6.3140131e7;
-pub const WGS_OMEGDOTE: f64 = 7.2921151467e-5;
-
-// WGS84 constants
-pub const WGS_AXIS_A: f64 = 6378137.0;
-pub const WGS_AXIS_B: f64 = 6356752.314245;
-pub const WGS_E1_SQR: f64 = 0.00669437999014;
-pub const WGS_E2_SQR: f64 = 0.00673949674228;
-
-// PZ90 constants
-pub const PZ90_C20AE2: f64 = PZ90_C20 * PZ90_AE2;
-
-// Speed of light
-pub const LIGHT_SPEED: f64 = 299792458.0;
-
-// GPS frequency constants (Hz)
+// Signal frequency constants (in Hz)
 pub const FREQ_GPS_L1: f64 = 1575420000.0;
 pub const FREQ_GPS_L2: f64 = 1227600000.0;
 pub const FREQ_GPS_L5: f64 = 1176450000.0;
-
-// BDS frequency constants (Hz)
 pub const FREQ_BDS_B1C: f64 = 1575420000.0;
 pub const FREQ_BDS_B1I: f64 = 1561098000.0;
 pub const FREQ_BDS_B2I: f64 = 1207140000.0;
@@ -44,20 +43,17 @@ pub const FREQ_BDS_B3I: f64 = 1268520000.0;
 pub const FREQ_BDS_B2A: f64 = 1176450000.0;
 pub const FREQ_BDS_B2B: f64 = 1207140000.0;
 pub const FREQ_BDS_B2AB: f64 = 1191795000.0;
-
-// Galileo frequency constants (Hz)
 pub const FREQ_GAL_E1: f64 = 1575420000.0;
 pub const FREQ_GAL_E5A: f64 = 1176450000.0;
 pub const FREQ_GAL_E5B: f64 = 1207140000.0;
 pub const FREQ_GAL_E5: f64 = 1191795000.0;
 pub const FREQ_GAL_E6: f64 = 1278750000.0;
-
-// GLONASS frequency constants (Hz)
 pub const FREQ_GLO_G1: f64 = 1602000000.0;
 pub const FREQ_GLO_G2: f64 = 1246000000.0;
 pub const FREQ_GLO_G3: f64 = 1202025000.0;
 
-// Signal index constants
+
+// Global signal index constants (different from types.rs which are per-system)
 pub const SIGNAL_INDEX_L1CA: usize = 0;
 pub const SIGNAL_INDEX_L1C: usize = 1;
 pub const SIGNAL_INDEX_L2C: usize = 2;
@@ -70,6 +66,7 @@ pub const SIGNAL_INDEX_B2I: usize = 10;
 pub const SIGNAL_INDEX_B3I: usize = 11;
 pub const SIGNAL_INDEX_B2A: usize = 12;
 pub const SIGNAL_INDEX_B2B: usize = 13;
+pub const SIGNAL_INDEX_B2AB: usize = 14;
 
 pub const SIGNAL_INDEX_E1: usize = 16;
 pub const SIGNAL_INDEX_E5A: usize = 17;
@@ -78,10 +75,12 @@ pub const SIGNAL_INDEX_E6: usize = 20;
 
 pub const SIGNAL_INDEX_G1: usize = 24;
 pub const SIGNAL_INDEX_G2: usize = 25;
+pub const SIGNAL_INDEX_G3: usize = 26;
 
 // BCNav1Bit constants
 pub const B1C_SUBFRAME2_SYMBOL_LENGTH: usize = 100;
 pub const B1C_SUBFRAME3_SYMBOL_LENGTH: usize = 44;
+
 
 // Macro for composing bits
 #[macro_export]

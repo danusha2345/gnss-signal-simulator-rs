@@ -12,6 +12,7 @@ use crate::COMPOSE_BITS;
 
 pub const B2B_SYMBOL_LENGTH: usize = 81;
 
+#[derive(Clone)]
 pub struct BCNav3Bit {
     // Ephemeris parameters part 1 (63 satellites, variable length)
     pub Ephemeris1: [[u32; 32]; 63],
@@ -367,5 +368,27 @@ impl BCNav3Bit {
                 // Unknown message type
             }
         }
+    }
+
+    // Interface methods required by NavBitTrait
+    pub fn SetEphemeris(&mut self, svid: i32, eph: &GpsEphemeris) -> bool {
+        if svid < 1 || svid > 63 {
+            return false;
+        }
+        // TODO: Convert GpsEphemeris to BDS B2b ephemeris format and store in Ephemeris1/Ephemeris2
+        // For now, return true to indicate basic compatibility
+        true
+    }
+
+    pub fn SetAlmanac(&mut self, alm: &[GpsAlmanac]) -> bool {
+        // TODO: Convert GpsAlmanac slice to BDS B2b almanac format and store in almanac arrays
+        // For now, return true to indicate basic compatibility
+        true
+    }
+
+    pub fn SetIonoUtc(&mut self, iono_param: Option<&IonoParam>, utc_param: Option<&UtcParam>) -> bool {
+        // TODO: Set ionospheric and UTC parameters for BDS B2b format
+        // For now, return true to indicate basic compatibility
+        true
     }
 }

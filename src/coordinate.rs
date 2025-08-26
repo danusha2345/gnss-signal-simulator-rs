@@ -258,19 +258,19 @@ pub fn glonass_sat_pos_speed_eph(
         }
         
         // Update ephemeris state
-        eph.pos_vel_t.x = state[0];
-        eph.pos_vel_t.y = state[1];
-        eph.pos_vel_t.z = state[2];
-        eph.pos_vel_t.vx = state[3];
-        eph.pos_vel_t.vy = state[4];
-        eph.pos_vel_t.vz = state[5];
+        eph.PosVelT.x = state[0];
+        eph.PosVelT.y = state[1];
+        eph.PosVelT.z = state[2];
+        eph.PosVelT.vx = state[3];
+        eph.PosVelT.vy = state[4];
+        eph.PosVelT.vz = state[5];
         
         delta_t - (step_number as f64) * COARSE_STEP
     } else {
         // prediction from tc
         let mut state = [
-            eph.pos_vel_t.x, eph.pos_vel_t.y, eph.pos_vel_t.z,
-            eph.pos_vel_t.vx, eph.pos_vel_t.vy, eph.pos_vel_t.vz,
+            eph.PosVelT.x, eph.PosVelT.y, eph.PosVelT.z,
+            eph.PosVelT.vx, eph.PosVelT.vy, eph.PosVelT.vz,
             eph.ax, eph.ay, eph.az,
         ];
         
@@ -284,12 +284,12 @@ pub fn glonass_sat_pos_speed_eph(
         runge_kutta(delta_t1, &mut state);
         
         // Update ephemeris state
-        eph.pos_vel_t.x = state[0];
-        eph.pos_vel_t.y = state[1];
-        eph.pos_vel_t.z = state[2];
-        eph.pos_vel_t.vx = state[3];
-        eph.pos_vel_t.vy = state[4];
-        eph.pos_vel_t.vz = state[5];
+        eph.PosVelT.x = state[0];
+        eph.PosVelT.y = state[1];
+        eph.PosVelT.z = state[2];
+        eph.PosVelT.vx = state[3];
+        eph.PosVelT.vy = state[4];
+        eph.PosVelT.vz = state[5];
         
         delta_t1
     };
@@ -298,7 +298,7 @@ pub fn glonass_sat_pos_speed_eph(
     eph.flag |= 0x2; // can predict from eph.tc instead of eph.tb
     
     // CIS to CTS(PZ-90) conversion
-    cis_to_cts(&eph.pos_vel_t, delta_t, pos_vel, acc);
+    cis_to_cts(&eph.PosVelT, delta_t, pos_vel, acc);
     
     true
 }
@@ -452,7 +452,9 @@ pub fn sat_el_az_from_positions(
     let mut los_vector = [0.0; 3];
     let position = ecef_to_lla(receiver);
     
-    geometry_distance_array(&receiver.pos_vel(), &satellite.pos_vel(), Some(&mut los_vector));
+    let receiver_pos = [receiver.pos_vel()[0], receiver.pos_vel()[1], receiver.pos_vel()[2]];
+    let satellite_pos = [satellite.pos_vel()[0], satellite.pos_vel()[1], satellite.pos_vel()[2]];
+    geometry_distance_array(&receiver_pos, &satellite_pos, Some(&mut los_vector));
     sat_el_az_from_lla(&position, &los_vector, elevation, azimuth);
 }
 
@@ -485,7 +487,13 @@ pub fn geometry_distance(
     satellite: &KinematicInfo,
     los_vector: Option<&mut [f64; 3]>,
 ) -> f64 {
-    geometry_distance_array(&receiver.pos_vel(), &satellite.pos_vel(), los_vector)
+    let receiver_pos = receiver.pos_vel();
+    let satellite_pos = satellite.pos_vel();
+    geometry_distance_array(
+        &[receiver_pos[0], receiver_pos[1], receiver_pos[2]],
+        &[satellite_pos[0], satellite_pos[1], satellite_pos[2]],
+        los_vector
+    )
 }
 
 /// Calculate satellite relative speed

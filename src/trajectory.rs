@@ -7,7 +7,7 @@
 //----------------------------------------------------------------------
 
 use crate::types::*;
-use crate::coordinate::{ecef_to_lla, lla_to_ecef, speed_local_to_ecef, calc_conv_matrix_lla, calc_up_vector};
+use crate::coordinate::*;
 use std::f64::consts::PI;
 
 // Error codes
@@ -629,7 +629,7 @@ impl CTrajectory {
             segment.set_start_pos_vel(self.init_pos_vel);
             segment.set_local_speed(self.init_local_speed);
             let lla_pos = ecef_to_lla(&self.init_pos_vel);
-            let convert_matrix = calc_conv_matrix_from_lla(&lla_pos);
+            let convert_matrix = calc_conv_matrix_lla(&lla_pos);
             segment.set_convert_matrix(convert_matrix);
         }
 
@@ -678,7 +678,7 @@ impl CTrajectory {
         let mut pos_vel = KinematicInfo::default();
         if self.get_next_pos_vel_ecef(time_step, &mut pos_vel) {
             *position = ecef_to_lla(&pos_vel);
-            let convert_matrix = calc_conv_matrix_from_lla(position);
+            let convert_matrix = calc_conv_matrix_lla(position);
             speed_ecef_to_local(&convert_matrix, &pos_vel, velocity);
             speed_enu_to_course(velocity);
             true

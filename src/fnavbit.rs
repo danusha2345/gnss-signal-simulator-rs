@@ -23,6 +23,7 @@ fn count1(n: u8) -> i32 {
 const SQRT_A0: f64 = 5440.588203494177338011974948823;
 const NOMINAL_I0: f64 = 0.97738438111682456307726683035362;
 
+#[derive(Clone)]
 pub struct FNavBit {
     pub GalEphData: [[[u32; 7]; 4]; 36],    // 36 satellites, 4 page types, 7 words each
     pub GalAlmData: [[[u32; 7]; 2]; 12],    // 12 almanac groups, 2 page types, 7 words each

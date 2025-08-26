@@ -10,6 +10,7 @@ use crate::types::*;
 use crate::COMPOSE_BITS;
 use std::mem;
 
+#[derive(Clone)]
 pub struct D1D2NavBit {
     pub BdsStream123: [[u32; 27]; 53],      // 53 satellites, 3 subframes * 9 words each
     pub BdsStreamAlm: [[u32; 9]; 63],       // 63 almanac pages, 9 words each
