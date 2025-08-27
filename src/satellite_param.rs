@@ -545,7 +545,7 @@ fn geometry_distance(pos1: &KinematicInfo, pos2: &KinematicInfo, los_vector: &mu
 /// Реализация алгоритма Кеплера с поправками для разных ГНСС систем
 fn gps_sat_pos_speed_eph(system: GnssSystem, transmit_time: f64, eph: &GpsEphemeris, pos_vel: &mut KinematicInfo, acc: Option<&mut [f64; 3]>) -> bool {
     // Рассчет временной разности
-    let mut delta_t = transmit_time - eph.toe;
+    let mut delta_t = transmit_time - eph.toe as f64;
     
     // Защита от переполнения недели
     if delta_t > 302400.0 {
@@ -683,7 +683,7 @@ fn gps_sat_pos_speed_eph(system: GnssSystem, transmit_time: f64, eph: &GpsEpheme
     }
     
     // Специальная обработка для BeiDou GEO спутников (svid <= 5)
-    if system == GnssSystem::Beidou && eph.svid <= 5 {
+    if system == GnssSystem::BdsSystem && eph.svid <= 5 {
         // Поворот на -5 градусов
         let cos_5 = 0.99619469809174553; // cos(5°)
         let sin_5 = 0.087155742747658173559; // sin(5°)
@@ -863,7 +863,7 @@ fn tropo_delay(lat: f64, alt: f64, elevation: f64) -> f64 {
 /// Рассчитывает коррекцию часов GPS спутника
 /// Использует полином второго порядка: af0 + af1*dt + af2*dt^2
 fn gps_clock_correction(eph: &GpsEphemeris, transmit_time: f64) -> f64 {
-    let mut time_diff = transmit_time - eph.toc;
+    let mut time_diff = transmit_time - eph.toc as f64;
     
     // Защита от переполнения недели
     if time_diff > 302400.0 {

@@ -91,7 +91,7 @@ impl NavData {
         
         let ephemeris_pool = match system {
             GnssSystem::Gps => &self.gps_ephemeris,
-            GnssSystem::Beidou => &self.bds_ephemeris,
+            GnssSystem::BdsSystem => &self.bds_ephemeris,
             GnssSystem::Galileo => &self.gal_ephemeris,
             _ => return None,
         };
@@ -1346,7 +1346,7 @@ impl IFDataGen {
         // Получаем маску исключений для конкретной системы
         let mask_out = match system {
             GnssSystem::Gps => self.output_param.gps_mask_out as u64,
-            GnssSystem::Beidou => self.output_param.bds_mask_out,
+            GnssSystem::BdsSystem => self.output_param.bds_mask_out,
             GnssSystem::Galileo => self.output_param.galileo_mask_out,
             _ => 0,
         };

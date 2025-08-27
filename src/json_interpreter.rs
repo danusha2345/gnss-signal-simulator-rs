@@ -639,7 +639,7 @@ fn read_alm_file(nav_data: &mut CNavData, filename: &str) {
                 }
             }
         },
-        AlmanacType::Beidou => {
+        AlmanacType::BdsSystem => {
             if let Some(almanacs) = parse_beidou_almanac(&mut lines) {
                 for alm in almanacs {
                     nav_data.add_beidou_almanac(alm);
@@ -1364,7 +1364,7 @@ extern "C" {
 enum AlmanacType {
     Gps,
     Glonass, 
-    Beidou,
+    BdsSystem,
     Galileo,
     Unknown,
 }
@@ -1386,7 +1386,7 @@ fn parse_iono_alpha(line: &str) -> Option<[f64; 4]> {
     if parts.len() >= 4 {
         let mut alpha = [0.0; 4];
         for (i, part) in parts.iter().take(4).enumerate() {
-            if let Ok(value) = part.replace('D', 'E').parse::<f64>() {
+            if let Ok(value) = part.replace("D", "E").parse::<f64>() {
                 alpha[i] = value;
             }
         }
@@ -1403,7 +1403,7 @@ fn parse_iono_beta(line: &str) -> Option<[f64; 4]> {
     if parts.len() >= 4 {
         let mut beta = [0.0; 4];
         for (i, part) in parts.iter().take(4).enumerate() {
-            if let Ok(value) = part.replace('D', 'E').parse::<f64>() {
+            if let Ok(value) = part.replace("D", "E").parse::<f64>() {
                 beta[i] = value;
             }
         }
