@@ -71,6 +71,12 @@ pub struct BCNavBit {
     pub AlmanacToa: u32,
 }
 
+impl Default for BCNavBit {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BCNavBit {
     // CRC24Q table
     const CRC24Q: [u32; 256] = [
@@ -149,7 +155,7 @@ impl BCNavBit {
 
 
     pub fn set_ephemeris(&mut self, svid: i32, eph: &GpsEphemeris) -> i32 {
-        if svid < 1 || svid > 63 || eph.valid == 0 {
+        if !(1..=63).contains(&svid) || eph.valid == 0 {
             return 0;
         }
         if (eph.toe % 300) != 0 {
@@ -555,7 +561,7 @@ impl BCNavBit {
 
     // Interface methods required by navigation bit classes
     pub fn SetEphemeris(&mut self, svid: i32, eph: &GpsEphemeris) -> bool {
-        if svid < 1 || svid > 63 {
+        if !(1..=63).contains(&svid) {
             return false;
         }
         // Convert GpsEphemeris to BDS D1/D2 ephemeris format
@@ -570,10 +576,10 @@ impl BCNavBit {
             
             // Encode key ephemeris parameters into D1/D2 message format
             eph1_data[0] = (svid as u32) << 24; // SVID 
-            eph1_data[1] = (eph.toe as u32 - 14); // Adjust for BDT
-            eph1_data[2] = (eph.sqrtA.to_bits() as u32);
-            eph1_data[3] = (eph.ecc.to_bits() as u32);
-            eph1_data[4] = (eph.i0.to_bits() as u32);
+            eph1_data[1] = eph.toe as u32 - 14; // Adjust for BDT
+            eph1_data[2] = eph.sqrtA.to_bits() as u32;
+            eph1_data[3] = eph.ecc.to_bits() as u32;
+            eph1_data[4] = eph.i0.to_bits() as u32;
             
             // D2 message has different structure (10 words vs 9)
             eph2_data[0] = eph1_data[0]; // Copy SVID
@@ -581,7 +587,7 @@ impl BCNavBit {
             for i in 2..9 {
                 eph2_data[i] = eph1_data[i];
             }
-            eph2_data[9] = (eph.omega_dot.to_bits() as u32); // Additional field in D2
+            eph2_data[9] = eph.omega_dot.to_bits() as u32; // Additional field in D2
             
             self.Ephemeris1[index] = eph1_data;
             self.Ephemeris2[index] = eph2_data;

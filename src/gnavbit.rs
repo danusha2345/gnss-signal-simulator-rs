@@ -28,7 +28,7 @@
 use crate::types::*;
 use crate::COMPOSE_BITS;
 use crate::{gps_time_to_utc, utc_to_glonass_time};
-use crate::constants::*;
+// use crate::constants::*; // Unused import
 
 #[derive(Clone)]
 pub struct GNavBit {
@@ -119,7 +119,7 @@ impl GNavBit {
         // Convert GPS ephemeris to GLONASS ephemeris format
         let glo_eph = self.convert_gps_to_glonass_ephemeris(eph);
         
-        if svid < 1 || svid > 24 || glo_eph.flag == 0 {
+        if !(1..=24).contains(&svid) || glo_eph.flag == 0 {
             return 0;
         }
         
@@ -181,7 +181,7 @@ impl GNavBit {
 
     pub fn SetIonoUtc(&mut self, _iono_param: Option<&IonoParam>, utc_param: Option<&UtcParam>) -> i32 {
         let mut na = 0u32;
-        let mut tau_c = 0i32;
+        let tau_c = 0i32;
         let mut n4 = 0u32;
         let mut tau_gps = 0i32;
         let mut ln5 = 0u32;
@@ -372,7 +372,7 @@ impl GNavBit {
         // Calculate parity bits p1-p7 based on ICD
         for i in 0..85 {
             if ((i + 1) % 2) != 0 { parity[0] ^= data_bits[i] as u8; } // p1
-            if (((i + 1) / 2) % 2) != 0 { parity[1] ^= data_bits[i] as u8; } // p2
+            if (i.div_ceil(2) % 2) != 0 { parity[1] ^= data_bits[i] as u8; } // p2
             if (((i + 1) / 4) % 2) != 0 { parity[2] ^= data_bits[i] as u8; } // p3
             if (((i + 1) / 8) % 2) != 0 { parity[3] ^= data_bits[i] as u8; } // p4
             if (((i + 1) / 16) % 2) != 0 { parity[4] ^= data_bits[i] as u8; } // p5

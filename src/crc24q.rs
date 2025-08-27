@@ -48,7 +48,7 @@ const CRC24Q_TABLE: [u32; 256] = [
 /// # Возвращает
 /// 24-битный CRC код
 pub fn crc24q_encode(bit_stream: &[u32], length_bits: usize) -> u32 {
-    let byte_count = ((length_bits + 31) / 32) * 4;
+    let byte_count = length_bits.div_ceil(32) * 4;
     let mut crc_result = 0u32;
     let mut data = if !bit_stream.is_empty() { bit_stream[0] } else { 0 };
     

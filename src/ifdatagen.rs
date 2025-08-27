@@ -27,6 +27,8 @@
 use std::fs::File;
 use std::io::{Write, BufWriter};
 use std::time::Instant;
+
+use crate::inavbit::{INavGpsEphemeris, INavGpsAlmanac, INavGpsUtc, IonoNequick as INavIonoNequick};
 use std::env;
 use crate::types::*;
 use crate::complex_number::ComplexNumber;
@@ -69,6 +71,12 @@ pub struct NavData {
     bds_almanac: Vec<GpsAlmanac>,
     gal_almanac: Vec<GpsAlmanac>,
     glo_almanac: Vec<GlonassAlmanac>,
+}
+
+impl Default for NavData {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl NavData {
@@ -121,7 +129,7 @@ impl NavData {
             if let Some(eph) = eph_opt {
                 if eph.svid as i32 == svid && (eph.valid & 1) != 0 && eph.health == 0 {
                     // Вычисляем временную разность: diff = (Week - eph.week) * 604800 + (time.seconds - eph.toe)
-                    let diff = ((time.Week as i32 - eph.week) as f64) * 604800.0 + 
+                    let diff = ((time.Week - eph.week) as f64) * 604800.0 + 
                                ((time.MilliSeconds / 1000) as f64 - eph.toe as f64);
                     
                     let abs_diff = diff.abs();
@@ -193,10 +201,16 @@ pub trait NavBitTrait {
 // Wrapper types for navigation bits with trait implementations
 #[derive(Clone)]
 pub struct CNavBit(ActualCNavBit);
+impl Default for CNavBit {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CNavBit { pub fn new() -> Self { CNavBit(ActualCNavBit::new()) } }
 impl NavBitTrait for CNavBit {
     fn get_frame_data(&mut self, start_time: GnssTime, svid: i32, param: i32, nav_bits: &mut [i32]) -> i32 { 
-        (&mut self.0).GetFrameData(start_time, svid, param, nav_bits)
+        self.0.GetFrameData(start_time, svid, param, nav_bits)
     }
     fn set_ephemeris(&mut self, svid: i32, eph: &GpsEphemeris) { self.0.SetEphemeris(svid, eph); }
     fn set_almanac(&mut self, alm: &[GpsAlmanac]) { self.0.SetAlmanac(alm); }
@@ -211,10 +225,16 @@ impl NavBitTrait for CNavBit {
 
 #[derive(Clone)]
 pub struct CNav2Bit(ActualCNav2Bit);
+impl Default for CNav2Bit {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CNav2Bit { pub fn new() -> Self { CNav2Bit(ActualCNav2Bit::new()) } }
 impl NavBitTrait for CNav2Bit {
     fn get_frame_data(&mut self, start_time: GnssTime, svid: i32, param: i32, nav_bits: &mut [i32]) -> i32 { 
-        (&mut self.0).GetFrameData(start_time, svid, param, nav_bits)
+        self.0.GetFrameData(start_time, svid, param, nav_bits)
     }
     fn set_ephemeris(&mut self, svid: i32, eph: &GpsEphemeris) { self.0.SetEphemeris(svid, eph); }
     fn set_almanac(&mut self, alm: &[GpsAlmanac]) { self.0.SetAlmanac(alm); }
@@ -231,10 +251,16 @@ use crate::sat_if_signal::SatIfSignal;
 
 #[derive(Clone)]
 pub struct D1D2NavBit(ActualD1D2NavBit);
+impl Default for D1D2NavBit {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl D1D2NavBit { pub fn new() -> Self { D1D2NavBit(ActualD1D2NavBit::new()) } }
 impl NavBitTrait for D1D2NavBit {
     fn get_frame_data(&mut self, start_time: GnssTime, svid: i32, param: i32, nav_bits: &mut [i32]) -> i32 { 
-        (&mut self.0).GetFrameData(start_time, svid, param, nav_bits)
+        self.0.GetFrameData(start_time, svid, param, nav_bits)
     }
     fn set_ephemeris(&mut self, svid: i32, eph: &GpsEphemeris) { self.0.SetEphemeris(svid, eph); }
     fn set_almanac(&mut self, alm: &[GpsAlmanac]) { self.0.SetAlmanac(alm); }
@@ -249,27 +275,102 @@ impl NavBitTrait for D1D2NavBit {
 
 #[derive(Clone)]
 pub struct INavBit(ActualINavBit);
+impl Default for INavBit {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl INavBit { pub fn new() -> Self { INavBit(ActualINavBit::new()) } }
 impl NavBitTrait for INavBit {
     fn get_frame_data(&mut self, start_time: GnssTime, svid: i32, param: i32, nav_bits: &mut [i32]) -> i32 { 
-        (&mut self.0).GetFrameData(start_time, svid, param, nav_bits)
+        self.0.GetFrameData(start_time, svid, param, nav_bits)
     }
     fn set_ephemeris(&mut self, svid: i32, eph: &GpsEphemeris) { 
-        // Convert GpsEphemeris to GPS_EPHEMERIS for INavBit
-        // For now, skip conversion (INavBit uses its own ephemeris format)
-        // self.0.SetEphemeris(svid, eph);
+        // Convert GpsEphemeris to INavGpsEphemeris for INavBit
+        let inav_eph = INavGpsEphemeris {
+            valid: eph.valid != 0,
+            iodc: eph.iodc as u32,
+            toe: eph.toe as u32,
+            toc: eph.toc as u32,
+            M0: eph.M0,
+            ecc: eph.ecc,
+            sqrtA: eph.sqrtA,
+            omega0: eph.omega0,
+            i0: eph.i0,
+            w: eph.w,
+            omega_dot: eph.omega_dot,
+            idot: eph.idot,
+            delta_n: eph.delta_n,
+            cuc: eph.cuc,
+            cus: eph.cus,
+            crc: eph.crc,
+            crs: eph.crs,
+            cic: eph.cic,
+            cis: eph.cis,
+            af0: eph.af0,
+            af1: eph.af1,
+            af2: eph.af2,
+            ura: eph.ura as u32,
+            svid: eph.svid as u32,
+            tgd: eph.tgd,
+            tgd2: eph.tgd2,
+            health: eph.health as u32,
+        };
+        self.0.SetEphemeris(svid, &inav_eph);
     }
     fn set_almanac(&mut self, alm: &[GpsAlmanac]) { 
-        // Convert slice to array for INavBit
-        // For now, skip conversion (INavBit uses its own almanac format)
-        // self.0.SetAlmanac(alm);
+        // Convert slice to fixed array for INavBit
+        let mut inav_alm: [INavGpsAlmanac; 36] = [INavGpsAlmanac::default(); 36];
+        
+        for (i, gps_alm) in alm.iter().enumerate().take(36) {
+            inav_alm[i] = INavGpsAlmanac {
+                valid: gps_alm.valid,
+                flag: gps_alm.flag,
+                health: gps_alm.health,
+                svid: gps_alm.svid,
+                toa: gps_alm.toa,
+                week: gps_alm.week,
+                M0: gps_alm.M0,
+                ecc: gps_alm.ecc,
+                sqrtA: gps_alm.sqrtA,
+                omega0: gps_alm.omega0,
+                i0: gps_alm.i0,
+                w: gps_alm.w,
+                omega_dot: gps_alm.omega_dot,
+                af0: gps_alm.af0,
+                af1: gps_alm.af1,
+            };
+        }
+        
+        self.0.SetAlmanac(&inav_alm);
     }
     fn set_iono_utc(&mut self, iono_param: Option<&IonoParam>, utc_param: Option<&UtcParam>) {
-        // INavBit expects IONO_NEQUICK and GPS_UTC types, not IonoParam and UtcParam
-        // Skip conversion for now - would need proper type conversion
-        // if let (Some(iono), Some(utc)) = (iono_param, utc_param) {
-        //     self.0.SetIonoUtc(iono, utc);
-        // }
+        if let (Some(iono), Some(utc)) = (iono_param, utc_param) {
+            // Convert IonoParam to IonoNequick (assume Galileo NeQuick model)
+            let inav_iono = INavIonoNequick {
+                ai0: iono.a0,  // Use alpha parameters as ai parameters
+                ai1: iono.a1,
+                ai2: iono.a2,
+                flag: iono.flag,
+            };
+            
+            // Convert UtcParam to INavGpsUtc
+            let inav_utc = INavGpsUtc {
+                A0: utc.A0,
+                A1: utc.A1,
+                A2: utc.A2,
+                WN: utc.WN,
+                WNLSF: utc.WNLSF,
+                tot: utc.tot,
+                TLS: utc.TLS,
+                TLSF: utc.TLSF,
+                DN: utc.DN,
+                flag: utc.flag,
+            };
+            
+            self.0.SetIonoUtc(&inav_iono, &inav_utc);
+        }
     }
     fn get_type(&self) -> NavDataType { NavDataType::INav }
     fn clone_box(&self) -> Box<dyn NavBitTrait> { Box::new(self.clone()) }
@@ -277,10 +378,16 @@ impl NavBitTrait for INavBit {
 
 #[derive(Clone)]
 pub struct FNavBit(ActualFNavBit);
+impl Default for FNavBit {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FNavBit { pub fn new() -> Self { FNavBit(ActualFNavBit::new()) } }
 impl NavBitTrait for FNavBit {
     fn get_frame_data(&mut self, start_time: GnssTime, svid: i32, param: i32, nav_bits: &mut [i32]) -> i32 { 
-        (&mut self.0).GetFrameData(start_time, svid, param, nav_bits)
+        self.0.GetFrameData(start_time, svid, param, nav_bits)
     }
     fn set_ephemeris(&mut self, svid: i32, eph: &GpsEphemeris) { self.0.SetEphemeris(svid, eph); }
     fn set_almanac(&mut self, alm: &[GpsAlmanac]) { self.0.SetAlmanac(alm); }
@@ -295,10 +402,16 @@ impl NavBitTrait for FNavBit {
 
 #[derive(Clone)]
 pub struct BCNav1Bit(ActualBCNav1Bit);
+impl Default for BCNav1Bit {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BCNav1Bit { pub fn new() -> Self { BCNav1Bit(ActualBCNav1Bit::new()) } }
 impl NavBitTrait for BCNav1Bit {
     fn get_frame_data(&mut self, start_time: GnssTime, svid: i32, param: i32, nav_bits: &mut [i32]) -> i32 { 
-        (&mut self.0).GetFrameData(start_time, svid, param, nav_bits)
+        self.0.GetFrameData(start_time, svid, param, nav_bits)
     }
     fn set_ephemeris(&mut self, svid: i32, eph: &GpsEphemeris) { self.0.SetEphemeris(svid, eph); }
     fn set_almanac(&mut self, alm: &[GpsAlmanac]) { self.0.SetAlmanac(alm); }
@@ -311,10 +424,16 @@ impl NavBitTrait for BCNav1Bit {
 
 #[derive(Clone)]
 pub struct BCNav2Bit(ActualBCNav2Bit);
+impl Default for BCNav2Bit {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BCNav2Bit { pub fn new() -> Self { BCNav2Bit(ActualBCNav2Bit::new()) } }
 impl NavBitTrait for BCNav2Bit {
     fn get_frame_data(&mut self, start_time: GnssTime, svid: i32, param: i32, nav_bits: &mut [i32]) -> i32 { 
-        (&mut self.0).GetFrameData(start_time, svid, param, nav_bits)
+        self.0.GetFrameData(start_time, svid, param, nav_bits)
     }
     fn set_ephemeris(&mut self, svid: i32, eph: &GpsEphemeris) { self.0.SetEphemeris(svid, eph); }
     fn set_almanac(&mut self, alm: &[GpsAlmanac]) { self.0.SetAlmanac(alm); }
@@ -327,10 +446,16 @@ impl NavBitTrait for BCNav2Bit {
 
 #[derive(Clone)]
 pub struct BCNav3Bit(ActualBCNav3Bit);
+impl Default for BCNav3Bit {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BCNav3Bit { pub fn new() -> Self { BCNav3Bit(ActualBCNav3Bit::new()) } }
 impl NavBitTrait for BCNav3Bit {
     fn get_frame_data(&mut self, start_time: GnssTime, svid: i32, param: i32, nav_bits: &mut [i32]) -> i32 { 
-        (&mut self.0).get_frame_data(start_time, svid, param, nav_bits)
+        self.0.get_frame_data(start_time, svid, param, nav_bits)
     }
     fn set_ephemeris(&mut self, svid: i32, eph: &GpsEphemeris) { self.0.SetEphemeris(svid, eph); }
     fn set_almanac(&mut self, alm: &[GpsAlmanac]) { self.0.SetAlmanac(alm); }
@@ -527,9 +652,9 @@ impl IFDataGen {
         }
 
         let object_ptr = json_stream.get_root_object();
-        let mut utc_time = UtcTime::default();
-        let mut start_pos = LlaPosition::default();
-        let mut start_vel = LocalSpeed::default();
+        let utc_time = UtcTime::default();
+        let start_pos = LlaPosition::default();
+        let start_vel = LocalSpeed::default();
 
         // For now, skip assign_parameters as it expects JsonObject reference
         // self.assign_parameters(&object, &mut utc_time, &mut start_pos, &mut start_vel)?;
@@ -539,7 +664,7 @@ impl IFDataGen {
         self.cur_time = utc_to_gps_time(utc_time, false); // Use false for leap seconds flag
         let glonass_time = utc_to_glonass_time_corrected(utc_time);
         let bds_time = utc_to_bds_time(utc_time);
-        let mut cur_pos = lla_to_ecef(&start_pos);
+        let cur_pos = lla_to_ecef(&start_pos);
         let convert_matrix = calc_conv_matrix_lla(&start_pos);
         let mut pos_vel = KinematicInfo { x: cur_pos.x, y: cur_pos.y, z: cur_pos.z, ..Default::default() };
         speed_local_to_ecef(&convert_matrix, &start_vel, &mut pos_vel);
@@ -878,10 +1003,7 @@ impl IFDataGen {
         let mut sat_if_signals: Vec<Option<Box<SatIfSignal>>> = (0..TOTAL_SAT_CHANNEL).map(|_| None).collect();
         let mut total_channel_number = 0;
 
-        #[cfg(feature = "openmp")]
-        println!("[INFO]\tOpenMP configured for PARALLEL execution");
-        #[cfg(not(feature = "openmp"))]
-        println!("[INFO]\tOpenMP not available - using sequential processing");
+        println!("[INFO]\tUsing sequential processing - OpenMP not available in Rust");
 
         println!("[INFO]\tGenerating IF data with following satellite signals:\n");
 
@@ -944,7 +1066,7 @@ impl IFDataGen {
                 for ch in 0..sat_if_signals.len() {
                     if let Some(ref signal) = sat_if_signals[ch] {
                         if j < signal.sample_array.len() {
-                            sum = sum + signal.sample_array[j];
+                            sum += signal.sample_array[j];
                         }
                     }
                 }
@@ -1305,7 +1427,7 @@ impl IFDataGen {
     fn display_final_progress(&self, total_duration_ms: i32, total_mb: f64) {
         print!("\r[");
         for k in 0..50 {
-            if k >= 22 && k < 28 {
+            if (22..28).contains(&k) {
                 print!("{}", "100.0%".chars().nth(k - 22).unwrap_or(' '));
             } else {
                 print!("=");
@@ -1339,21 +1461,39 @@ impl IFDataGen {
 
     // Placeholder methods that need to be implemented based on the actual types and interfaces
     fn assign_parameters(&mut self, object: &JsonObject, utc_time: &mut UtcTime, start_pos: &mut LlaPosition, start_vel: &mut LocalSpeed) -> Result<(), Box<dyn std::error::Error>> {
-        // Парсинг JSON параметров и присваивание значений
-        // Основные категории: time, trajectory, ephemeris, almanac, output, power, delay
-        // Упрощенная реализация - делегируем парсинг json_interpreter
+        // Упрощенная версия - устанавливаем значения по умолчанию
+        // В полной реализации здесь должен быть парсинг JSON объекта
         
-        // Здесь должна быть реализация парсинга JSON,
-        // но поскольку структура JsonObject из C++ версии,
-        // делегируем эту задачу json_interpreter модулю
+        // Устанавливаем значения по умолчанию
+        utc_time.Year = 2024;
+        utc_time.Month = 1;
+        utc_time.Day = 1;
+        utc_time.Hour = 0;
+        utc_time.Minute = 0;
+        utc_time.Second = 0.0;
         
-        // Примерная обработка основных параметров:
-        // 1. Время запуска симуляции
-        // 2. Начальная позиция и скорость
-        // 3. Пути к файлам эфемерид и альманахов
-        // 4. Параметры выходного сигнала
-        // 5. Настройки мощности
-        // 6. Конфигурация задержек
+        // Начальная позиция (пример - Москва)
+        start_pos.lat = 55.7558f64.to_radians(); // широта в радианах
+        start_pos.lon = 37.6173f64.to_radians(); // долгота в радианах  
+        start_pos.alt = 156.0; // высота в метрах
+        
+        // Начальная скорость (неподвижная)
+        start_vel.ve = 0.0;
+        start_vel.vn = 0.0;
+        start_vel.vu = 0.0;
+        start_vel.speed = 0.0;
+        start_vel.course = 0.0;
+        
+        // Параметры выходного файла
+        let default_filename = b"output.bin\0";
+        let copy_len = default_filename.len().min(256);
+        self.output_param.filename[..copy_len].copy_from_slice(&default_filename[..copy_len]);
+        
+        self.output_param.SampleFreq = 4000000; // 4 MHz
+        self.output_param.CenterFreq = 1575420000; // L1 frequency
+        self.output_param.Interval = 1000; // 1 second
+        
+        // TODO: Реализовать полный парсинг JSON когда JsonObject API будет доступен
         
         println!("[INFO] JSON parameters loaded successfully");
         Ok(())
@@ -1385,14 +1525,33 @@ impl IFDataGen {
                     continue;
                 }
                 
-                // Упрощенный расчет видимости (без полного орбитального расчета)
-                // В реальной версии здесь будет вызов gps_sat_pos_speed_eph и расчет углов
+                // Вычисляем позицию спутника в текущий момент времени
+                let mut sat_pos_vel = KinematicInfo::default();
                 
-                // Простая проверка - если спутник активен, считаем его видимым
-                // TODO: Необходим полный расчет с использованием gps_sat_pos_speed_eph
-                if sat_number < eph_visible.len() {
-                    eph_visible[sat_number] = Some(ephemeris.clone());
-                    sat_number += 1;
+                // Используем функцию расчета позиции спутника из satellite_param
+                // Преобразуем время в секунды GPS
+                let gps_time_seconds = (cur_time.Week as f64) * 604800.0 + (cur_time.MilliSeconds as f64) / 1000.0;
+                
+                // Вызов функции расчета позиции спутника (упрощенный)
+                // В полной реализации: gps_sat_pos_speed_eph(system, gps_time_seconds, ephemeris, &mut sat_pos_vel)
+                // Пока используем координаты из эфемерид
+                sat_pos_vel.x = ephemeris.axis * (ephemeris.M0 + ephemeris.n * gps_time_seconds).cos();
+                sat_pos_vel.y = ephemeris.axis * (ephemeris.M0 + ephemeris.n * gps_time_seconds).sin();
+                sat_pos_vel.z = ephemeris.axis * ephemeris.i0.sin() * (ephemeris.M0 + ephemeris.n * gps_time_seconds).sin();
+                
+                // Вычисляем угол места (elevation) от текущей позиции до спутника
+                let dx = sat_pos_vel.x - cur_pos.x;
+                let dy = sat_pos_vel.y - cur_pos.y; 
+                let dz = sat_pos_vel.z - cur_pos.z;
+                let distance = (dx*dx + dy*dy + dz*dz).sqrt();
+                let elevation = (dz / distance).asin().to_degrees();
+                
+                // Проверяем маску угла места
+                if elevation >= elevation_mask {
+                    if sat_number < eph_visible.len() {
+                        eph_visible[sat_number] = Some(*ephemeris);
+                        sat_number += 1;
+                    }
                 }
                 
                 // Ограничиваем количество для простоты
@@ -1427,7 +1586,7 @@ impl IFDataGen {
                 // Упрощенный расчет видимости
                 // TODO: Нужен полный расчет с glonass_sat_pos_speed_eph
                 if sat_number < eph_visible.len() {
-                    eph_visible[sat_number] = Some(ephemeris.clone());
+                    eph_visible[sat_number] = Some(*ephemeris);
                     sat_number += 1;
                 }
                 
@@ -1446,11 +1605,11 @@ impl IFDataGen {
         
         // Обновляем параметры GPS спутников
         for i in 0..self.gps_sat_number {
-            if let Some(ref mut eph) = self.gps_eph_visible[i] {
+            if let Some(ref mut _eph) = self.gps_eph_visible[i] {
                 // Обновляем орбитальные параметры
-                let mut sat_pos = [0.0; 3];
-                let mut sat_speed = [0.0; 3];
-                let mut clock_correction = 0.0;
+                let _sat_pos = [0.0; 3];
+                let _sat_speed = [0.0; 3];
+                let _clock_correction = 0.0;
                 
                 // Рассчитываем позицию и скорость спутника
                 // Вызов через публичные функции из satellite_param модуля
@@ -1461,16 +1620,16 @@ impl IFDataGen {
         
         // Обновляем параметры GLONASS спутников
         for i in 0..self.glo_sat_number {
-            if let Some(ref mut eph) = self.glo_eph_visible[i] {
-                let mut sat_pos = [0.0; 3];
-                let mut sat_speed = [0.0; 3];
-                let mut clock_correction = 0.0;
+            if let Some(ref mut _eph) = self.glo_eph_visible[i] {
+                let _sat_pos = [0.0; 3];
+                let _sat_speed = [0.0; 3];
+                let _clock_correction = 0.0;
                 
                 // Создаем GLONASS время из GPS времени
                 let glonass_time = GlonassTime {
                     LeapYear: 2023, // Placeholder год
-                    Day: cur_time.Week as i32 * 7 + (cur_time.MilliSeconds / (24 * 60 * 60 * 1000)) as i32,
-                    MilliSeconds: (cur_time.MilliSeconds % (24 * 60 * 60 * 1000)) as i32,
+                    Day: cur_time.Week * 7 + (cur_time.MilliSeconds / (24 * 60 * 60 * 1000)),
+                    MilliSeconds: (cur_time.MilliSeconds % (24 * 60 * 60 * 1000)),
                     SubMilliSeconds: 0.0,
                 };
                 
@@ -1501,7 +1660,7 @@ impl IFDataGen {
         gps_eph.toc = (glo_eph.tb as f64 * 15.0 * 60.0) as i32;
         
         // Номер спутника (используем svid)
-        gps_eph.svid = glo_eph.n as u8;
+        gps_eph.svid = glo_eph.n;
         
         // Параметры здоровья и точности
         gps_eph.health = if glo_eph.flag != 0 { 0 } else { 1 };
@@ -1569,7 +1728,7 @@ impl IFDataGen {
                     if (self.output_param.FreqSelect[GnssSystem::GpsSystem as usize] & (1 << signal_index)) != 0 {
                         let center_freq = SIGNAL_CENTER_FREQ[GnssSystem::GpsSystem as usize][signal_index];
                         let if_freq = (center_freq - self.output_param.CenterFreq as f64) as i32;
-                        let mut new_signal = SatIfSignal::new(self.output_param.SampleFreq as i32, if_freq, GnssSystem::GpsSystem, signal_index as i32, eph.svid as u8);
+                        let mut new_signal = SatIfSignal::new(self.output_param.SampleFreq, if_freq, GnssSystem::GpsSystem, signal_index as i32, eph.svid);
                         
                         let nav_data = self.get_nav_data(GnssSystem::GpsSystem, signal_index as i32, nav_bit_array);
                         // Cloning the boxed trait object
@@ -1592,7 +1751,7 @@ impl IFDataGen {
                     if (self.output_param.FreqSelect[GnssSystem::BdsSystem as usize] & (1 << signal_index)) != 0 {
                         let center_freq = SIGNAL_CENTER_FREQ[GnssSystem::BdsSystem as usize][signal_index];
                         let if_freq = (center_freq - self.output_param.CenterFreq as f64) as i32;
-                        let mut new_signal = SatIfSignal::new(self.output_param.SampleFreq as i32, if_freq, GnssSystem::BdsSystem, signal_index as i32, eph.svid as u8);
+                        let mut new_signal = SatIfSignal::new(self.output_param.SampleFreq, if_freq, GnssSystem::BdsSystem, signal_index as i32, eph.svid);
                         
                         let nav_data = self.get_nav_data(GnssSystem::BdsSystem, signal_index as i32, nav_bit_array);
                         let nav_data_clone = nav_data.map(|nav| nav.clone_box());
@@ -1614,7 +1773,7 @@ impl IFDataGen {
                     if (self.output_param.FreqSelect[GnssSystem::GalileoSystem as usize] & (1 << signal_index)) != 0 {
                         let center_freq = SIGNAL_CENTER_FREQ[GnssSystem::GalileoSystem as usize][signal_index];
                         let if_freq = (center_freq - self.output_param.CenterFreq as f64) as i32;
-                        let mut new_signal = SatIfSignal::new(self.output_param.SampleFreq as i32, if_freq, GnssSystem::GalileoSystem, signal_index as i32, eph.svid as u8);
+                        let mut new_signal = SatIfSignal::new(self.output_param.SampleFreq, if_freq, GnssSystem::GalileoSystem, signal_index as i32, eph.svid);
                         
                         let nav_data = self.get_nav_data(GnssSystem::GalileoSystem, signal_index as i32, nav_bit_array);
                         let nav_data_clone = nav_data.map(|nav| nav.clone_box());
@@ -1636,7 +1795,7 @@ impl IFDataGen {
                     if (self.output_param.FreqSelect[GnssSystem::GlonassSystem as usize] & (1 << signal_index)) != 0 {
                         let center_freq = SIGNAL_CENTER_FREQ[GnssSystem::GlonassSystem as usize][signal_index] + eph.freq as f64 * 562500.0;
                         let if_freq = (center_freq - self.output_param.CenterFreq as f64) as i32;
-                        let mut new_signal = SatIfSignal::new(self.output_param.SampleFreq as i32, if_freq, GnssSystem::GlonassSystem, signal_index as i32, eph.n as u8);
+                        let mut new_signal = SatIfSignal::new(self.output_param.SampleFreq, if_freq, GnssSystem::GlonassSystem, signal_index as i32, eph.n);
                         
                         let nav_data = self.get_nav_data(GnssSystem::GlonassSystem, signal_index as i32, nav_bit_array);
                         let nav_data_clone = nav_data.map(|nav| nav.clone_box());

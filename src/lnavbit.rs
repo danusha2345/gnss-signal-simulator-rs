@@ -29,7 +29,7 @@ use std::f64::consts::PI;
 // Import types from other modules
 use crate::{GpsEphemeris, GpsAlmanac, IonoParam, UtcParam};
 use crate::types::GnssTime;
-use crate::constants::*;
+// use crate::constants::*; // Unused import
 
 // Parity table for GPS LNAV
 const PARITY_TABLE: [[u8; 16]; 6] = [
@@ -53,6 +53,12 @@ const PAGE_ID: [[i32; 25]; 2] = [
 pub struct LNavBit {
     gps_stream123: [[[u32; 8]; 3]; 32], // 32 satellites, 3 subframes, 8 words each
     gps_stream45: [[[u32; 8]; 25]; 2],  // 2 subframes (4&5), 25 pages, 8 words each
+}
+
+impl Default for LNavBit {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl LNavBit {
@@ -84,7 +90,7 @@ impl LNavBit {
             // subframe 4/5, further determine page number
             let page = (tow / 5) % 25;
             &self.gps_stream45[(subframe - 4) as usize][page as usize]
-        } else if svid >= 1 && svid <= 32 {
+        } else if (1..=32).contains(&svid) {
             &self.gps_stream123[(svid - 1) as usize][(subframe - 1) as usize]
         } else {
             return 1;
@@ -115,10 +121,10 @@ impl LNavBit {
         // WORD 3 to WORD 10
         for i in 0..8 {
             cur_word <<= 30; // put D29* and D30* into bit31 and bit30
-            cur_word |= ((stream[i] & 0xffffff) << 6); // fill in d1 to d24 into bit29 to bit6
+            cur_word |= (stream[i] & 0xffffff) << 6; // fill in d1 to d24 into bit29 to bit6
             if subframe == 1 && i == 0 {
                 // WORD3 of subframe 1, put in week number from bit 29~20
-                cur_word |= ((start_time.Week as u32 & 0x3ff) << 20);
+                cur_word |= (start_time.Week as u32 & 0x3ff) << 20;
             }
             if (cur_word & 0x40000000) != 0 {
                 // convert d1 to d24 into D1 to D24
@@ -136,7 +142,7 @@ impl LNavBit {
     }
 
     pub fn set_ephemeris(&mut self, svid: i32, eph: &GpsEphemeris) -> i32 {
-        if svid < 1 || svid > 32 || eph.valid == 0 {
+        if !(1..=32).contains(&svid) || eph.valid == 0 {
             return 0;
         }
         Self::compose_gps_stream123(eph, &mut self.gps_stream123[(svid - 1) as usize]);
@@ -234,7 +240,7 @@ impl LNavBit {
         let int_value = Self::unscale_int(ephemeris.tgd, -31);
         stream[0][4] = Self::compose_bits(int_value, 0, 8);
         stream[0][5] = Self::compose_bits(ephemeris.iodc as i32, 16, 8);
-        stream[0][5] |= Self::compose_bits((ephemeris.toc as i32) >> 4, 0, 16);
+        stream[0][5] |= Self::compose_bits(ephemeris.toc >> 4, 0, 16);
         let int_value = Self::unscale_int(ephemeris.af2, -55);
         stream[0][6] = Self::compose_bits(int_value, 16, 8);
         let int_value = Self::unscale_int(ephemeris.af1, -43);
@@ -261,7 +267,7 @@ impl LNavBit {
         let uint_value = Self::unscale_uint(ephemeris.sqrtA, -19);
         stream[1][5] |= Self::compose_bits((uint_value >> 24) as i32, 0, 8);
         stream[1][6] = Self::compose_bits(uint_value as i32, 0, 24);
-        stream[1][7] = Self::compose_bits((ephemeris.toe as i32) >> 4, 8, 16);
+        stream[1][7] = Self::compose_bits(ephemeris.toe >> 4, 8, 16);
         stream[1][7] |= Self::compose_bits((ephemeris.flag >> 3) as i32, 7, 1);
 
         // subframe 3, Stream[16]~Stream[23]
@@ -296,7 +302,7 @@ impl LNavBit {
         stream[0] = Self::compose_bits(almanac.svid as i32 + 0x40, 16, 8);
         let uint_value = Self::unscale_uint(almanac.ecc, -21);
         stream[0] |= Self::compose_bits(uint_value as i32, 0, 16);
-        stream[1] = Self::compose_bits((almanac.toa >> 12) as i32, 16, 8);
+        stream[1] = Self::compose_bits(almanac.toa >> 12, 16, 8);
         let int_value = Self::unscale_int(almanac.i0 / PI - 0.3, -19);
         stream[1] |= Self::compose_bits(int_value, 0, 16);
         let int_value = Self::unscale_int(almanac.omega_dot / PI, -38);
@@ -326,8 +332,8 @@ impl LNavBit {
         // Find first valid almanac to get toa and week number
         for i in 0..32 {
             if (almanac[i].valid & 1) != 0 {
-                toa = (almanac[i].toa >> 12) as i32;
-                week = (almanac[i].week & 0xff) as i32;
+                toa = almanac[i].toa >> 12;
+                week = almanac[i].week & 0xff;
                 break;
             }
         }

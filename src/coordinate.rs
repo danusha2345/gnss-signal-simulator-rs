@@ -30,8 +30,8 @@ use crate::constants::*;
 use std::f64::consts::PI;
 
 const COARSE_STEP: f64 = 30.0;
-const COS_5: f64 = 0.99619469809174553;
-const SIN_5: f64 = 0.087155742747658173559;
+const COS_5: f64 = 0.996_194_698_091_745_5;
+const SIN_5: f64 = 0.087_155_742_747_658_18;
 const REL_HUMI: f64 = 0.7;
 
 /// GPS clock correction calculation
@@ -130,7 +130,7 @@ pub fn gps_sat_pos_speed_eph(
     let dik_dot = ((eph.cis * cos_temp) - (eph.cic * sin_temp)) * phi_dot;
     rk_dot += drk_dot;
     uk_dot += duk_dot;
-    let mut ik_dot = eph.idot + dik_dot;
+    let ik_dot = eph.idot + dik_dot;
     
     // calculate intermediate variables for acceleration
     let (rk_dot2, uk_dot2, ik_dot2) = if acc.is_some() {
@@ -233,11 +233,7 @@ pub fn gps_sat_pos_speed_eph(
     // if ephemeris expire, return false
     if delta_t.abs() > 7200.0 {
         false
-    } else if delta_t.abs() > 3600.0 && system == GnssSystem::BdsSystem {
-        false
-    } else {
-        true
-    }
+    } else { !(delta_t.abs() > 3600.0 && system == GnssSystem::BdsSystem) }
 }
 
 /// GLONASS satellite position and velocity calculation from ephemeris
@@ -255,7 +251,7 @@ pub fn glonass_sat_pos_speed_eph(
         delta_t += 86400.0;
     }
     
-    let delta_t1 = if (eph.flag & 0x2) == 0 {
+    let _delta_t_residual = if (eph.flag & 0x2) == 0 {
         // satellite position and velocity in CIS coordinate
         let mut state = [
             eph.x, eph.y, eph.z,
@@ -547,7 +543,7 @@ pub fn gps_iono_delay(
         lat_rad = -0.416;
     }
     
-    let mut lon_rad = lon / PI + psi * azimuth.sin() / (lat_rad * PI).cos();
+    let lon_rad = lon / PI + psi * azimuth.sin() / (lat_rad * PI).cos();
     lat_rad += 0.064 * ((lon_rad - 1.617) * PI).cos();
     
     let f = 1.0 + 16.0 * (0.53 - el).powi(3);
@@ -586,7 +582,7 @@ pub fn gps_iono_delay(
 pub fn tropo_delay(lat: f64, altitude: f64, elevation: f64) -> f64 {
     const T0: f64 = 273.16 + 15.0; // average temperature at sea level
     
-    if altitude < -100.0 || altitude > 1e4 || elevation <= 0.0 {
+    if !(-100.0..=1e4).contains(&altitude) || elevation <= 0.0 {
         return 0.0;
     }
     

@@ -7,12 +7,10 @@
 //----------------------------------------------------------------------
 
 use crate::complex_number::ComplexNumber;
-use crate::gnsstime::*;
 use crate::prngenerate::*;
 use crate::types::{SatelliteParam, GnssSystem, GnssTime};
 use crate::satellite_param::{get_travel_time, get_carrier_phase, get_transmit_time};
 use crate::satellite_signal::SatelliteSignal;
-use crate::navbit::NavBit;
 use crate::constants::*;
 use crate::fastmath::FastMath;
 use crate::ifdatagen::NavBitTrait;
@@ -44,8 +42,8 @@ impl SatIfSignal {
     pub fn new(ms_sample_number: i32, sat_if_freq: i32, sat_system: GnssSystem, sat_signal_index: i32, sat_id: u8) -> Self {
         let prn = PrnGenerate::new(sat_system, sat_signal_index, sat_id as i32);
         let (data_len, pilot_len) = if let Some(attr) = &prn.attribute {
-            let mut dl = (attr.data_period * attr.chip_rate) as i32;
-            let mut pl = (attr.pilot_period * attr.chip_rate) as i32;
+            let mut dl = attr.data_period * attr.chip_rate;
+            let mut pl = attr.pilot_period * attr.chip_rate;
 
             if sat_system == GnssSystem::GpsSystem && sat_signal_index == SIGNAL_INDEX_L2C as i32 {
                 dl = 10230;
@@ -85,7 +83,7 @@ impl SatIfSignal {
     }
 
     pub fn init_state(&mut self, cur_time: GnssTime, p_sat_param: &SatelliteParam, p_nav_data: Option<Box<dyn NavBitTrait>>) {
-        self.sat_param = Some(p_sat_param.clone());
+        self.sat_param = Some(*p_sat_param);
         if !self.satellite_signal.set_signal_attribute(self.system, self.signal_index, p_nav_data, self.svid) {
             // In Rust, we might handle this by setting self.satellite_signal.nav_data to None,
             // but set_signal_attribute already takes ownership, so we'd need to adjust its signature
@@ -222,18 +220,14 @@ impl SatIfSignal {
                         if symbol_pos == 1 || symbol_pos == 5 || symbol_pos == 7 || symbol_pos == 30 {
                             let sub_chip_pos = chip_count % 12;
                             if sub_chip_pos >= 6 { pilot_val *= -1.0; }
-                        } else {
-                            if (chip_count & 1) != 0 { pilot_val *= -1.0; }
-                        }
+                        } else if (chip_count & 1) != 0 { pilot_val *= -1.0; }
                         prn_value += pilot_val;
                     } else if is_cboc && is_boc {
                         let chip_in_code = chip_count % 4092;
                         if (chip_in_code % 11) == 0 {
                             let boc6_phase = chip_count % 12;
                             if boc6_phase >= 6 { pilot_val *= -1.0; }
-                        } else {
-                            if (chip_count & 1) != 0 { pilot_val *= -1.0; }
-                        }
+                        } else if (chip_count & 1) != 0 { pilot_val *= -1.0; }
                         prn_value += pilot_val;
                     } else {
                         if is_boc && (chip_count & 1) != 0 {

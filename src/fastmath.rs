@@ -33,7 +33,7 @@ impl FastMath {
         INIT.call_once(|| {
             unsafe {
                 for i in 0..65536 {
-                    let angle = (2.0 * std::f64::consts::PI * i as f64) / 65536 as f64;
+                    let angle = (2.0 * std::f64::consts::PI * i as f64) / 65536_f64;
                     SIN_LUT[i] = angle.sin();
                     COS_LUT[i] = angle.cos();
                 }

@@ -19,20 +19,17 @@
 //
 //----------------------------------------------------------------------
 
-use std::mem;
 use crate::complex_number::ComplexNumber;
-use crate::gnsstime;
 use crate::gnsstime::GnssTimeConverter;
 use crate::pilotbit::get_pilot_bits;
-use crate::constants::*;
 use crate::types::{GnssTime, GnssSystem};
 use crate::NavDataType;
 use crate::ifdatagen::NavBitTrait;
 
-const AMPLITUDE_1_2: f64 = 0.7071067811865475244;
+const AMPLITUDE_1_2: f64 = 0.707_106_781_186_547_6;
 const AMPLITUDE_1_4: f64 = 0.5;
-const AMPLITUDE_29_44: f64 = 0.811844140885988713377;
-const AMPLITUDE_3_4: f64 = 0.8660254037844386468;
+const AMPLITUDE_29_44: f64 = 0.811_844_140_885_988_7;
+const AMPLITUDE_3_4: f64 = 0.866_025_403_784_438_6;
 const AMPLITUDE_5_11: f64 = 0.6741998624632421;
 
 pub struct SignalAttribute {
@@ -73,6 +70,12 @@ pub struct SatelliteSignal {
     secondary_code: u32,
     secondary_length: i32,
     attribute: &'static SignalAttribute,
+}
+
+impl Default for SatelliteSignal {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl SatelliteSignal {
@@ -208,7 +211,7 @@ impl SatelliteSignal {
         let frame_number;
         let mut bit_number = 0;
         let bit_pos;
-        let mut data_bit;
+        let data_bit;
         let mut pilot_bit = 0;
 
         if self.sat_system == GnssSystem::GlonassSystem && (self.sat_signal == crate::SIGNAL_INDEX_G1 as i32 || self.sat_signal == crate::SIGNAL_INDEX_G2 as i32) {

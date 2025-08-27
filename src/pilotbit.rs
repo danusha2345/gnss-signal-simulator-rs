@@ -25,20 +25,20 @@ use crate::constants::*;
 use crate::types::GnssSystem;
 
 // Signal index constants converted to usize for pattern matching
-const SIGNAL_L1CA: usize = SIGNAL_INDEX_L1CA as usize;
-const SIGNAL_L1C: usize = SIGNAL_INDEX_L1C as usize;
-const SIGNAL_L2C: usize = SIGNAL_INDEX_L2C as usize;
-const SIGNAL_L5: usize = SIGNAL_INDEX_L5 as usize;
-const SIGNAL_B1C: usize = SIGNAL_INDEX_B1C as usize;
-const SIGNAL_B1I: usize = SIGNAL_INDEX_B1I as usize;
-const SIGNAL_B2I: usize = SIGNAL_INDEX_B2I as usize;
-const SIGNAL_B3I: usize = SIGNAL_INDEX_B3I as usize;
-const SIGNAL_B2A: usize = SIGNAL_INDEX_B2A as usize;
-const SIGNAL_B2B: usize = SIGNAL_INDEX_B2B as usize;
-const SIGNAL_E1: usize = SIGNAL_INDEX_E1 as usize;
-const SIGNAL_E5A: usize = SIGNAL_INDEX_E5A as usize;
-const SIGNAL_E5B: usize = SIGNAL_INDEX_E5B as usize;
-const SIGNAL_E6: usize = SIGNAL_INDEX_E6 as usize;
+const SIGNAL_L1CA: usize = SIGNAL_INDEX_L1CA;
+const SIGNAL_L1C: usize = SIGNAL_INDEX_L1C;
+const SIGNAL_L2C: usize = SIGNAL_INDEX_L2C;
+const SIGNAL_L5: usize = SIGNAL_INDEX_L5;
+const SIGNAL_B1C: usize = SIGNAL_INDEX_B1C;
+const SIGNAL_B1I: usize = SIGNAL_INDEX_B1I;
+const SIGNAL_B2I: usize = SIGNAL_INDEX_B2I;
+const SIGNAL_B3I: usize = SIGNAL_INDEX_B3I;
+const SIGNAL_B2A: usize = SIGNAL_INDEX_B2A;
+const SIGNAL_B2B: usize = SIGNAL_INDEX_B2B;
+const SIGNAL_E1: usize = SIGNAL_INDEX_E1;
+const SIGNAL_E5A: usize = SIGNAL_INDEX_E5A;
+const SIGNAL_E5B: usize = SIGNAL_INDEX_E5B;
+const SIGNAL_E6: usize = SIGNAL_INDEX_E6;
 
 /// GPS L5 secondary code (20 bits)
 /// Источник: IS-GPS-705, Section 3.2.6
@@ -1386,7 +1386,7 @@ pub fn get_pilot_bits(system: GnssSystem, sat_signal: usize, svid: i32) -> Optio
             match sat_signal {
                 SIGNAL_L1CA => None, // no secondary pilot code
                 SIGNAL_L1C => {
-                    if svid >= 1 && svid <= 63 {
+                    if (1..=63).contains(&svid) {
                         let start_idx = 57 * (svid - 1) as usize;
                         Some((&SECONDARY_CODE_L1C[start_idx..start_idx + 57], 1800))
                     } else {
@@ -1401,7 +1401,7 @@ pub fn get_pilot_bits(system: GnssSystem, sat_signal: usize, svid: i32) -> Optio
         GnssSystem::BdsSystem => {
             match sat_signal {
                 SIGNAL_B1C => {
-                    if svid >= 1 && svid <= 63 {
+                    if (1..=63).contains(&svid) {
                         let start_idx = 57 * (svid - 1) as usize;
                         Some((&SECONDARY_CODE_B1C[start_idx..start_idx + 57], 1800))
                     } else {
@@ -1410,7 +1410,7 @@ pub fn get_pilot_bits(system: GnssSystem, sat_signal: usize, svid: i32) -> Optio
                 },
                 SIGNAL_B1I | SIGNAL_B2I | SIGNAL_B3I => None,
                 SIGNAL_B2A => {
-                    if svid >= 1 && svid <= 63 {
+                    if (1..=63).contains(&svid) {
                         let start_idx = 4 * (svid - 1) as usize;
                         Some((&SECONDARY_CODE_B2A[start_idx..start_idx + 4], 100))
                     } else {
@@ -1425,7 +1425,7 @@ pub fn get_pilot_bits(system: GnssSystem, sat_signal: usize, svid: i32) -> Optio
             match sat_signal {
                 SIGNAL_E1 => Some((&SECONDARY_CODE_E1, 25)),
                 SIGNAL_E5A => {
-                    if svid >= 1 && svid <= 50 {
+                    if (1..=50).contains(&svid) {
                         let start_idx = 4 * (svid - 1) as usize;
                         Some((&SECONDARY_CODE_CS100[start_idx..start_idx + 4], 100))
                     } else {
@@ -1433,7 +1433,7 @@ pub fn get_pilot_bits(system: GnssSystem, sat_signal: usize, svid: i32) -> Optio
                     }
                 },
                 SIGNAL_E5B => {
-                    if svid >= 1 && svid <= 50 {
+                    if (1..=50).contains(&svid) {
                         let start_idx = 200 + 4 * (svid - 1) as usize;
                         if start_idx + 4 <= SECONDARY_CODE_CS100.len() {
                             Some((&SECONDARY_CODE_CS100[start_idx..start_idx + 4], 100))
@@ -1445,7 +1445,7 @@ pub fn get_pilot_bits(system: GnssSystem, sat_signal: usize, svid: i32) -> Optio
                     }
                 },
                 SIGNAL_E6 => {
-                    if svid >= 1 && svid <= 50 {
+                    if (1..=50).contains(&svid) {
                         let start_idx = 4 * (svid - 1) as usize;
                         Some((&SECONDARY_CODE_CS100[start_idx..start_idx + 4], 100))
                     } else {

@@ -198,6 +198,12 @@ pub struct CNavData {
     pub leap_seconds: Option<i32>,
 }
 
+impl Default for CNavData {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CNavData {
     pub fn new() -> Self {
         CNavData {
@@ -347,6 +353,12 @@ impl CNavData {
 }
 
 pub struct CPowerControl;
+
+impl Default for CPowerControl {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl CPowerControl {
     pub fn new() -> Self {
@@ -637,7 +649,7 @@ pub fn read_nav_file_limited(nav_data: &mut CNavData, filename: &str, max_per_sy
                 if beidou_count < max_per_system {
                     println!("[DEBUG] Parsing BeiDou ephemeris {}/{}: {}", beidou_count+1, max_per_system, &line[..std::cmp::min(20, line.len())]);
                     if let Some(mut eph) = parse_gps_ephemeris(&line, &mut lines) {
-                        eph.toe = (eph.toe as i32 - 14) as i32;
+                        eph.toe = eph.toe - 14;
                         nav_data.add_beidou_ephemeris(eph);
                         beidou_count += 1;
                     }
@@ -742,7 +754,7 @@ pub fn read_nav_file(nav_data: &mut CNavData, filename: &str) {
                 println!("[DEBUG] Trying to parse BeiDou ephemeris: {}", &line[..std::cmp::min(20, line.len())]);
                 if let Some(mut eph) = parse_gps_ephemeris(&line, &mut lines) {
                     // Конвертируем в BeiDou формат
-                    eph.toe = (eph.toe as i32 - 14) as i32; // BDT отстает от GPS времени на 14 секунд
+                    eph.toe = eph.toe - 14; // BDT отстает от GPS времени на 14 секунд
                     nav_data.add_beidou_ephemeris(eph);
                 } else {
                     println!("[DEBUG] Failed to parse BeiDou ephemeris");
@@ -751,7 +763,7 @@ pub fn read_nav_file(nav_data: &mut CNavData, filename: &str) {
             'E' => {
                 // Galileo эфемериды (используем GPS формат)
                 println!("[DEBUG] Trying to parse Galileo ephemeris: {}", &line[..std::cmp::min(20, line.len())]);
-                if let Some(mut eph) = parse_gps_ephemeris(&line, &mut lines) {
+                if let Some(eph) = parse_gps_ephemeris(&line, &mut lines) {
                     // Конвертируем в Galileo формат (GST синхронизован с GPS)
                     nav_data.add_galileo_ephemeris(eph);
                 } else {
@@ -794,8 +806,8 @@ fn read_alm_file(nav_data: &mut CNavData, filename: &str) {
             }
         }
         // GLONASS almanac (simple format) - проверяем что первое слово - число (slot)
-        else if line.trim().split_whitespace().count() >= 2 {
-            if let Ok(_slot) = line.trim().split_whitespace().next().unwrap_or("").parse::<i16>() {
+        else if line.split_whitespace().count() >= 2 {
+            if let Ok(_slot) = line.split_whitespace().next().unwrap_or("").parse::<i16>() {
                 if let Some(alm) = parse_glonass_almanac(&line, &mut lines) {
                     nav_data.add_glonass_almanac(alm);
                 }
@@ -1162,7 +1174,7 @@ fn process_config_param(object: *mut JsonObject, output_param: &mut OutputParam)
     true
 }
 
-fn process_mask_out(object: *mut JsonObject, mut output_param: &mut OutputParam) -> bool {
+fn process_mask_out(object: *mut JsonObject, output_param: &mut OutputParam) -> bool {
     let mut system = 0; // GpsSystem
     
     unsafe {
@@ -1200,22 +1212,22 @@ fn process_mask_out(object: *mut JsonObject, mut output_param: &mut OutputParam)
 fn mask_out_satellite(system: i32, svid: i32, output_param: &mut OutputParam) -> bool {
     match system {
         0 => { // GpsSystem
-            if svid >= 1 && svid <= 32 {
+            if (1..=32).contains(&svid) {
                 output_param.gps_mask_out |= 1 << (svid - 1);
             }
         },
         1 => { // BdsSystem
-            if svid >= 1 && svid <= 63 {
+            if (1..=63).contains(&svid) {
                 output_param.bds_mask_out |= 1u64 << (svid - 1);
             }
         },
         2 => { // GalileoSystem
-            if svid >= 1 && svid <= 50 {
+            if (1..=50).contains(&svid) {
                 output_param.galileo_mask_out |= 1u64 << (svid - 1);
             }
         },
         3 => { // GlonassSystem
-            if svid >= 1 && svid <= 24 {
+            if (1..=24).contains(&svid) {
                 output_param.glonass_mask_out |= 1 << (svid - 1);
             }
         },
@@ -1703,7 +1715,7 @@ where
     // Read next 3 lines of data (4 values each)
     for _ in 0..3 {
         let next_line = lines.next()?.ok()?;
-        let next_parts: Vec<&str> = next_line.trim().split_whitespace().collect();
+        let next_parts: Vec<&str> = next_line.split_whitespace().collect();
         if next_parts.len() < 4 { return None; }
         
         for j in 0..4 {
@@ -1832,7 +1844,7 @@ where
     // Read additional lines if needed
     for _ in 0..3 {
         if let Some(Ok(data_line)) = lines.next() {
-            let line_parts: Vec<String> = data_line.trim().split_whitespace().map(|s| s.to_string()).collect();
+            let line_parts: Vec<String> = data_line.split_whitespace().map(|s| s.to_string()).collect();
             for part in line_parts {
                 all_data.push(part);
             }

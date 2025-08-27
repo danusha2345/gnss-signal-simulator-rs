@@ -36,11 +36,11 @@ fn count1(n: u8) -> i32 {
         n &= n - 1;
         count += 1;
     }
-    (count & 1) as i32
+    count & 1
 }
 
-const SQRT_A0: f64 = 5440.588203494177338011974948823;
-const NOMINAL_I0: f64 = 0.97738438111682456307726683035362;
+const SQRT_A0: f64 = 5_440.588_203_494_177;
+const NOMINAL_I0: f64 = 0.977_384_381_116_824_6;
 
 #[derive(Clone)]
 pub struct FNavBit {
@@ -64,8 +64,8 @@ impl FNavBit {
 
     pub fn GetFrameData(&self, start_time: GnssTime, svid: i32, _param: i32, nav_bits: &mut [i32]) -> i32 {
         // First determine the current TOW and subframe number
-        let mut week = start_time.Week + start_time.MilliSeconds / 604800000;
-        let mut milliseconds = start_time.MilliSeconds % 604800000;
+        let week = start_time.Week + start_time.MilliSeconds / 604800000;
+        let milliseconds = start_time.MilliSeconds % 604800000;
         let tow = milliseconds / 1000;
         let gst = (((week - 1024) & 0xfff) << 20) + tow;
         let subframe = (tow % 1200) / 50; // two round of 600s frame (24 subframes) to hold 36 almanacs
@@ -111,7 +111,7 @@ impl FNavBit {
     }
 
     pub fn SetEphemeris(&mut self, svid: i32, eph: &GpsEphemeris) -> i32 {
-        if svid < 1 || svid > 36 || eph.valid == 0 {
+        if !(1..=36).contains(&svid) || eph.valid == 0 {
             return 0;
         }
         let eph_data = &mut self.GalEphData[(svid - 1) as usize];
@@ -275,7 +275,7 @@ impl FNavBit {
     }
 
     fn ComposeAlmWords(almanac: &[GpsAlmanac], alm_data: &mut [[u32; 7]; 2], week: i32) -> i32 {
-        let toa = if almanac.len() > 0 && (almanac[0].valid & 1) != 0 {
+        let toa = if !almanac.is_empty() && (almanac[0].valid & 1) != 0 {
             almanac[0].toa
         } else if almanac.len() > 1 && (almanac[1].valid & 1) != 0 {
             almanac[1].toa

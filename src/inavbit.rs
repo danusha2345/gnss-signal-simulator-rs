@@ -26,12 +26,12 @@
 //----------------------------------------------------------------------
 
 use crate::types::*;
-use crate::constants::*;
+// use crate::constants::*; // Unused import
 use crate::COMPOSE_BITS;
 use std::f64::consts::PI;
 
-const SQRT_A0: f64 = 5440.588203494177338011974948823;
-const NORMINAL_I0: f64 = 0.97738438111682456307726683035362;
+const SQRT_A0: f64 = 5_440.588_203_494_177;
+const NORMINAL_I0: f64 = 0.977_384_381_116_824_6;
 
 #[derive(Clone)]
 pub struct INavBit {
@@ -172,6 +172,12 @@ const POWER2OCT: [u8; 510] = [
   88, 176, 125, 250, 233, 207, 131,  27,  54, 108, 216, 173,  71, 142
 ];
 
+impl Default for INavBit {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl INavBit {
     pub fn new() -> Self {
         INavBit {
@@ -187,13 +193,13 @@ impl INavBit {
     // Param is used to distinguish from E1 and E5b (1 for E1)
     pub fn GetFrameData(&mut self, StartTime: GnssTime, svid: i32, Param: i32, NavBits: &mut [i32]) -> i32 {
         let mut TOW: i32;
-        let mut subframe: i32;
-        let mut page: i32;
+        
+        
         let mut Word: i32;
         let mut BitCount: i32 = 0;
-        let Data: &[u32]; // 128bit Data
+         // 128bit Data
         let mut EncodeData: [u32; 7] = [0; 7]; // 196bit to be encoded by CRC
-        let mut CrcResult: u32;
+        
         let mut EncodeWord: u32;
         let SSP: [u32; 3] = [0x04000000, 0x2b000000, 0x2f000000];
         let mut EvenPart: [u8; 30] = [0; 30];
@@ -211,8 +217,8 @@ impl INavBit {
         if TOW < 0 {
             TOW += 604800;
         }
-        subframe = ((TOW + if Param == 1 { 360 } else { 0 }) % 720) / 30;
-        page = (TOW % 30) / 2;
+        let subframe: i32 = ((TOW + if Param == 1 { 360 } else { 0 }) % 720) / 30;
+        let page: i32 = (TOW % 30) / 2;
         Word = if Param == 1 { WORD_ALLOCATION_E1[page as usize] } else { WORD_ALLOCATION_E5[page as usize] };
         if Word > 10 {
             Word = 63; // temporarily put all word exceed 10 as dummy word
@@ -226,7 +232,7 @@ impl INavBit {
             Word += 1;
         }
         
-        Data = self.GetWordData(svid, Word, subframe);
+        let Data: &[u32] = self.GetWordData(svid, Word, subframe);
         
         // add WN/TOW for Word 0/5/6
         let mut data_vec = Data.to_vec();
@@ -249,7 +255,7 @@ impl INavBit {
         EncodeData[4] = ((data_vec[3] << 2) & 0xfffc0000) | (data_vec[3] & 0xffff) | 0x20000; // 14bit Data, even/odd=1, page type=1, 16bit Data
         EncodeData[5] = 0; // 32MSB of Reserved 1
         EncodeData[6] = 0; // 8LSB of Reserved 1, SAR and Spare bits are 0
-        CrcResult = self.Crc24qEncode(&EncodeData, 196);
+        let CrcResult: u32 = self.Crc24qEncode(&EncodeData, 196);
 
         // do convolution encode on even part (EncodeData[0] bit3 through EncodeData[4] bit18)
         ConvEncodeBits = 0;
@@ -318,18 +324,18 @@ impl INavBit {
         0
     }
 
-    pub fn SetEphemeris(&mut self, svid: i32, Eph: &GPS_EPHEMERIS) -> i32 {
-        if svid < 1 || svid > 36 || !Eph.valid {
+    pub fn SetEphemeris(&mut self, svid: i32, Eph: &INavGpsEphemeris) -> i32 {
+        if !(1..=36).contains(&svid) || !Eph.valid {
             return 0;
         }
         let svid_idx = (svid - 1) as usize;
         Self::ComposeEphWords(Eph, &mut self.GalEphData[svid_idx]);
-        let eph_data = self.GalEphData[svid_idx].clone();
+        let eph_data = self.GalEphData[svid_idx];
         Self::ComposeParityWords(&eph_data, &mut self.GalRsVector[svid_idx]);
         svid
     }
 
-    pub fn SetAlmanac(&mut self, Alm: &[GPS_ALMANAC; 36]) -> i32 {
+    pub fn SetAlmanac(&mut self, Alm: &[INavGpsAlmanac; 36]) -> i32 {
         let mut week = 0;
 
         for i in 0..36 {
@@ -347,7 +353,7 @@ impl INavBit {
         0
     }
 
-    pub fn SetIonoUtc(&mut self, IonoParam: &IONO_NEQUICK, UtcParam: &GPS_UTC) -> i32 {
+    pub fn SetIonoUtc(&mut self, IonoParam: &IonoNequick, UtcParam: &INavGpsUtc) -> i32 {
         let mut IonoWords: [u32; 2] = [0; 2];
         
         let UintValue = Self::UnscaleUint(IonoParam.ai0, -2);
@@ -384,7 +390,7 @@ impl INavBit {
         }
     }
 
-    fn ComposeEphWords(Ephemeris: &GPS_EPHEMERIS, EphData: &mut [u32]) {
+    fn ComposeEphWords(Ephemeris: &INavGpsEphemeris, EphData: &mut [u32]) {
         // Word 1
         EphData[0] = 0x04000000 | COMPOSE_BITS!(Ephemeris.iodc, 16, 10) | COMPOSE_BITS!((Ephemeris.toe / 60), 2, 14);
         let IntValue = Self::UnscaleInt(Ephemeris.M0 / PI, -31);
@@ -463,7 +469,7 @@ impl INavBit {
         EphData[18] |= COMPOSE_BITS!(IntValue, 23, 1); // E1B DVS
     }
 
-    fn ComposeAlmWords(Almanac: &[GPS_ALMANAC], AlmData: &mut [u32], week: i32) {
+    fn ComposeAlmWords(Almanac: &[INavGpsAlmanac], AlmData: &mut [u32], week: i32) {
         let toa = if (Almanac[0].valid & 1) != 0 { Almanac[0].toa } 
                   else if (Almanac[1].valid & 1) != 0 { Almanac[1].toa } 
                   else if (Almanac[2].valid & 1) != 0 { Almanac[2].toa } 
@@ -496,7 +502,7 @@ impl INavBit {
         }
     }
 
-    fn ComposeUtcWords(UtcParam: &GPS_UTC, GalUtcData: &mut [u32]) {
+    fn ComposeUtcWords(UtcParam: &INavGpsUtc, GalUtcData: &mut [u32]) {
         // Word 6 for UTC parameters
         GalUtcData[0] = 0x18000000; // put Type=6 to 6MSB
         let IntValue = Self::UnscaleInt(UtcParam.A0, -30);
@@ -538,14 +544,14 @@ impl INavBit {
         
         // put parity vector into word17~20
         for i in 0..4 {
-            ParityData[i*4] = ((17u32 + i as u32) << 26) + ((Iod as u32) << 24);
-            ParityData[i*4] |= ((ParityVector[i*15] as u32) << 16);
-            ParityData[i*4] |= ((ParityVector[i*15+1] as u32) << 8);
+            ParityData[i*4] = ((17u32 + i as u32) << 26) + (Iod << 24);
+            ParityData[i*4] |= (ParityVector[i*15] as u32) << 16;
+            ParityData[i*4] |= (ParityVector[i*15+1] as u32) << 8;
             ParityData[i*4] |= ParityVector[i*15+2] as u32;
             for j in 1..4 {
-                ParityData[i*4+j]  = ((ParityVector[i*15+j*4-1] as u32) << 24);
-                ParityData[i*4+j] |= ((ParityVector[i*15+j*4+0] as u32) << 16);
-                ParityData[i*4+j] |= ((ParityVector[i*15+j*4+1] as u32) << 8);
+                ParityData[i*4+j]  = (ParityVector[i*15+j*4-1] as u32) << 24;
+                ParityData[i*4+j] |= (ParityVector[i*15+j*4] as u32) << 16;
+                ParityData[i*4+j] |= (ParityVector[i*15+j*4+1] as u32) << 8;
                 ParityData[i*4+j] |= ParityVector[i*15+j*4+2] as u32;
             }
         }
@@ -619,7 +625,7 @@ impl INavBit {
 // Use GnssTime from types.rs instead
 
 #[derive(Copy, Clone)]
-pub struct GPS_EPHEMERIS {
+pub struct INavGpsEphemeris {
     pub valid: bool,
     pub iodc: u32,
     pub toe: u32,
@@ -649,37 +655,41 @@ pub struct GPS_EPHEMERIS {
     pub health: u32,
 }
 
-#[derive(Copy, Clone)]
-pub struct GPS_ALMANAC {
-    pub valid: i32,
+#[derive(Copy, Clone, Default)]
+pub struct INavGpsAlmanac {
+    pub valid: u8,
+    pub flag: u8,
+    pub health: u8,
+    pub svid: u8,
+    pub toa: i32,
     pub week: i32,
-    pub toa: u32,
-    pub svid: u32,
-    pub sqrtA: f64,
-    pub ecc: f64,
-    pub w: f64,
-    pub i0: f64,
-    pub omega0: f64,
-    pub omega_dot: f64,
     pub M0: f64,
+    pub ecc: f64,
+    pub sqrtA: f64,
+    pub omega0: f64,
+    pub i0: f64,
+    pub w: f64,
+    pub omega_dot: f64,
     pub af0: f64,
     pub af1: f64,
 }
 
-#[derive(Copy, Clone)]
-pub struct GPS_UTC {
+#[derive(Copy, Clone, Default)]
+pub struct INavGpsUtc {
     pub A0: f64,
     pub A1: f64,
-    pub TLS: u32,
-    pub tot: u32,
-    pub WN: u32,
-    pub WNLSF: u32,
-    pub DN: u32,
-    pub TLSF: u32,
+    pub A2: f64,
+    pub WN: i16,
+    pub WNLSF: i16,
+    pub tot: u8,
+    pub TLS: i8,
+    pub TLSF: i8,
+    pub DN: u8,
+    pub flag: u32,
 }
 
-#[derive(Copy, Clone)]
-pub struct IONO_NEQUICK {
+#[derive(Copy, Clone, Default)]
+pub struct IonoNequick {
     pub ai0: f64,
     pub ai1: f64,
     pub ai2: f64,

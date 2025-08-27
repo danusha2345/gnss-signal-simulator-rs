@@ -31,7 +31,7 @@ use std::f64::consts::PI;
 const INVALID_TOA: u8 = 255; // valid range of toa is 0~147
 const A_REF: f64 = 26559710.0;
 const OMEGA_DOT_REF: f64 = -2.6e-9;
-const NORMINAL_I0: f64 = 0.94247779607693797153879301498385;
+const NORMINAL_I0: f64 = 0.942_477_796_076_937_9;
 
 // Count number of set bits in a byte
 fn count1(n: u8) -> u8 {
@@ -61,7 +61,7 @@ static INTERLEAVE_MATRIX: [usize; 300] = [
 // Import types from other modules
 use crate::{GpsEphemeris, GpsAlmanac, IonoParam, UtcParam};
 use crate::types::GnssTime;
-use crate::constants::*;
+// use crate::constants::*; // Unused import
 
 // Main L5CNavBit structure
 #[derive(Clone)]
@@ -75,6 +75,12 @@ pub struct L5CNavBit {
     iono_message: [u32; 3],
     conv_encode_bits: [u8; 32],
     toa: u8,
+}
+
+impl Default for L5CNavBit {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl L5CNavBit {
@@ -103,7 +109,7 @@ impl L5CNavBit {
     // each super frame has 32 message 37, message index 3 contains SV01 to SV24, message index 2 contains SV25 to SV32
     // Param is used to distinguish from Dc in L2C and D5 in L5 (0 for L2C, 1 for L5)
     pub fn get_frame_data(&mut self, start_time: GnssTime, svid: i32, _param: i32, nav_bits: &mut [i32; 600]) -> i32 {
-        if svid < 1 || svid > 32 {
+        if !(1..=32).contains(&svid) {
             nav_bits.fill(0);
             return -1;
         }
@@ -149,10 +155,10 @@ impl L5CNavBit {
         // Assemble 300 bits
         let preamble = 0x8B;
         for i in 0..8 {
-            uncoded_bits[i] = ((preamble >> (7 - i)) & 1) as i32;
+            uncoded_bits[i] = (preamble >> (7 - i)) & 1;
         }
         for i in 0..6 {
-            uncoded_bits[8 + i] = ((svid >> (5 - i)) & 1) as i32;
+            uncoded_bits[8 + i] = (svid >> (5 - i)) & 1;
         }
         for i in 0..262 {
             uncoded_bits[14 + i] = ((crc_block[i / 32] >> (31 - (i % 32))) & 1) as i32;
@@ -179,7 +185,7 @@ impl L5CNavBit {
     }
 
     pub fn set_ephemeris(&mut self, svid: i32, eph: &GpsEphemeris) -> i32 {
-        if svid < 1 || svid > 32 || eph.valid == 0 {
+        if !(1..=32).contains(&svid) || eph.valid == 0 {
             return 0;
         }
         let svid_idx = (svid - 1) as usize;

@@ -88,6 +88,12 @@ pub struct TrajectorySegmentBase {
     pub time_span: f64,
 }
 
+impl Default for TrajectorySegmentBase {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TrajectorySegmentBase {
     pub fn new() -> Self {
         TrajectorySegmentBase {
@@ -131,6 +137,12 @@ impl TrajectorySegmentBase {
 #[derive(Debug, Clone)]
 pub struct TrajectoryConstSpeed {
     pub base: TrajectorySegmentBase,
+}
+
+impl Default for TrajectoryConstSpeed {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl TrajectoryConstSpeed {
@@ -209,6 +221,12 @@ pub struct TrajectoryConstAcc {
     pub ax: f64,
     pub ay: f64,
     pub az: f64,
+}
+
+impl Default for TrajectoryConstAcc {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl TrajectoryConstAcc {
@@ -293,6 +311,12 @@ pub struct TrajectoryVerticalAcc {
     pub az: f64,
 }
 
+impl Default for TrajectoryVerticalAcc {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TrajectoryVerticalAcc {
     pub fn new() -> Self {
         TrajectoryVerticalAcc {
@@ -374,6 +398,12 @@ impl TrajectorySegment for TrajectoryVerticalAcc {
 pub struct TrajectoryJerk {
     pub base: TrajectorySegmentBase,
     pub acc: KinematicInfo, // initial acceleration in x, y, z and acceleration rate in vx, vy, vz
+}
+
+impl Default for TrajectoryJerk {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl TrajectoryJerk {
@@ -461,6 +491,12 @@ impl TrajectorySegment for TrajectoryJerk {
 pub struct TrajectoryHorizontalCircular {
     pub base: TrajectorySegmentBase,
     pub angular_rate: f64,
+}
+
+impl Default for TrajectoryHorizontalCircular {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl TrajectoryHorizontalCircular {
@@ -580,6 +616,12 @@ pub struct CTrajectory {
     current_trajectory_index: usize,
     relative_time: f64,
     trajectory_name: String,
+}
+
+impl Default for CTrajectory {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl CTrajectory {

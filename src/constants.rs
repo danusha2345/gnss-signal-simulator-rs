@@ -28,15 +28,15 @@ pub const DEG2RAD: fn(f64) -> f64 = |d| d * (PI / 180.0);
 // WGS84 constants
 pub const WGS_PI: f64 = 3.1415926535898;
 pub const WGS_AXIS_A: f64 = 6378137.0;
-pub const WGS_AXIS_B: f64 = 6356752.3142451795;
+pub const WGS_AXIS_B: f64 = 6_356_752.314_245_179;
 pub const WGS_E1_SQR: f64 = 0.006694379990141317;
 pub const WGS_E2_SQR: f64 = 0.006739496742276435;
-pub const WGS_SQRT_GM: f64 = 19964981.8432173887;
+pub const WGS_SQRT_GM: f64 = 19_964_981.843_217_388;
 pub const WGS_OMEGDOTE: f64 = 7.2921151467e-5;
 pub const WGS_F_GTR: f64 = -4.442807633e-10;
 
 // CGCS2000 constants
-pub const CGCS2000_SQRT_GM: f64 = 19964980.3856652962;
+pub const CGCS2000_SQRT_GM: f64 = 19_964_980.385_665_298;
 pub const CGCS2000_OMEGDOTE: f64 = 7.292115e-5;
 
 // PZ90 constants
@@ -49,8 +49,8 @@ pub const PZ90_C20AE2: f64 = PZ90_C20 * PZ90_AE2;
 pub const PZ90_OMEGDOTE: f64 = 7.292115e-5;
 
 // Almanac constants
-pub const SQRT_A0: f64 = 5440.588203494177338011974948823;
-pub const NORMINAL_I0: f64 = 0.97738438111682456307726683035362;
+pub const SQRT_A0: f64 = 5_440.588_203_494_177;
+pub const NORMINAL_I0: f64 = 0.977_384_381_116_824_6;
 
 // Signal frequency constants (in Hz)
 pub const FREQ_GPS_L1: f64 = 1575420000.0;

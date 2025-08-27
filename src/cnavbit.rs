@@ -25,14 +25,13 @@
 //----------------------------------------------------------------------
 
 use crate::types::*;
-use crate::constants::*;
 use crate::COMPOSE_BITS;
 
 // Constants
 const INVALID_TOA: u32 = 255; // valid range of toa is 0~147
 const A_REF: f64 = 26559710.0;
 const OMEGA_DOT_REF: f64 = -2.6e-9;
-const NORMINAL_I0: f64 = 0.94247779607693797153879301498385;
+const NORMINAL_I0: f64 = 0.942_477_796_076_937_9;
 
 #[derive(Clone)]
 pub struct CNavBit {
@@ -59,9 +58,16 @@ pub struct CNavBit {
     pub utc_valid: bool,
 }
 
+impl Default for CNavBit {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CNavBit {
     pub fn new() -> Self {
-        let mut cnav_bit = CNavBit {
+        
+        CNavBit {
             eph_message: [[[0; 9]; 2]; 32],
             midi_alm: [[0; 4]; 32],
             reduced_alm: [0; 32],
@@ -76,8 +82,7 @@ impl CNavBit {
             almanac_mask: [false; 32],
             iono_valid: false,
             utc_valid: false,
-        };
-        cnav_bit
+        }
     }
 
     // each message is 12s (600bit after encode), according maximum interval, the message is arranged to 48s frame and 1200s super frame
@@ -92,15 +97,15 @@ impl CNavBit {
     // Param is used to distinguish from Dc in L2C and D5 in L5 (0 for L2C)
     pub fn get_frame_data(&mut self, start_time: GnssTime, svid: i32, param: i32, nav_bits: &mut [i32]) -> i32 {
         let mut tow: i32;
-        let message: i32;
+        
         let mut encode_data = [0u32; 9];
-        let mut crc_result: u32;
+        
         let mut encode_word: u32;
         let mut encode_message = [0u8; 75];
         let mut conv_encode_bits: u8;
 
         // validate svid to prevent out-of-bounds array access
-        if svid < 1 || svid > 32 {
+        if !(1..=32).contains(&svid) {
             // fill NavBits with zeros for invalid svid
             for i in 0..600 {
                 nav_bits[i] = 0;
@@ -114,7 +119,7 @@ impl CNavBit {
         week += milli_seconds / 604800000;
         milli_seconds %= 604800000;
         tow = milli_seconds / (if param != 0 { 6000 } else { 12000 });
-        message = tow % 100; // message index within super frame
+        let message: i32 = tow % 100; // message index within super frame
         tow += 1; // TOW is the time of NEXT message
         if param == 0 {
             tow *= 2;
@@ -124,7 +129,7 @@ impl CNavBit {
         }
 
         self.get_message_data(svid, message, tow, &mut encode_data);
-        crc_result = Self::crc24q_encode(&encode_data, 276);
+        let crc_result: u32 = Self::crc24q_encode(&encode_data, 276);
 
         // do convolution encode (EncodeData[0] bit22 through EncodeData[6] bit0)
         conv_encode_bits = if param != 0 { self.conv_encode_bits_l5[(svid-1) as usize] } else { self.conv_encode_bits_l2[(svid-1) as usize] };
@@ -164,7 +169,7 @@ impl CNavBit {
     }
 
     pub fn set_ephemeris(&mut self, svid: i32, eph: &GpsEphemeris) -> i32 {
-        if svid < 1 || svid > 32 || eph.valid == 0 {
+        if !(1..=32).contains(&svid) || eph.valid == 0 {
             return 0;
         }
         let svid_idx = (svid-1) as usize;
@@ -248,11 +253,11 @@ impl CNavBit {
         let mut int_value: i32;
         let mut uint_value: u32;
         let mut long_value: i64;
-        let mut ulong_value: u64;
+        
 
         // Message Type 10
         eph_data[0][0] = (0x8b << 12) | ((ephemeris.svid as u32) << 6) | 10;
-        eph_data[0][1] = COMPOSE_BITS!(ephemeris.week as i32, 1, 13);
+        eph_data[0][1] = COMPOSE_BITS!(ephemeris.week, 1, 13);
         eph_data[0][1] |= COMPOSE_BITS!((ephemeris.health as i32) >> 8, 15, 3);
         eph_data[0][2] = COMPOSE_BITS!((ephemeris.health as i32) >> 6, 30, 2);
         uint_value = (ephemeris.top / 300) as u32;
@@ -277,7 +282,7 @@ impl CNavBit {
         eph_data[0][5] |= COMPOSE_BITS!(int_value, 7, 1);
         eph_data[0][5] |= COMPOSE_BITS!((uint_value >> 25) as i32, 0, 7);
         eph_data[0][6] = COMPOSE_BITS!(uint_value as i32, 7, 25);
-        ulong_value = Self::unscale_ulong(ephemeris.ecc, -34);
+        let ulong_value: u64 = Self::unscale_ulong(ephemeris.ecc, -34);
         int_value = if (ulong_value & 0x100000000u64) != 0 { 1 } else { 0 };
         uint_value = ulong_value as u32;
         eph_data[0][6] |= COMPOSE_BITS!(int_value, 6, 1);
@@ -362,7 +367,7 @@ impl CNavBit {
     fn compose_alm_words(&self, almanac: &GpsAlmanac, reduced_alm_data: &mut u32, midi_alm_data: &mut [u32; 4]) -> i32 {
         let mut int_value: i32;
         let mut uint_value: u32;
-        let double_value: f64;
+        
 
         midi_alm_data[0] = COMPOSE_BITS!(if almanac.valid != 0 { almanac.svid as i32 } else { 0 }, 26, 6);
         midi_alm_data[0] |= COMPOSE_BITS!(if almanac.valid != 0 { 0 } else { 7 }, 23, 3);
@@ -389,7 +394,7 @@ impl CNavBit {
         midi_alm_data[3] |= COMPOSE_BITS!(int_value, 0, 10);
 
         *reduced_alm_data = if almanac.valid != 0 { (almanac.svid as u32) << 25 } else { 0 };
-        double_value = almanac.sqrtA * almanac.sqrtA - A_REF;
+        let double_value: f64 = almanac.sqrtA * almanac.sqrtA - A_REF;
         int_value = (double_value / 512.0 + 0.5) as i32;
         *reduced_alm_data |= COMPOSE_BITS!(int_value, 17, 8);
         int_value = Self::unscale_int(almanac.omega0 / std::f64::consts::PI, -6);
@@ -403,11 +408,11 @@ impl CNavBit {
     fn get_message_data(&self, svid: i32, message: i32, tow: i32, data: &mut [u32; 9]) {
         let message_order = [30, 33, 31, 37, 31, 37];
         let frame = message / 4;
-        let mut message_id: i32;
-        let mut alm_index: i32;
+        let message_id: i32;
+        let alm_index: i32;
 
         // validate svid to prevent out-of-bounds array access
-        if svid < 1 || svid > 32 {
+        if !(1..=32).contains(&svid) {
             // initialize Data with zeros for invalid svid
             for i in 0..9 {
                 data[i] = 0;
@@ -453,7 +458,7 @@ impl CNavBit {
                         data[5] = (self.reduced_alm[alm_index as usize] << 1) + (self.reduced_alm[(alm_index+1) as usize] >> 30);
                         data[6] = (self.reduced_alm[(alm_index+1) as usize] << 2) + (self.reduced_alm[(alm_index+2) as usize] >> 29);
                         data[7] = (self.reduced_alm[(alm_index+2) as usize] << 3) + (self.reduced_alm[(alm_index+3) as usize] >> 28);
-                        data[8] = (self.reduced_alm[(alm_index+3) as usize] << 4);
+                        data[8] = self.reduced_alm[(alm_index+3) as usize] << 4;
                     },
                     33 => {
                         data[4] |= self.utc_message[0];
@@ -496,7 +501,7 @@ impl CNavBit {
     fn convolution_encode_pair(&self, conv_encode_bits: &mut u8, encode_word: &mut u32) -> u8 {
         *conv_encode_bits = (*conv_encode_bits << 2) + (*encode_word >> 30) as u8;
         *encode_word <<= 2;
-        (Self::convolution_encode(*conv_encode_bits) & 0xf) as u8
+        Self::convolution_encode(*conv_encode_bits) & 0xf
     }
 
     // Helper functions
@@ -593,7 +598,7 @@ impl CNavBit {
     // Missing methods required by the interface
     pub fn GetFrameData(&self, start_time: GnssTime, svid: i32, param: i32, nav_bits: &mut [i32]) -> i32 {
         // Validate SVID to prevent out-of-bounds access
-        if svid < 1 || svid > 32 {
+        if !(1..=32).contains(&svid) {
             // Fill nav_bits with zeros for invalid svid
             for bit in nav_bits.iter_mut().take(600) {
                 *bit = 0;
@@ -658,7 +663,7 @@ impl CNavBit {
 
     pub fn SetEphemeris(&mut self, svid: i32, eph: &GpsEphemeris) -> bool {
         // Validate SVID
-        if svid < 1 || svid > 32 {
+        if !(1..=32).contains(&svid) {
             return false;
         }
         

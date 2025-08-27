@@ -26,8 +26,6 @@
 //----------------------------------------------------------------------
 
 use crate::types::*;
-use crate::constants::*;
-use crate::COMPOSE_BITS;
 
 // Constants
 const GPS_A_REF: f64 = 26559710.0;
@@ -71,6 +69,12 @@ pub struct CNav2Bit {
     current_page: i32,
 }
 
+impl Default for CNav2Bit {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CNav2Bit {
     pub fn new() -> Self {
         CNav2Bit {
@@ -83,17 +87,17 @@ impl CNav2Bit {
     pub fn get_frame_data(&mut self, start_time: GnssTime, svid: i32, _param: i32, nav_bits: &mut [i32]) -> i32 {
         let mut week = start_time.Week;
         let mut milli_seconds = start_time.MilliSeconds;
-        let mut tow: i32;
-        let mut frame_index: i32;
-        let mut subframe_index: i32;
-        let mut page_index: i32;
+        
+        
+        
+        
         let mut bit_index: i32;
         let mut bit_value: i32;
         let mut subframe_data: [u32; 38] = [0; 38];
-        let mut subframe_length: u32;
+        let subframe_length: u32;
 
         // validate svid to prevent out-of-bounds array access
-        if svid < 1 || svid > 32 {
+        if !(1..=32).contains(&svid) {
             // fill NavBits with zeros for invalid svid
             for i in 0..1800 {
                 nav_bits[i] = 0;
@@ -104,10 +108,10 @@ impl CNav2Bit {
         // first determine the current TOW and subframe number
         week += milli_seconds / 604800000;
         milli_seconds %= 604800000;
-        tow = milli_seconds / 18000;
-        frame_index = tow % 75;
-        subframe_index = frame_index / 25;
-        page_index = frame_index % 25;
+        let tow: i32 = milli_seconds / 18000;
+        let frame_index: i32 = tow % 75;
+        let subframe_index: i32 = frame_index / 25;
+        let page_index: i32 = frame_index % 25;
 
         // compose subframe 2 and 3 data
         if page_index != self.current_page {
@@ -147,7 +151,7 @@ impl CNav2Bit {
 
         // put into NavBits
         let mut bit_index = 0;
-        for i in 0..subframe_length as u32 {
+        for i in 0..subframe_length {
             for j in 0..32 {
                 bit_value = if (subframe_data[i as usize] & (0x80000000 >> j)) != 0 { 1 } else { 0 };
                 nav_bits[bit_index] = bit_value;
@@ -165,7 +169,7 @@ impl CNav2Bit {
     }
 
     pub fn set_ephemeris(&mut self, svid: i32, eph: &GpsEphemeris) -> i32 {
-        if svid < 1 || svid > 32 || eph.valid == 0 {
+        if !(1..=32).contains(&svid) || eph.valid == 0 {
             return 0;
         }
 
@@ -262,7 +266,7 @@ impl CNav2Bit {
     // Missing methods required by the interface
     pub fn GetFrameData(&self, start_time: GnssTime, svid: i32, param: i32, nav_bits: &mut [i32]) -> i32 {
         // Validate SVID
-        if svid < 1 || svid > 32 {
+        if !(1..=32).contains(&svid) {
             for bit in nav_bits.iter_mut().take(1800) {
                 *bit = 0;
             }
@@ -290,7 +294,7 @@ impl CNav2Bit {
 
     pub fn SetEphemeris(&mut self, svid: i32, eph: &GpsEphemeris) -> bool {
         // Validate SVID
-        if svid < 1 || svid > 32 {
+        if !(1..=32).contains(&svid) {
             return false;
         }
 

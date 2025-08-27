@@ -18,7 +18,7 @@
 //! помехоустойчивостью и совместимостью с международными стандартами.
 
 use crate::types::*;
-use crate::constants::*;
+// use crate::constants::*; // Unused import
 use crate::bcnavbit::BCNavBit;
 use crate::types::GnssTime;
 
@@ -100,8 +100,8 @@ impl BCNav1Bit {
         bcnav
     }
 
-    pub fn get_frame_data(&mut self, start_time: GnssTime, svid: i32, _param: i32, nav_bits: &mut [i32]) -> i32 {
-        if svid < 1 || svid > 63 {
+    pub fn get_frame_data(&mut self, start_time: GnssTime, svid: i32, __param: i32, nav_bits: &mut [i32]) -> i32 {
+        if !(1..=63).contains(&svid) {
             return 1;
         }
 
@@ -119,7 +119,7 @@ impl BCNav1Bit {
         // Assign each 6bit into Symbol2 array
         let mut symbol2 = [0i32; 200];
         for i in 0..25 {
-            symbol2[i * 4 + 0] = ((frame2_data[i] >> 18) & 0x3f) as i32;
+            symbol2[i * 4] = ((frame2_data[i] >> 18) & 0x3f) as i32;
             symbol2[i * 4 + 1] = ((frame2_data[i] >> 12) & 0x3f) as i32;
             symbol2[i * 4 + 2] = ((frame2_data[i] >> 6) & 0x3f) as i32;
             symbol2[i * 4 + 3] = (frame2_data[i] & 0x3f) as i32;
@@ -140,7 +140,7 @@ impl BCNav1Bit {
         // Assign each 6bit into Symbol3 array
         let mut symbol3 = [0i32; 88];
         for i in 0..11 {
-            symbol3[i * 4 + 0] = ((data[i] >> 18) & 0x3f) as i32;
+            symbol3[i * 4] = ((data[i] >> 18) & 0x3f) as i32;
             symbol3[i * 4 + 1] = ((data[i] >> 12) & 0x3f) as i32;
             symbol3[i * 4 + 2] = ((data[i] >> 6) & 0x3f) as i32;
             symbol3[i * 4 + 3] = (data[i] & 0x3f) as i32;
@@ -246,13 +246,13 @@ impl BCNav1Bit {
         if let Some(utc) = utc_param {
             if (utc.flag & 1) != 0 {
                 self.base.BdtUtcParam[0] = (utc.A0 * (1u64 << 30) as f64) as u32;
-                self.base.BdtUtcParam[1] = (((utc.A1 * (1u64 << 50) as f64) as u32 & 0xFFFFFF) << 8) as u32;
-                self.base.BdtUtcParam[1] |= (utc.tot & 0xFF) as u32;
-                self.base.BdtUtcParam[2] = ((utc.WN as u32 & 0xFF) << 24) as u32;
-                self.base.BdtUtcParam[2] |= (((utc.TLS as u32) & 0xFF) << 16) as u32;
-                self.base.BdtUtcParam[2] |= (((utc.WNLSF as u32) & 0xFF) << 8) as u32;
+                self.base.BdtUtcParam[1] = ((utc.A1 * (1u64 << 50) as f64) as u32 & 0xFFFFFF) << 8;
+                self.base.BdtUtcParam[1] |= utc.tot as u32;
+                self.base.BdtUtcParam[2] = (utc.WN as u32 & 0xFF) << 24;
+                self.base.BdtUtcParam[2] |= ((utc.TLS as u32) & 0xFF) << 16;
+                self.base.BdtUtcParam[2] |= ((utc.WNLSF as u32) & 0xFF) << 8;
                 self.base.BdtUtcParam[2] |= ((utc.DN & 0x7) << 5) as u32;
-                self.base.BdtUtcParam[3] = (((utc.TLSF as u32) & 0xFF) << 24) as u32;
+                self.base.BdtUtcParam[3] = ((utc.TLSF as u32) & 0xFF) << 24;
                 
                 self.UpdateSubframe3Page2();
             }
@@ -330,15 +330,16 @@ impl BCNav1Bit {
     }
 
     // Interface methods required by NavBitTrait
-    pub fn GetFrameData(&self, start_time: GnssTime, svid: i32, param: i32, nav_bits: &mut [i32]) -> i32 {
-        // This is a mutable version of get_frame_data - we need to handle this carefully
-        // For now, return 0 to indicate this method signature is not compatible
-        0
+    pub fn GetFrameData(&self, start_time: GnssTime, svid: i32, _param: i32, nav_bits: &mut [i32]) -> i32 {
+        // Convert mutable self to const by cloning temporarily and calling get_frame_data
+        // This is not ideal but matches the interface requirement
+        let mut temp_self = self.clone();
+        temp_self.get_frame_data(start_time, svid, _param, nav_bits)
     }
 
     pub fn SetEphemeris(&mut self, svid: i32, eph: &GpsEphemeris) -> bool {
         // Convert GpsEphemeris to BDS B1C ephemeris format
-        if svid < 1 || svid > 63 {
+        if !(1..=63).contains(&svid) {
             return false;
         }
 

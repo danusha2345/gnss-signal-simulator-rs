@@ -23,7 +23,6 @@ use crate::types::*;
 use crate::constants::*;
 use crate::coordinate::*;
 use crate::powercontrol::{ElevationAdjust, SignalPower};
-use std::f64::consts::PI;
 
 // Constants
 const USE_POSITION_PREDICTION: bool = false;
@@ -398,31 +397,31 @@ pub fn get_wave_length(system: GnssSystem, signal_index: usize, freq_id: i32) ->
     match system {
         GnssSystem::GpsSystem => {
             match signal_index {
-                SIGNAL_INDEX_L1CA | SIGNAL_INDEX_L1C => LIGHT_SPEED / FREQ_GPS_L1 as f64,
-                SIGNAL_INDEX_L2C => LIGHT_SPEED / FREQ_GPS_L2 as f64,
-                SIGNAL_INDEX_L5 => LIGHT_SPEED / FREQ_GPS_L5 as f64,
-                _ => LIGHT_SPEED / FREQ_GPS_L1 as f64,
+                SIGNAL_INDEX_L1CA | SIGNAL_INDEX_L1C => LIGHT_SPEED / FREQ_GPS_L1,
+                SIGNAL_INDEX_L2C => LIGHT_SPEED / FREQ_GPS_L2,
+                SIGNAL_INDEX_L5 => LIGHT_SPEED / FREQ_GPS_L5,
+                _ => LIGHT_SPEED / FREQ_GPS_L1,
             }
         },
         GnssSystem::BdsSystem => {
             match signal_index {
-                SIGNAL_INDEX_B1C => LIGHT_SPEED / FREQ_BDS_B1C as f64,
-                SIGNAL_INDEX_B1I => LIGHT_SPEED / FREQ_BDS_B1I as f64,
-                SIGNAL_INDEX_B2I => LIGHT_SPEED / FREQ_BDS_B2I as f64,
-                SIGNAL_INDEX_B3I => LIGHT_SPEED / FREQ_BDS_B3I as f64,
-                SIGNAL_INDEX_B2A => LIGHT_SPEED / FREQ_BDS_B2A as f64,
-                SIGNAL_INDEX_B2B => LIGHT_SPEED / FREQ_BDS_B2B as f64,
-                _ => LIGHT_SPEED / FREQ_BDS_B1C as f64,
+                SIGNAL_INDEX_B1C => LIGHT_SPEED / FREQ_BDS_B1C,
+                SIGNAL_INDEX_B1I => LIGHT_SPEED / FREQ_BDS_B1I,
+                SIGNAL_INDEX_B2I => LIGHT_SPEED / FREQ_BDS_B2I,
+                SIGNAL_INDEX_B3I => LIGHT_SPEED / FREQ_BDS_B3I,
+                SIGNAL_INDEX_B2A => LIGHT_SPEED / FREQ_BDS_B2A,
+                SIGNAL_INDEX_B2B => LIGHT_SPEED / FREQ_BDS_B2B,
+                _ => LIGHT_SPEED / FREQ_BDS_B1C,
             }
         },
         GnssSystem::GalileoSystem => {
             match signal_index {
-                SIGNAL_INDEX_E1 => LIGHT_SPEED / FREQ_GAL_E1 as f64,
-                SIGNAL_INDEX_E5A => LIGHT_SPEED / FREQ_GAL_E5A as f64,
-                SIGNAL_INDEX_E5B => LIGHT_SPEED / FREQ_GAL_E5B as f64,
-                SIGNAL_INDEX_E5 => LIGHT_SPEED / FREQ_GAL_E5 as f64,
-                SIGNAL_INDEX_E6 => LIGHT_SPEED / FREQ_GAL_E6 as f64,
-                _ => LIGHT_SPEED / FREQ_GAL_E1 as f64,
+                SIGNAL_INDEX_E1 => LIGHT_SPEED / FREQ_GAL_E1,
+                SIGNAL_INDEX_E5A => LIGHT_SPEED / FREQ_GAL_E5A,
+                SIGNAL_INDEX_E5B => LIGHT_SPEED / FREQ_GAL_E5B,
+                SIGNAL_INDEX_L5 => LIGHT_SPEED / FREQ_GAL_E5,
+                SIGNAL_INDEX_E6 => LIGHT_SPEED / FREQ_GAL_E6,
+                _ => LIGHT_SPEED / FREQ_GAL_E1,
             }
         },
         GnssSystem::GlonassSystem => {
@@ -434,7 +433,7 @@ pub fn get_wave_length(system: GnssSystem, signal_index: usize, freq_id: i32) ->
             };
             LIGHT_SPEED / freq
         },
-        _ => LIGHT_SPEED / FREQ_GPS_L1 as f64,
+        _ => LIGHT_SPEED / FREQ_GPS_L1,
     }
 }
 
@@ -685,8 +684,8 @@ fn gps_sat_pos_speed_eph(system: GnssSystem, transmit_time: f64, eph: &GpsEpheme
     // Специальная обработка для BeiDou GEO спутников (svid <= 5)
     if system == GnssSystem::BdsSystem && eph.svid <= 5 {
         // Поворот на -5 градусов
-        let cos_5 = 0.99619469809174553; // cos(5°)
-        let sin_5 = 0.087155742747658173559; // sin(5°)
+        let cos_5 = 0.996_194_698_091_745_5; // cos(5°)
+        let sin_5 = 0.087_155_742_747_658_18; // sin(5°)
         
         let yp_rotated = pos_vel.y * cos_5 - pos_vel.z * sin_5;
         pos_vel.z = pos_vel.z * cos_5 + pos_vel.y * sin_5;
@@ -833,7 +832,7 @@ fn gps_iono_delay(iono_param: &IonoParam, time: f64, lat: f64, lon: f64, elevati
 /// Рассчитывает тропосферную задержку по упрощенной модели Saastamoinen
 /// Учитывает высоту, широту и угол места
 fn tropo_delay(lat: f64, alt: f64, elevation: f64) -> f64 {
-    use std::f64::consts::PI;
+    
     
     const T0: f64 = 273.16 + 15.0; // средняя температура на уровне моря
     const P0: f64 = 1013.25; // среднее давление на уровне моря (hPa)

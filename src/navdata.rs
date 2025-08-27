@@ -100,6 +100,12 @@ pub struct CNavData {
     glonass_slot_freq: [i32; 24],
 }
 
+impl Default for CNavData {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CNavData {
     pub fn new() -> Self {
         let mut nav_data = CNavData {

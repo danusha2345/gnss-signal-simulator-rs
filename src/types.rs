@@ -25,7 +25,9 @@ pub enum AlmanacType {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Default)]
 pub enum GnssSystem {
+    #[default]
     GpsSystem,
     BdsSystem,
     GalileoSystem,
@@ -35,11 +37,6 @@ pub enum GnssSystem {
     NavICSystem,
 }
 
-impl Default for GnssSystem {
-    fn default() -> Self {
-        GnssSystem::GpsSystem
-    }
-}
 
 // Signal index constants moved to constants.rs
 
@@ -303,21 +300,20 @@ pub struct SatObservation {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Default)]
 pub enum OutputType {
+    #[default]
     OutputTypePosition,
     OutputTypeObservation,
     OutputTypeIFdata,
     OutputTypeBaseband,
 }
 
-impl Default for OutputType {
-    fn default() -> Self {
-        OutputType::OutputTypePosition
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Default)]
 pub enum OutputFormat {
+    #[default]
     OutputFormatEcef,
     OutputFormatLla,
     OutputFormatNmea,
@@ -327,11 +323,6 @@ pub enum OutputFormat {
     OutputFormatIQ4,
 }
 
-impl Default for OutputFormat {
-    fn default() -> Self {
-        OutputFormat::OutputFormatEcef
-    }
-}
 
 #[derive(Debug, Clone)]
 pub struct OutputParam {

@@ -68,7 +68,7 @@ impl BCNav2Bit {
     }
 
     pub fn GetFrameData(&self, start_time: GnssTime, svid: i32, _param: i32, nav_bits: &mut [i32]) -> i32 {
-        if svid < 1 || svid > 63 {
+        if !(1..=63).contains(&svid) {
             return 1;
         }
 
@@ -82,7 +82,7 @@ impl BCNav2Bit {
         // Assign each 6bit into Symbols array
         let mut symbols = [0i32; 96];
         for i in 0..12 {
-            symbols[i * 4 + 0] = ((frame_data[i] >> 18) & 0x3f) as i32;
+            symbols[i * 4] = ((frame_data[i] >> 18) & 0x3f) as i32;
             symbols[i * 4 + 1] = ((frame_data[i] >> 12) & 0x3f) as i32;
             symbols[i * 4 + 2] = ((frame_data[i] >> 6) & 0x3f) as i32;
             symbols[i * 4 + 3] = (frame_data[i] & 0x3f) as i32;
@@ -130,14 +130,14 @@ impl BCNav2Bit {
                 frame_data[1] |= COMPOSE_BITS!(self.IntegrityFlags[svid_idx] >> 5, 13, 3); // B2a DIF/SIF/AIF
                 frame_data[1] |= COMPOSE_BITS!(self.IntegrityFlags[svid_idx] >> 11, 9, 4); // SISMAI
                 frame_data[1] |= COMPOSE_BITS!(self.IntegrityFlags[svid_idx] >> 2, 6, 3); // B1C DIF/SIF/AIF
-                Self::AppendWord(frame_data, 1 * 24 + 18, &self.Ephemeris2[svid_idx], 222);
+                Self::AppendWord(frame_data, 24 + 18, &self.Ephemeris2[svid_idx], 222);
             },
             30 => {
                 // HS filled with 2 zeros
                 frame_data[1] |= COMPOSE_BITS!(self.IntegrityFlags[svid_idx] >> 5, 13, 3); // B2a DIF/SIF/AIF
                 frame_data[1] |= COMPOSE_BITS!(self.IntegrityFlags[svid_idx] >> 11, 9, 4); // SISMAI
                 frame_data[1] |= COMPOSE_BITS!(self.IntegrityFlags[svid_idx] >> 2, 6, 3); // B1C DIF/SIF/AIF
-                Self::AppendWord(frame_data, 1 * 24 + 18, &self.ClockParam[svid_idx], 69);
+                Self::AppendWord(frame_data, 24 + 18, &self.ClockParam[svid_idx], 69);
                 frame_data[4] |= COMPOSE_BITS!(self.ClockParam[svid_idx][3] >> 1, 0, 9); // IODC
                 frame_data[5] = COMPOSE_BITS!(self.ClockParam[svid_idx][3], 23, 1); // IODC
                 frame_data[6] = 0; // fill rest of 143bits with 0
@@ -228,7 +228,7 @@ impl BCNav2Bit {
 
     // Public interface methods for setting navigation data
     pub fn SetEphemeris(&mut self, svid: i32, eph: &GpsEphemeris) -> i32 {
-        if svid < 1 || svid > 63 {
+        if !(1..=63).contains(&svid) {
             return 1;
         }
         

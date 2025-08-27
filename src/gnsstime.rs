@@ -113,7 +113,7 @@ impl GnssTimeConverter {
         }
 
         let week = (total_seconds / 604800) as i32;
-        let mut milli_seconds = ((total_seconds - (week as u32) * 604800) * 1000 + (glonass_time.MilliSeconds % 1000) as u32) as i32;
+        let milli_seconds = ((total_seconds - (week as u32) * 604800) * 1000 + (glonass_time.MilliSeconds % 1000) as u32) as i32;
 
         GnssTime {
             Week: week,

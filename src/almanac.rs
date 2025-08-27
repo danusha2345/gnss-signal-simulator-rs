@@ -27,14 +27,14 @@ pub fn CheckAlmnanacType(file: &mut File) -> AlmanacType {
     let mut reader = BufReader::new(file);
     let mut line = String::new();
     
-    if let Err(_) = reader.read_line(&mut line) {
+    if reader.read_line(&mut line).is_err() {
         return AlmanacType::AlmanacUnknown;
     }
 
     if line.starts_with('*') {
-        return AlmanacType::AlmanacGps;
+        AlmanacType::AlmanacGps
     } else if line.starts_with('<') {
-        return AlmanacType::AlmanacGalileo;
+        AlmanacType::AlmanacGalileo
     } else {
         // Check second parameter
         let parts: Vec<&str> = line.split_whitespace().collect();
@@ -45,9 +45,9 @@ pub fn CheckAlmnanacType(file: &mut File) -> AlmanacType {
         let second_param = parts[1];
         if second_param.len() >= 6 && second_param.chars().nth(2) == Some('.') && 
            second_param.chars().nth(5) == Some('.') {
-            return AlmanacType::AlmanacGlonass;
+            AlmanacType::AlmanacGlonass
         } else {
-            return AlmanacType::AlmanacUnknown;
+            AlmanacType::AlmanacUnknown
         }
     }
 }
@@ -496,7 +496,7 @@ pub fn GetAlmanacFromEphemeris(eph: &GpsEphemeris, week: i32, toa: i32) -> GpsAl
     alm
 }
 
-const INCLINATION_FACTOR: f64 = 0.94651548789182584209669573761592;
+const INCLINATION_FACTOR: f64 = 0.946_515_487_891_825_8;
 
 pub fn GetAlmanacFromEphemerisGlonass(eph: &GlonassEphemeris, day: i32, leap_year: i32) -> GlonassAlmanac {
     let mut alm = GlonassAlmanac::default();
@@ -645,7 +645,7 @@ pub fn ConvertAlmanacFromEphemerisGeo(alm: &mut GpsAlmanac, eph: &GpsEphemeris, 
     true
 }
 
-pub fn ReadAlmanac(mut file: File, system: GnssSystem, alm_gps: &mut [GpsAlmanac; 32], alm_bds: &mut [GpsAlmanac; 63], alm_gal: &mut [GpsAlmanac; 36], alm_glo: &mut [GlonassAlmanac; 24]) -> i32 {
+pub fn ReadAlmanac(mut file: File, _system: GnssSystem, alm_gps: &mut [GpsAlmanac; 32], alm_bds: &mut [GpsAlmanac; 63], alm_gal: &mut [GpsAlmanac; 36], alm_glo: &mut [GlonassAlmanac; 24]) -> i32 {
     let alm_type = CheckAlmnanacType(&mut file);
     match alm_type {
         AlmanacType::AlmanacGps => ReadAlmanacGps(file, alm_gps),
@@ -671,6 +671,6 @@ pub fn GlonassSatPosSpeedEph(_t: f64, _eph: &GlonassEphemeris, _pos_vel: &mut Ki
     // This would need actual implementation from satellite_param module
 }
 
-pub fn GpsSatPosSpeedEph(_system: GnssSystem, _time: f64, _eph: &GpsEphemeris, _pos_vel: &mut KinematicInfo) {
+pub fn GpsSatPosSpeedEph(__system: GnssSystem, _time: f64, _eph: &GpsEphemeris, _pos_vel: &mut KinematicInfo) {
     // This would need actual implementation from satellite_param module
 }

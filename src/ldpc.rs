@@ -65,7 +65,7 @@ pub fn ldpc_encode(symbol_stream: &mut [i32], symbol_length: usize, matrix_gen: 
             }
             
             let matrix_element = (matrix_bytes[matrix_index] as i32) - ('0' as i32);
-            if matrix_element < 0 || matrix_element > 63 {
+            if !(0..=63).contains(&matrix_element) {
                 return -1;
             }
             

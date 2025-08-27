@@ -64,7 +64,7 @@ pub use fnavbit::*;
 // pub use fnavbit_backup::*;
 pub use gnavbit::*;
 pub use gnsstime::*;
-pub use ifdatagen::{NavBitTrait, IFDataGen, NavData, GenerationStats};
+pub use ifdatagen::{NavBitTrait, IFDataGen, GenerationStats};
 pub use types::*;
 pub use constants::*;
 pub use cnavbit::*;

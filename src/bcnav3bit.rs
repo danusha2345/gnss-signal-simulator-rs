@@ -26,7 +26,6 @@
 //----------------------------------------------------------------------
 
 use crate::types::*;
-use crate::constants::*;
 use crate::COMPOSE_BITS;
 
 pub const B2B_SYMBOL_LENGTH: usize = 81;
@@ -69,6 +68,12 @@ pub struct BCNav3Bit {
     // Almanac week and time of week
     pub AlmanacWeek: u32,
     pub AlmanacToa: u32,
+}
+
+impl Default for BCNav3Bit {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl BCNav3Bit {
@@ -179,7 +184,7 @@ impl BCNav3Bit {
 
     // Append word to FrameData array
     fn append_word(&self, frame_data: &mut [u32], start_bit: u32, data: &[u32], bit_count: u32) {
-        let mut bit_index = start_bit;
+        let bit_index = start_bit;
         let mut word_index = (bit_index >> 5) as usize;
         let mut bit_offset = bit_index & 0x1f;
         let mut data_index = 0;
@@ -283,9 +288,9 @@ impl BCNav3Bit {
     }
 
     // Get frame data for B-CNAV3
-    pub fn get_frame_data(&self, start_time: GnssTime, svid: i32, param: i32, nav_bits: &mut [i32]) -> i32 {
+    pub fn get_frame_data(&self, start_time: GnssTime, svid: i32, _param: i32, nav_bits: &mut [i32]) -> i32 {
         // Check if svid is valid
-        if svid < 1 || svid > 63 {
+        if !(1..=63).contains(&svid) {
             return 1;
         }
 
@@ -360,7 +365,7 @@ impl BCNav3Bit {
             40 => {
                 // Almanac message
                 frame_data[1] = COMPOSE_BITS!(sow as u32, 4, 20);
-                self.append_word(frame_data, 1 * 24 + 20, &self.BgtoParam[(sow % 3) as usize], 68); // First 3 BGTO fields
+                self.append_word(frame_data, 24 + 20, &self.BgtoParam[(sow % 3) as usize], 68); // First 3 BGTO fields
                 
                 let almanac_prn = sow % 63;
                 self.append_word(frame_data, 4 * 24 + 16, &self.MidiAlmanac[almanac_prn as usize], 156); // Midi almanac
@@ -391,7 +396,7 @@ impl BCNav3Bit {
 
     // Interface methods required by NavBitTrait
     pub fn SetEphemeris(&mut self, svid: i32, eph: &GpsEphemeris) -> bool {
-        if svid < 1 || svid > 63 {
+        if !(1..=63).contains(&svid) {
             return false;
         }
         // Convert GpsEphemeris to BDS B2b ephemeris format
@@ -407,19 +412,19 @@ impl BCNav3Bit {
             // This is a simplified conversion - real implementation would encode
             // all ephemeris parameters according to BDS ICD specification
             let mut eph1_data = [0u32; 32];
-            let mut eph2_data = [0u32; 32];
+            let mut _eph2_data = [0u32; 32];
             
             // Example encoding of key ephemeris parameters
             eph1_data[0] = (svid as u32) << 24; // SVID in message header
-            eph1_data[1] = (eph.toe as u32 - 14); // Adjust for BDT
-            eph1_data[2] = (eph.sqrtA.to_bits() as u32);
-            eph1_data[3] = (eph.ecc.to_bits() as u32);
+            eph1_data[1] = eph.toe as u32 - 14; // Adjust for BDT
+            eph1_data[2] = eph.sqrtA.to_bits() as u32;
+            eph1_data[3] = eph.ecc.to_bits() as u32;
             
             // Copy to backup
-            eph2_data = eph1_data;
+            _eph2_data = eph1_data;
             
             self.Ephemeris1[index] = eph1_data;
-            self.Ephemeris2[index] = eph2_data;
+            self.Ephemeris2[index] = _eph2_data;
             
             true
         } else {

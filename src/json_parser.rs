@@ -91,6 +91,12 @@ pub struct JsonStream {
     line_pos: usize,
 }
 
+impl Default for JsonStream {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl JsonStream {
     pub fn new() -> Self {
         let mut instance = JsonStream {
@@ -209,11 +215,10 @@ impl JsonStream {
         }
 
         loop {
-            if self.current_char() == 0 {
-                if get_stream_func(self, source) < 0 {
+            if self.current_char() == 0
+                && get_stream_func(self, source) < 0 {
                     break;
                 }
-            }
             if self.current_char() == 0 {
                 continue;
             }
@@ -313,7 +318,7 @@ impl JsonStream {
     }
 
     fn current_char(&self) -> c_char {
-        if let Some(_) = &self.reader {
+        if self.reader.is_some() {
             if self.line_pos < self.current_line.len() {
                 self.current_line.as_bytes()[self.line_pos] as c_char
             } else {
@@ -331,7 +336,7 @@ impl JsonStream {
     }
 
     fn advance_char(&mut self) {
-        if let Some(_) = &self.reader {
+        if self.reader.is_some() {
             self.line_pos += 1;
         } else {
             unsafe {
@@ -365,7 +370,7 @@ impl JsonStream {
         
         if self.current_char() == 0 {
             // Move back one position if we hit end of string
-            if let Some(_) = &self.reader {
+            if self.reader.is_some() {
                 if self.line_pos > 0 {
                     self.line_pos -= 1;
                 }
@@ -439,14 +444,12 @@ impl JsonStream {
             }
             
             // Move back one position
-            if let Some(_) = &self.reader {
+            if self.reader.is_some() {
                 if self.line_pos > 0 {
                     self.line_pos -= 1;
                 }
-            } else {
-                if !self.p.is_null() {
-                    self.p = self.p.offset(-1);
-                }
+            } else if !self.p.is_null() {
+                self.p = self.p.offset(-1);
             }
         }
         0
@@ -509,14 +512,12 @@ impl JsonStream {
                 
                 if finish {
                     // Move back one position
-                    if let Some(_) = &self.reader {
+                    if self.reader.is_some() {
                         if self.line_pos > 0 {
                             self.line_pos -= 1;
                         }
-                    } else {
-                        if !self.p.is_null() {
-                            self.p = self.p.offset(-1);
-                        }
+                    } else if !self.p.is_null() {
+                        self.p = self.p.offset(-1);
                     }
                     break;
                 }
@@ -541,9 +542,9 @@ impl JsonStream {
 
     fn output_object(&self, fp: &mut File, object: *mut JsonObjectParser, depth: i32, has_key: bool) -> i32 {
         if has_key {
-            let _ = write!(fp, "{{\n");
+            let _ = writeln!(fp, "{{");
         } else {
-            let _ = write!(fp, "[\n");
+            let _ = writeln!(fp, "[");
         }
 
         let mut current_object = object;
@@ -552,12 +553,12 @@ impl JsonStream {
             unsafe {
                 current_object = (*current_object).p_next_object;
                 if !current_object.is_null() {
-                    let _ = write!(fp, ",\n");
+                    let _ = writeln!(fp, ",");
                 }
             }
         }
 
-        let _ = write!(fp, "\n");
+        let _ = writeln!(fp);
         for _ in 0..(depth - 1) {
             let _ = write!(fp, "\t");
         }
@@ -625,7 +626,7 @@ impl JsonStream {
                     b'\"' => { let _ = write!(fp, "\\\""); },
                     b'/' => { let _ = write!(fp, "\\/"); },
                     b'\\' => { let _ = write!(fp, "\\\\"); },
-                    c if c < 0x20 || c >= 0x7f => {
+                    c if !(0x20..0x7f).contains(&c) => {
                         let _ = write!(fp, "\\u{:04x}", c as u32);
                     },
                     c => {

@@ -99,17 +99,17 @@ impl PrnGenerate {
         // Validate SVID range and generate PRN codes based on system and signal
         match system {
             GnssSystem::GpsSystem => {
-                if svid >= 1 && svid <= 32 {
+                if (1..=32).contains(&svid) {
                     generator.generate_gps_prn(signal_index, svid);
                 }
             },
             GnssSystem::BdsSystem => {
-                if svid >= 1 && svid <= 63 {
+                if (1..=63).contains(&svid) {
                     generator.generate_bds_prn(signal_index, svid);
                 }
             },
             GnssSystem::GalileoSystem => {
-                if svid >= 1 && svid <= 50 {
+                if (1..=50).contains(&svid) {
                     generator.generate_galileo_prn(signal_index, svid);
                 }
             },
@@ -202,7 +202,7 @@ impl PrnGenerate {
                 self.attribute = Some(PRN_ATTRIBUTES[4]);
             },
             B2B => {
-                let mask = if svid < 6 || svid > 58 { 0 } else { 0x1fff };
+                let mask = if !(6..=58).contains(&svid) { 0 } else { 0x1fff };
                 self.data_prn = Some(self.get_gold_code(B2B_PRN_INIT[(svid-1) as usize], 0x192c, mask, 0x1301, 10230, 13, 8190));
                 self.pilot_prn = None;
                 self.attribute = Some(PRN_ATTRIBUTES[7]);
