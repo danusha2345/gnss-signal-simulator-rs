@@ -1691,39 +1691,110 @@ where
     Some(alm)
 }
 
-/// Парсит BeiDou эфемериды из RINEX формата (упрощенная версия)
-fn parse_beidou_ephemeris<I>(_line: &str, _lines: &mut I) -> Option<GpsEphemeris>
+/// Парсит BeiDou эфемериды из RINEX формата
+fn parse_beidou_ephemeris<I>(line: &str, lines: &mut I) -> Option<GpsEphemeris>
 where
     I: Iterator<Item = Result<String, std::io::Error>>
 {
-    // BeiDou использует тот же формат что и GPS
-    None
+    // BeiDou uses similar format to GPS but with system-specific adjustments
+    let mut eph = parse_gps_ephemeris(line, lines)?;
+    
+    // Convert to BeiDou-specific parameters
+    // BeiDou uses BDT (BeiDou Time) which differs from GPS time
+    eph.toe -= 14; // BDT is 14 seconds behind GPS time
+    eph.top -= 14;
+    
+    // BeiDou week number uses different epoch (January 1, 2006)
+    eph.week = eph.week.saturating_sub(1356); // Convert GPS week to BDS week
+    
+    // BeiDou uses CGCS2000 coordinate system (very similar to WGS84)
+    // No significant adjustments needed for most applications
+    
+    Some(eph)
 }
 
-/// Парсит Galileo эфемериды из RINEX формата (упрощенная версия)
-fn parse_galileo_ephemeris<I>(_line: &str, _lines: &mut I) -> Option<GpsEphemeris>
+/// Парсит Galileo эфемериды из RINEX формата
+fn parse_galileo_ephemeris<I>(line: &str, lines: &mut I) -> Option<GpsEphemeris>
 where
     I: Iterator<Item = Result<String, std::io::Error>>
 {
-    // Galileo использует похожий на GPS формат
-    None
+    // Galileo uses GPS-compatible ephemeris format with system-specific adjustments
+    let mut eph = parse_gps_ephemeris(line, lines)?;
+    
+    // Convert to Galileo-specific parameters
+    // Galileo System Time (GST) epoch: August 22, 1999 00:00:00 UTC
+    // GST is synchronized with TAI (continuous time scale)
+    
+    // Galileo week number starts from GST epoch
+    // GPS week 1024 corresponds to GST week 0 (August 22, 1999)
+    if eph.week >= 1024 {
+        eph.week -= 1024; // Convert GPS week to GST week
+    }
+    
+    // Galileo uses essentially the same coordinate system as GPS (WGS84)
+    // Signal-in-space accuracy (SISA) mapping may differ from GPS URA
+    
+    // Galileo-specific health flags and data validity flags
+    // would need to be handled differently in full implementation
+    
+    Some(eph)
 }
 
 
-/// Парсит BeiDou альманах (упрощенная версия)
-fn parse_beidou_almanac<I>(_lines: &mut I) -> Option<Vec<GpsAlmanac>>
+/// Парсит BeiDou альманах
+fn parse_beidou_almanac<I>(lines: &mut I) -> Option<Vec<GpsAlmanac>>
 where
     I: Iterator<Item = Result<String, std::io::Error>>
 {
-    // BeiDou альманах
-    None
+    let mut almanacs = Vec::new();
+    
+    while let Some(Ok(line)) = lines.next() {
+        if line.starts_with("*****") {
+            // BeiDou YUMA format similar to GPS
+            if let Some(mut alm) = parse_gps_almanac(&line, lines) {
+                // Convert to BeiDou format
+                alm.week = alm.week.saturating_sub(1356); // Convert to BDS week
+                
+                if alm.svid <= 63 { // BeiDou supports up to 63 satellites
+                    almanacs.push(alm);
+                }
+            }
+        }
+    }
+    
+    if !almanacs.is_empty() {
+        Some(almanacs)
+    } else {
+        None
+    }
 }
 
-/// Парсит Galileo альманах (упрощенная версия)
-fn parse_galileo_almanac<I>(_lines: &mut I) -> Option<Vec<GpsAlmanac>>
+/// Парсит Galileo альманах
+fn parse_galileo_almanac<I>(lines: &mut I) -> Option<Vec<GpsAlmanac>>
 where
     I: Iterator<Item = Result<String, std::io::Error>>
 {
-    // Galileo альманах  
-    None
+    let mut almanacs = Vec::new();
+    
+    while let Some(Ok(line)) = lines.next() {
+        if line.starts_with("*****") {
+            // Galileo YUMA format similar to GPS
+            if let Some(mut alm) = parse_gps_almanac(&line, lines) {
+                // Convert to Galileo format
+                if alm.week >= 1024 {
+                    alm.week -= 1024; // Convert to GST week
+                }
+                
+                if alm.svid <= 36 { // Galileo currently has up to 36 satellites
+                    almanacs.push(alm);
+                }
+            }
+        }
+    }
+    
+    if !almanacs.is_empty() {
+        Some(almanacs)
+    } else {
+        None
+    }
 }
