@@ -26,13 +26,13 @@
 
 use std::fs::File;
 use std::io::{Write, BufWriter};
-use std::time::{Instant, Duration};
+use std::time::Instant;
 use std::env;
 use crate::types::*;
 use crate::complex_number::ComplexNumber;
 use crate::constants::*;
 use crate::json_parser::{JsonStream, JsonObject};
-use crate::gnsstime::{utc_to_gps_time, utc_to_glonass_time_corrected, utc_to_bds_time, gps_time_to_utc};
+use crate::gnsstime::{utc_to_gps_time, utc_to_glonass_time_corrected, utc_to_bds_time};
 use crate::coordinate::{lla_to_ecef, speed_local_to_ecef, calc_conv_matrix_lla};
 use crate::{lnavbit::LNavBit, l5cnavbit::L5CNavBit, gnavbit::GNavBit};
 use crate::{cnavbit::CNavBit as ActualCNavBit, cnav2bit::CNav2Bit as ActualCNav2Bit};
@@ -43,12 +43,21 @@ use crate::trajectory::CTrajectory;
 use crate::types::SatelliteParam;
 use crate::navdata::NavDataType;
 pub struct NavData {
+    // Ионосферные и UTC параметры
     gps_iono: Option<IonoParam>,
     gps_utc: Option<UtcParam>,
     bds_iono: Option<IonoParam>,
     bds_utc: Option<UtcParam>,
     gal_iono: Option<IonoParam>,
     gal_utc: Option<UtcParam>,
+    
+    // Эфемериды для всех ГНСС систем
+    pub gps_ephemeris: Vec<Option<GpsEphemeris>>,
+    pub bds_ephemeris: Vec<Option<GpsEphemeris>>, // BeiDou использует структуру GPS
+    pub gal_ephemeris: Vec<Option<GpsEphemeris>>, // Galileo использует структуру GPS
+    pub glonass_ephemeris: Vec<Option<GlonassEphemeris>>,
+    
+    // Альманахи
     gps_almanac: Vec<GpsAlmanac>,
     bds_almanac: Vec<GpsAlmanac>,
     gal_almanac: Vec<GpsAlmanac>,
@@ -68,6 +77,10 @@ impl NavData {
             bds_almanac: Vec::new(),
             gal_almanac: Vec::new(),
             glo_almanac: Vec::new(),
+            gps_ephemeris: Vec::new(),
+            bds_ephemeris: Vec::new(),
+            gal_ephemeris: Vec::new(),
+            glonass_ephemeris: Vec::new(),
         }
     }
 
@@ -85,33 +98,35 @@ impl NavData {
     /// Поиск эфемерид по системе, времени и SVID
     /// Возвращает наиболее подходящие эфемериды по временной близости
     pub fn find_ephemeris(&self, system: GnssSystem, time: GnssTime, svid: i32, _signal: i32, _param: i32) -> Option<GpsEphemeris> {
-        let target_time = (time.week as f64) * 604800.0 + (time.milli_seconds as f64) / 1000.0;
+        let target_time = (time.Week as f64) * 604800.0 + (time.MilliSeconds as f64) / 1000.0;
         let mut best_eph: Option<GpsEphemeris> = None;
         let mut best_time_diff = f64::INFINITY;
         
         let ephemeris_pool = match system {
-            GnssSystem::Gps => &self.gps_ephemeris,
+            GnssSystem::GpsSystem => &self.gps_ephemeris,
             GnssSystem::BdsSystem => &self.bds_ephemeris,
-            GnssSystem::Galileo => &self.gal_ephemeris,
+            GnssSystem::GalileoSystem => &self.gal_ephemeris,
             _ => return None,
         };
         
         // Поиск наиболее подходящих эфемерид по SVID и времени
-        for eph in ephemeris_pool.iter() {
-            if eph.svid == svid && (eph.valid & 1) != 0 && eph.health == 0 {
-                // Рассчитываем разность времени от эпохи toe
-                let eph_time = eph.week_number as f64 * 604800.0 + eph.toe;
-                let mut time_diff = (target_time - eph_time).abs();
-                
-                // Учитываем переполнение недели
-                if time_diff > 302400.0 {
-                    time_diff = 604800.0 - time_diff;
-                }
-                
-                // Проверяем, что эфемериды не слишком старые (4 часа)
-                if time_diff < 14400.0 && time_diff < best_time_diff {
-                    best_time_diff = time_diff;
-                    best_eph = Some(eph.clone());
+        for eph_opt in ephemeris_pool.iter() {
+            if let Some(eph) = eph_opt {
+                if eph.svid as i32 == svid && (eph.valid & 1) != 0 && eph.health == 0 {
+                    // Рассчитываем разность времени от эпохи toe
+                    let eph_time = eph.week as f64 * 604800.0 + eph.toe as f64;
+                    let mut time_diff = (target_time - eph_time).abs();
+                    
+                    // Учитываем переполнение недели
+                    if time_diff > 302400.0 {
+                        time_diff = 604800.0 - time_diff;
+                    }
+                    
+                    // Проверяем, что эфемериды не слишком старые (4 часа)
+                    if time_diff < 14400.0 && time_diff < best_time_diff {
+                        best_time_diff = time_diff;
+                        best_eph = Some(*eph);
+                    }
                 }
             }
         }
@@ -123,26 +138,28 @@ impl NavData {
     /// Учитывает особенности временной системы ГЛОНАСС
     pub fn find_glo_ephemeris(&self, time: GlonassTime, svid: i32) -> Option<GlonassEphemeris> {
         // Преобразуем время ГЛОНАСС в секунды от начала дня
-        let target_seconds = time.milli_seconds as f64 / 1000.0;
+        let target_seconds = time.MilliSeconds as f64 / 1000.0;
         let mut best_eph: Option<GlonassEphemeris> = None;
         let mut best_time_diff = f64::INFINITY;
         
         // Поиск по номеру слота (n) и времени
-        for eph in self.glo_ephemeris.iter() {
-            if eph.n == svid && eph.flag != 0 {
-                // Для ГЛОНАСС tb - это время в секундах от начала дня
-                let eph_seconds = eph.tb as f64;
-                let mut time_diff = (target_seconds - eph_seconds).abs();
-                
-                // Учитываем переход через полночь (86400 секунд)
-                if time_diff > 43200.0 {
-                    time_diff = 86400.0 - time_diff;
-                }
-                
-                // Эфемериды ГЛОНАСС действительны 30 минут
-                if time_diff < 1800.0 && time_diff < best_time_diff {
-                    best_time_diff = time_diff;
-                    best_eph = Some(eph.clone());
+        for eph_opt in self.glonass_ephemeris.iter() {
+            if let Some(eph) = eph_opt {
+                if eph.n as i32 == svid && eph.flag != 0 {
+                    // Для ГЛОНАСС tb - это время в секундах от начала дня
+                    let eph_seconds = eph.tb as f64;
+                    let mut time_diff = (target_seconds - eph_seconds).abs();
+                    
+                    // Учитываем переход через полночь (86400 секунд)
+                    if time_diff > 43200.0 {
+                        time_diff = 86400.0 - time_diff;
+                    }
+                    
+                    // Эфемериды ГЛОНАСС действительны 30 минут
+                    if time_diff < 1800.0 && time_diff < best_time_diff {
+                        best_time_diff = time_diff;
+                        best_eph = Some(*eph);
+                    }
                 }
             }
         }
@@ -1341,13 +1358,13 @@ impl IFDataGen {
     /// Возвращает количество видимых спутников и заполняет массив эфемерид
     fn get_visible_satellite(&self, cur_pos: KinematicInfo, cur_time: GnssTime, system: GnssSystem, eph: &[Option<GpsEphemeris>], eph_visible: &mut [Option<GpsEphemeris>]) -> usize {
         let mut sat_number = 0;
-        let elevation_mask = self.output_param.elevation_mask;
+        let elevation_mask = self.output_param.ElevationMask;
         
         // Получаем маску исключений для конкретной системы
         let mask_out = match system {
-            GnssSystem::Gps => self.output_param.gps_mask_out as u64,
-            GnssSystem::BdsSystem => self.output_param.bds_mask_out,
-            GnssSystem::Galileo => self.output_param.galileo_mask_out,
+            GnssSystem::GpsSystem => self.output_param.GpsMaskOut as u64,
+            GnssSystem::BdsSystem => self.output_param.BdsMaskOut,
+            GnssSystem::GalileoSystem => self.output_param.GalileoMaskOut,
             _ => 0,
         };
         
@@ -1387,8 +1404,8 @@ impl IFDataGen {
     /// Аналогично get_visible_satellite, но для системы ГЛОНАСС с учетом слотов
     fn get_glonass_visible_satellite(&self, cur_pos: KinematicInfo, glonass_time: GlonassTime, eph: &[Option<GlonassEphemeris>], eph_visible: &mut [Option<GlonassEphemeris>]) -> usize {
         let mut sat_number = 0;
-        let elevation_mask = self.output_param.elevation_mask;
-        let mask_out = self.output_param.glonass_mask_out;
+        let elevation_mask = self.output_param.ElevationMask;
+        let mask_out = self.output_param.GlonassMaskOut;
         
         for (i, eph_opt) in eph.iter().enumerate() {
             if let Some(ephemeris) = eph_opt {
@@ -1446,8 +1463,10 @@ impl IFDataGen {
                 
                 // Создаем GLONASS время из GPS времени
                 let glonass_time = GlonassTime {
-                    nt: cur_time.Week as i32 * 7 + (cur_time.MilliSeconds / (24 * 60 * 60 * 1000)) as i32,
-                    n: (cur_time.MilliSeconds % (24 * 60 * 60 * 1000)) as i32,
+                    LeapYear: 2023, // Placeholder год
+                    Day: cur_time.Week as i32 * 7 + (cur_time.MilliSeconds / (24 * 60 * 60 * 1000)) as i32,
+                    MilliSeconds: (cur_time.MilliSeconds % (24 * 60 * 60 * 1000)) as i32,
+                    SubMilliSeconds: 0.0,
                 };
                 
                 // Рассчитываем позицию GLONASS спутника
@@ -1473,18 +1492,18 @@ impl IFDataGen {
         let mut gps_eph = GpsEphemeris::new();
         
         // Базовые параметры времени
-        gps_eph.toe = glo_eph.tb as f64 * 15.0 * 60.0; // tb в 15-минутных интервалах
-        gps_eph.toc = glo_eph.tb as f64 * 15.0 * 60.0;
+        gps_eph.toe = (glo_eph.tb as f64 * 15.0 * 60.0) as i32; // tb в 15-минутных интервалах
+        gps_eph.toc = (glo_eph.tb as f64 * 15.0 * 60.0) as i32;
         
-        // Номер спутника
-        gps_eph.prn = glo_eph.n as i32;
+        // Номер спутника (используем svid)
+        gps_eph.svid = glo_eph.n as u8;
         
         // Параметры здоровья и точности
         gps_eph.health = if glo_eph.flag != 0 { 0 } else { 1 };
-        gps_eph.ura = 2.0; // Примерная точность ГЛОНАСС
+        gps_eph.ura = 2; // Примерная точность ГЛОНАСС (i16)
         
         // Коррекция часов (ГЛОНАСС использует линейную модель)
-        gps_eph.af0 = -glo_eph.tau_n; // Смещение часов
+        gps_eph.af0 = -glo_eph.tn; // Смещение часов
         gps_eph.af1 = glo_eph.gamma; // Относительное отклонение частоты
         gps_eph.af2 = 0.0; // ГЛОНАСС не использует квадратичный член
         
@@ -1504,14 +1523,14 @@ impl IFDataGen {
         
         // Упрощенное преобразование - радиус орбиты
         let r = (pos_x * pos_x + pos_y * pos_y + pos_z * pos_z).sqrt();
-        gps_eph.sqrt_a = (r / 1000.0).sqrt(); // Приблизительно корень из большой полуоси
+        gps_eph.sqrtA = (r / 1000.0).sqrt(); // Приблизительно корень из большой полуоси
         
         // Примерные значения для других параметров орбиты
         gps_eph.ecc = 0.001; // Малый эксцентриситет для ГЛОНАСС
         gps_eph.i0 = (pos_z / r).asin(); // Приближенное наклонение
-        gps_eph.omega_0 = pos_y.atan2(pos_x); // Долгота восходящего узла
-        gps_eph.omega = 0.0; // Аргумент перигея
-        gps_eph.m0 = 0.0; // Средняя аномалия
+        gps_eph.omega0 = pos_y.atan2(pos_x); // Долгота восходящего узла
+        gps_eph.w = 0.0; // Аргумент перигея (w, не omega)
+        gps_eph.M0 = 0.0; // Средняя аномалия
         
         // Поправки орбиты (для ГЛОНАСС не применимы)
         gps_eph.delta_n = 0.0;
