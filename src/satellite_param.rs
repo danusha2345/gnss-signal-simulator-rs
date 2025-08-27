@@ -669,7 +669,7 @@ fn gps_sat_pos_speed_eph(system: GnssSystem, transmit_time: f64, eph: &GpsEpheme
     pos_vel.vz += yp * ik_dot * cos_ik;
     
     // Рассчитываем ускорение если предоставлен валидный указатель массива
-    if let Some(acc_array) = acc {
+    if let Some(ref mut acc_array) = acc {
         let ik_dot2 = acc_array[2]; // Используем сохраненное значение
         let alpha_final = pos_vel.vz * ik_dot + pos_vel.z * ik_dot2 - xp_dot * eph.omega_delta
                          + yp_dot * ik_dot * sin_ik - yp_dot2 * cos_ik;
@@ -726,7 +726,7 @@ fn gps_sat_pos_speed_eph(system: GnssSystem, transmit_time: f64, eph: &GpsEpheme
 /// Рассчитывает позицию и скорость спутника ГЛОНАСС на основе эфемерид
 /// Использует численное интегрирование (упрощенная версия без полного Рунге-Кутта)
 /// TODO: Полная реализация с методом Рунге-Кутта для точных вычислений
-fn glonass_sat_pos_speed_eph(transmit_time: f64, eph: &GlonassEphemeris, pos_vel: &mut KinematicInfo, _acc: Option<&mut [f64; 3]>) -> bool {
+fn glonass_sat_pos_speed_eph(transmit_time: f64, eph: &GlonassEphemeris, pos_vel: &mut KinematicInfo, mut _acc: Option<&mut [f64; 3]>) -> bool {
     const COARSE_STEP: f64 = 30.0;
     
     let mut delta_t = transmit_time - eph.tb as f64;
