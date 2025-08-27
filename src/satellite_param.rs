@@ -81,7 +81,7 @@ pub fn get_visible_satellite(
             }
             
             // Calculate elevation and azimuth
-            let (elevation, azimuth) = sat_el_az(position, &sat_position);
+            let (elevation, _azimuth) = sat_el_az(position, &sat_position);
             
             // Check elevation mask
             if elevation < output_param.ElevationMask {
@@ -343,9 +343,12 @@ pub fn get_satellite_cn0(
                 cn0 = power.cn0;
             }
             satellite_param.CN0 = (cn0 * 100.0 + 0.5) as i32;
-            break;
+            return;
         }
     }
+    
+    // No matching power entry found, use default CN0
+    satellite_param.CN0 = (cn0 * 100.0 + 0.5) as i32;
 }
 
 /// Get ionospheric delay for different signals
@@ -723,10 +726,10 @@ fn gps_sat_pos_speed_eph(system: GnssSystem, transmit_time: f64, eph: &GpsEpheme
 }
 
 /// Рассчитывает позицию и скорость спутника ГЛОНАСС на основе эфемерид
-/// Использует численное интегрирование (упрощенная версия без полного Рунге-Кутта)
-/// TODO: Полная реализация с методом Рунге-Кутта для точных вычислений
-fn glonass_sat_pos_speed_eph(transmit_time: f64, eph: &GlonassEphemeris, pos_vel: &mut KinematicInfo, mut _acc: Option<&mut [f64; 3]>) -> bool {
-    const COARSE_STEP: f64 = 30.0;
+/// Использует метод Рунге-Кутта 4-го порядка для точного численного интегрирования
+/// с учетом возмущений J2 и вращения Земли
+fn glonass_sat_pos_speed_eph(transmit_time: f64, eph: &GlonassEphemeris, pos_vel: &mut KinematicInfo, acc: Option<&mut [f64; 3]>) -> bool {
+    const COARSE_STEP: f64 = 30.0; // шаг интегрирования в секундах
     
     let mut delta_t = transmit_time - eph.tb as f64;
     if delta_t > 43200.0 {
@@ -735,24 +738,136 @@ fn glonass_sat_pos_speed_eph(transmit_time: f64, eph: &GlonassEphemeris, pos_vel
         delta_t += 86400.0;
     }
     
-    // Упрощенная линейная экстраполяция (не точная, но работающая заглушка)
-    // В реальной версии здесь должно быть численное интегрирование с учетом возмущений J2
-    pos_vel.x = eph.x + eph.vx * delta_t + 0.5 * eph.ax * delta_t * delta_t;
-    pos_vel.y = eph.y + eph.vy * delta_t + 0.5 * eph.ay * delta_t * delta_t;
-    pos_vel.z = eph.z + eph.vz * delta_t + 0.5 * eph.az * delta_t * delta_t;
+    // Начальные условия из эфемерид ГЛОНАСС (в системе ПЗ-90)
+    let mut state = [
+        eph.x * 1000.0, eph.y * 1000.0, eph.z * 1000.0,   // позиция в метрах
+        eph.vx * 1000.0, eph.vy * 1000.0, eph.vz * 1000.0, // скорость в м/с
+        eph.ax * 1000.0, eph.ay * 1000.0, eph.az * 1000.0, // ускорение в м/с²
+    ];
     
-    pos_vel.vx = eph.vx + eph.ax * delta_t;
-    pos_vel.vy = eph.vy + eph.ay * delta_t;
-    pos_vel.vz = eph.vz + eph.az * delta_t;
+    // Интегрирование методом Рунге-Кутта с фиксированным шагом
+    let step_number = (delta_t / COARSE_STEP) as i32;
+    if step_number >= 0 {
+        for _ in 0..step_number {
+            glonass_runge_kutta(COARSE_STEP, &mut state);
+        }
+    } else {
+        for _ in step_number..0 {
+            glonass_runge_kutta(-COARSE_STEP, &mut state);
+        }
+    }
     
-    // Коррекция на вращение Земли (переход из ПЗ-90 в ECEF)
-    const PZ90_OMEGDOTE: f64 = 7.2921150e-5; // радиан/с
+    // Финальная коррекция для остатка времени
+    let remainder_time = delta_t - (step_number as f64) * COARSE_STEP;
+    if remainder_time.abs() > 1e-9 {
+        glonass_runge_kutta(remainder_time, &mut state);
+    }
     
-    // Компенсация вращения Земли для скорости
-    pos_vel.vx += pos_vel.y * PZ90_OMEGDOTE;
-    pos_vel.vy -= pos_vel.x * PZ90_OMEGDOTE;
+    // Заполнение результирующих значений (переводим обратно в км и км/с)
+    pos_vel.x = state[0] / 1000.0;
+    pos_vel.y = state[1] / 1000.0;
+    pos_vel.z = state[2] / 1000.0;
+    pos_vel.vx = state[3] / 1000.0;
+    pos_vel.vy = state[4] / 1000.0;
+    pos_vel.vz = state[5] / 1000.0;
+    
+    // Возвращаем ускорение если требуется
+    if let Some(acceleration) = acc {
+        acceleration[0] = state[6] / 1000.0;
+        acceleration[1] = state[7] / 1000.0; 
+        acceleration[2] = state[8] / 1000.0;
+    }
     
     true
+}
+
+/// Реализация метода Рунге-Кутта 4-го порядка для интегрирования орбитального движения ГЛОНАСС
+/// с учетом возмущений J2 и вращения Земли
+fn glonass_runge_kutta(step: f64, state: &mut [f64; 9]) {
+    
+    let mut k1 = [0.0; 9];
+    let mut k2 = [0.0; 9]; 
+    let mut k3 = [0.0; 9];
+    let mut k4 = [0.0; 9];
+    let mut temp_state = [0.0; 9];
+    
+    // K1 = f(state)
+    glonass_orbit_derivatives(state, &mut k1);
+    
+    // K2 = f(state + 0.5*step*K1)  
+    for i in 0..9 {
+        temp_state[i] = state[i] + 0.5 * step * k1[i];
+    }
+    glonass_orbit_derivatives(&temp_state, &mut k2);
+    
+    // K3 = f(state + 0.5*step*K2)
+    for i in 0..9 {
+        temp_state[i] = state[i] + 0.5 * step * k2[i];
+    }
+    glonass_orbit_derivatives(&temp_state, &mut k3);
+    
+    // K4 = f(state + step*K3)
+    for i in 0..9 {
+        temp_state[i] = state[i] + step * k3[i];
+    }
+    glonass_orbit_derivatives(&temp_state, &mut k4);
+    
+    // Финальное обновление: state = state + (step/6)*(K1 + 2*K2 + 2*K3 + K4)
+    for i in 0..9 {
+        state[i] += (step / 6.0) * (k1[i] + 2.0 * k2[i] + 2.0 * k3[i] + k4[i]);
+    }
+}
+
+/// Вычисляет производные орбитального движения для системы дифференциальных уравнений ГЛОНАСС
+/// Включает гравитационное поле, возмущения J2, и эффекты вращения Земли
+fn glonass_orbit_derivatives(state: &[f64; 9], derivatives: &mut [f64; 9]) {
+    use crate::constants::{PZ90_GM, PZ90_OMEGDOTE, PZ90_AE};
+    const PZ90_J2: f64 = 1.0826257e-3;  // коэффициент J2 (сплющенность Земли)            
+    
+    let x = state[0];
+    let y = state[1]; 
+    let z = state[2];
+    let vx = state[3];
+    let vy = state[4];
+    let vz = state[5];
+    let ax = state[6];  // лунно-солнечные возмущения (из эфемерид)
+    let ay = state[7];
+    let az = state[8];
+    
+    // Расстояние от центра Земли
+    let r = (x * x + y * y + z * z).sqrt();
+    
+    // Гравитационное ускорение (основной член)
+    let mu_r3 = -PZ90_GM / (r * r * r);
+    let ax_grav = mu_r3 * x;
+    let ay_grav = mu_r3 * y;
+    let az_grav = mu_r3 * z;
+    
+    // Возмущения J2 (сплющенность Земли)
+    let r2 = r * r;
+    let z2 = z * z;
+    let j2_factor = 1.5 * PZ90_J2 * PZ90_GM * PZ90_AE * PZ90_AE / (r2 * r2 * r);
+    
+    let ax_j2 = j2_factor * x * (5.0 * z2 / r2 - 1.0);
+    let ay_j2 = j2_factor * y * (5.0 * z2 / r2 - 1.0);
+    let az_j2 = j2_factor * z * (5.0 * z2 / r2 - 3.0);
+    
+    // Центробежная и кориолисова силы от вращения Земли
+    let omega2 = PZ90_OMEGDOTE * PZ90_OMEGDOTE;
+    let ax_rot = omega2 * x + 2.0 * PZ90_OMEGDOTE * vy;
+    let ay_rot = omega2 * y - 2.0 * PZ90_OMEGDOTE * vx;
+    let az_rot = 0.0; // ось Z - ось вращения
+    
+    // Производные: [dx/dt, dy/dt, dz/dt, dvx/dt, dvy/dt, dvz/dt, dax/dt, day/dt, daz/dt]
+    derivatives[0] = vx; // dx/dt = vx
+    derivatives[1] = vy; // dy/dt = vy  
+    derivatives[2] = vz; // dz/dt = vz
+    derivatives[3] = ax_grav + ax_j2 + ax_rot + ax; // dvx/dt
+    derivatives[4] = ay_grav + ay_j2 + ay_rot + ay; // dvy/dt
+    derivatives[5] = az_grav + az_j2 + az_rot + az; // dvz/dt
+    derivatives[6] = 0.0; // лунно-солнечные возмущения считаем постоянными
+    derivatives[7] = 0.0; 
+    derivatives[8] = 0.0;
 }
 
 /// Рассчитывает коррекцию часов ГЛОНАСС спутника
