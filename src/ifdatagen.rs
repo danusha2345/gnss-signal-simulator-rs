@@ -104,8 +104,8 @@ impl NavData {
 
     /// Поиск эфемерид по системе, времени и SVID
     /// Возвращает наиболее подходящие эфемериды по временной близости
+    /// Поиск эфемерид по системе, времени и SVID - ТОЧНО как в C++ FindEphemeris()
     pub fn find_ephemeris(&self, system: GnssSystem, time: GnssTime, svid: i32, _signal: i32, _param: i32) -> Option<GpsEphemeris> {
-        let target_time = (time.Week as f64) * 604800.0 + (time.MilliSeconds as f64) / 1000.0;
         let mut best_eph: Option<GpsEphemeris> = None;
         let mut best_time_diff = f64::INFINITY;
         
@@ -116,22 +116,19 @@ impl NavData {
             _ => return None,
         };
         
-        // Поиск наиболее подходящих эфемерид по SVID и времени
+        // Поиск наиболее подходящих эфемерид по SVID и времени (как в C++)
         for eph_opt in ephemeris_pool.iter() {
             if let Some(eph) = eph_opt {
                 if eph.svid as i32 == svid && (eph.valid & 1) != 0 && eph.health == 0 {
-                    // Рассчитываем разность времени от эпохи toe
-                    let eph_time = eph.week as f64 * 604800.0 + eph.toe as f64;
-                    let mut time_diff = (target_time - eph_time).abs();
+                    // Вычисляем временную разность: diff = (Week - eph.week) * 604800 + (time.seconds - eph.toe)
+                    let diff = ((time.Week as i32 - eph.week) as f64) * 604800.0 + 
+                               ((time.MilliSeconds / 1000) as f64 - eph.toe as f64);
                     
-                    // Учитываем переполнение недели
-                    if time_diff > 302400.0 {
-                        time_diff = 604800.0 - time_diff;
-                    }
+                    let abs_diff = diff.abs();
                     
-                    // Проверяем, что эфемериды не слишком старые (4 часа)
-                    if time_diff < 14400.0 && time_diff < best_time_diff {
-                        best_time_diff = time_diff;
+                    // Проверяем ограничение по времени: если diff > 7200 (2 часа), эфемерида устарела
+                    if abs_diff <= 7200.0 && abs_diff < best_time_diff {
+                        best_time_diff = abs_diff;
                         best_eph = Some(*eph);
                     }
                 }
@@ -141,30 +138,31 @@ impl NavData {
         best_eph
     }
 
-    /// Поиск эфемерид ГЛОНАСС по времени и номеру слота
-    /// Учитывает особенности временной системы ГЛОНАСС
+    /// Поиск эфемерид ГЛОНАСС по времени и номеру слота - упрощенная версия  
     pub fn find_glo_ephemeris(&self, time: GlonassTime, svid: i32) -> Option<GlonassEphemeris> {
-        // Преобразуем время ГЛОНАСС в секунды от начала дня
-        let target_seconds = time.MilliSeconds as f64 / 1000.0;
         let mut best_eph: Option<GlonassEphemeris> = None;
         let mut best_time_diff = f64::INFINITY;
         
-        // Поиск по номеру слота (n) и времени
+        // Простое сравнение по дню и времени в секундах
+        let request_day = time.Day as f64;
+        let request_seconds = (time.MilliSeconds / 1000) as f64;
+        
+        // Поиск по номеру слота и времени
         for eph_opt in self.glonass_ephemeris.iter() {
             if let Some(eph) = eph_opt {
-                if eph.n as i32 == svid && eph.flag != 0 {
-                    // Для ГЛОНАСС tb - это время в секундах от начала дня
-                    let eph_seconds = eph.tb as f64;
-                    let mut time_diff = (target_seconds - eph_seconds).abs();
+                if eph.slot as i32 == svid && eph.flag != 0 {
+                    // Сравниваем по дню года и времени tb
+                    let eph_day = eph.day as f64;
+                    let eph_tb = eph.tb as f64;
                     
-                    // Учитываем переход через полночь (86400 секунд)
-                    if time_diff > 43200.0 {
-                        time_diff = 86400.0 - time_diff;
-                    }
+                    let day_diff = (request_day - eph_day).abs();
+                    let time_diff = (request_seconds - eph_tb).abs();
                     
-                    // Эфемериды ГЛОНАСС действительны 30 минут
-                    if time_diff < 1800.0 && time_diff < best_time_diff {
-                        best_time_diff = time_diff;
+                    let total_diff = if day_diff == 0.0 { time_diff } else { day_diff * 86400.0 + time_diff };
+                    
+                    // GLONASS эфемериды действительны 30 минут (1800 секунд)
+                    if total_diff < 1800.0 && total_diff < best_time_diff {
+                        best_time_diff = total_diff;
                         best_eph = Some(*eph);
                     }
                 }
