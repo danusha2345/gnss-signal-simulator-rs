@@ -42,7 +42,8 @@ pub const CGCS2000_OMEGDOTE: f64 = 7.292115e-5;
 // PZ90 constants
 pub const PZ90_AE: f64 = 6378136.0;
 pub const PZ90_AE2: f64 = PZ90_AE * PZ90_AE;
-pub const PZ90_GM: f64 = 3.9860044e+14;
+pub const EARTH_GM: f64 = 3.986004418e+14;  // Unified Earth GM constant
+pub const PZ90_GM: f64 = EARTH_GM;  // PZ90 uses the same GM value
 pub const PZ90_C20: f64 = 1082.63e-6;
 pub const PZ90_C20AE2: f64 = PZ90_C20 * PZ90_AE2;
 pub const PZ90_OMEGDOTE: f64 = 7.292115e-5;

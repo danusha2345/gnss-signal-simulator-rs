@@ -25,6 +25,7 @@ use crate::types::*;
 use crate::powercontrol::SignalPower;
 use crate::{lla_to_ecef, gps_time_to_utc, bds_time_to_utc, glonass_time_to_utc, speed_ecef_to_local, ecef_to_lla};
 use crate::types::{GpsEphemeris, GlonassEphemeris, GpsAlmanac, GlonassAlmanac, UtcParam};
+use crate::constants::EARTH_GM;
 
 // Временные алиасы для недостающих типов - в будущем нужно реализовать отдельные структуры
 type BdsEphemeris = GpsEphemeris;  // BeiDou использует схожую структуру с GPS
@@ -621,41 +622,21 @@ fn read_alm_file(nav_data: &mut CNavData, filename: &str) {
     let reader = BufReader::new(file);
     let mut lines = reader.lines();
     
-    // Определяем тип альманаха по первым строкам
-    let almanac_type = detect_almanac_type(&mut lines);
-    
-    match almanac_type {
-        AlmanacType::Gps => {
-            if let Some(almanacs) = parse_gps_almanac(&mut lines) {
-                for alm in almanacs {
-                    nav_data.add_gps_almanac(alm);
-                }
+    // Читаем файл построчно и определяем тип по формату строк
+    while let Some(Ok(line)) = lines.next() {
+        // GPS YUMA format
+        if line.starts_with("*****") {
+            if let Some(alm) = parse_gps_almanac(&line, &mut lines) {
+                nav_data.add_gps_almanac(alm);
             }
-        },
-        AlmanacType::Glonass => {
-            if let Some(almanacs) = parse_glonass_almanac(&mut lines) {
-                for alm in almanacs {
+        }
+        // GLONASS almanac (simple format) - проверяем что первое слово - число (slot)
+        else if line.trim().split_whitespace().count() >= 2 {
+            if let Ok(_slot) = line.trim().split_whitespace().next().unwrap_or("").parse::<i16>() {
+                if let Some(alm) = parse_glonass_almanac(&line, &mut lines) {
                     nav_data.add_glonass_almanac(alm);
                 }
             }
-        },
-        AlmanacType::BdsSystem => {
-            if let Some(almanacs) = parse_beidou_almanac(&mut lines) {
-                for alm in almanacs {
-                    nav_data.add_beidou_almanac(alm);
-                }
-            }
-        },
-        AlmanacType::Galileo => {
-            if let Some(almanacs) = parse_galileo_almanac(&mut lines) {
-                for alm in almanacs {
-                    nav_data.add_galileo_almanac(alm);
-                }
-            }
-        },
-        AlmanacType::Unknown => {
-            eprintln!("Warning: Unknown almanac format in file: {}", filename);
-            return;
         }
     }
     
@@ -1413,25 +1394,301 @@ fn parse_iono_beta(line: &str) -> Option<[f64; 4]> {
     }
 }
 
-/// Парсит GPS эфемериды из RINEX формата (упрощенная версия)
-fn parse_gps_ephemeris<I>(_line: &str, _lines: &mut I) -> Option<GpsEphemeris>
+/// Парсит GPS эфемериды из RINEX формата
+fn parse_gps_ephemeris<I>(line: &str, lines: &mut I) -> Option<GpsEphemeris>
 where
     I: Iterator<Item = Result<String, std::io::Error>>
 {
-    // Заглушка - полная реализация RINEX парсера довольно сложная
-    // В реальной версии нужно парсить 8 строк данных эфемерид
-    // Возвращаем None, чтобы не добавлять неверные данные
-    None
+    let mut eph = GpsEphemeris::default();
+    
+    // Парсим первую строку - SVID, время, часовые поправки
+    let parts: Vec<&str> = line.split_whitespace().collect();
+    if parts.len() < 4 {
+        return None;
+    }
+    
+    // Извлекаем SVID из первого символа (G01, C01, E01)
+    let svid_str = &parts[0][1..];
+    eph.svid = svid_str.parse::<u8>().ok()?;
+    
+    // Парсим часовые поправки
+    if parts.len() >= 8 {
+        eph.af0 = parts[5].replace("D", "E").parse().unwrap_or(0.0);
+        eph.af1 = parts[6].replace("D", "E").parse().unwrap_or(0.0);
+        eph.af2 = parts[7].replace("D", "E").parse().unwrap_or(0.0);
+    }
+    
+    // Читаем остальные 7 строк данных эфемерид
+    let mut all_data = Vec::new();
+    for _ in 0..7 {
+        if let Some(Ok(data_line)) = lines.next() {
+            let data_parts: Vec<&str> = data_line.trim().split_whitespace().collect();
+            for part in data_parts {
+                if let Ok(value) = part.replace("D", "E").parse::<f64>() {
+                    all_data.push(value);
+                }
+            }
+        } else {
+            return None;
+        }
+    }
+    
+    // Проверяем количество данных (должно быть около 26-28 значений)
+    if all_data.len() < 26 {
+        return None;
+    }
+    
+    // Заполняем структуру эфемерид согласно стандарту RINEX
+    // Строка 1: IODE, Crs, Delta n, M0
+    eph.iode = all_data[0] as u8;
+    eph.crs = all_data[1];
+    eph.delta_n = all_data[2];
+    eph.M0 = all_data[3];
+    
+    // Строка 2: Cuc, e, Cus, sqrt(A)
+    eph.cuc = all_data[4];
+    eph.ecc = all_data[5];
+    eph.cus = all_data[6];
+    eph.sqrtA = all_data[7];
+    
+    // Строка 3: toe, Cic, OMEGA0, Cis
+    eph.toe = all_data[8] as i32;
+    eph.cic = all_data[9];
+    eph.omega0 = all_data[10];
+    eph.cis = all_data[11];
+    
+    // Строка 4: i0, Crc, omega, OMEGA DOT
+    eph.i0 = all_data[12];
+    eph.crc = all_data[13];
+    eph.w = all_data[14];
+    eph.omega_dot = all_data[15];
+    
+    // Строка 5: IDOT, Codes, GPS Week, L2 P flag
+    eph.idot = all_data[16];
+    eph.week = all_data[18] as i32;
+    
+    // Строка 6: URA, SV health, TGD, IODC
+    eph.ura = all_data[20] as i16;
+    eph.health = all_data[21] as u16;
+    eph.tgd = all_data[22];
+    eph.iodc = all_data[23] as u16;
+    
+    // Строка 7: Transmission time, fit interval
+    eph.top = all_data[24] as i32;
+    
+    // Вычисляем производные значения
+    eph.axis = eph.sqrtA * eph.sqrtA;
+    eph.n = (EARTH_GM / (eph.axis * eph.axis * eph.axis)).sqrt() + eph.delta_n;
+    eph.root_ecc = (1.0 - eph.ecc * eph.ecc).sqrt();
+    
+    eph.valid = 1;
+    eph.flag = 1;
+    
+    Some(eph)
 }
 
-/// Парсит ГЛОНАСС эфемериды из RINEX формата (упрощенная версия)
-fn parse_glonass_ephemeris<I>(_line: &str, _lines: &mut I) -> Option<GlonassEphemeris>
-where
+// GLONASS ephemeris parser
+fn parse_glonass_ephemeris<I>(line: &str, lines: &mut I) -> Option<GlonassEphemeris>
+where 
     I: Iterator<Item = Result<String, std::io::Error>>
 {
-    // Заглушка для ГЛОНАСС эфемерид
-    // Формат отличается от GPS - 4 строки данных
-    None
+    // Parse first line: SVID, UTC time, clock corrections
+    let parts: Vec<&str> = line.split_whitespace().collect();
+    if parts.len() < 8 { return None; }
+    
+    // Extract SVID
+    let svid_str = if parts[0].len() >= 2 { &parts[0][1..] } else { return None; };
+    let svid: u16 = svid_str.parse().ok()?;
+    
+    // Parse UTC time (year, month, day, hour, minute, second)
+    let _year: u16 = parts[1].parse().ok()?;
+    let _month: u16 = parts[2].parse().ok()?;
+    let _day: u16 = parts[3].parse().ok()?;
+    let hour: u16 = parts[4].parse().ok()?;
+    let minute: u16 = parts[5].parse().ok()?;
+    let second: f64 = parts[6].parse().ok()?;
+    
+    // Parse first line data (clock bias, relative frequency bias, message frame time)
+    let mut data = Vec::new();
+    for i in 7..parts.len().min(10) {
+        data.push(parts[i].replace("D", "E").parse::<f64>().ok()?);
+    }
+    
+    // Read next 3 lines of data (4 values each)
+    for _ in 0..3 {
+        let next_line = lines.next()?.ok()?;
+        let next_parts: Vec<&str> = next_line.trim().split_whitespace().collect();
+        if next_parts.len() < 4 { return None; }
+        
+        for j in 0..4 {
+            data.push(next_parts[j].replace("D", "E").parse::<f64>().ok()?);
+        }
+    }
+    
+    // Validate we have all 15 data values
+    if data.len() < 15 { return None; }
+    
+    // Convert tk from seconds of day to GLONASS tk format
+    let tk_seconds = data[2] as i32;
+    let hours_tk = tk_seconds / 3600;
+    let minutes_tk = (tk_seconds % 3600) / 60;  
+    let half_minutes = (tk_seconds % 60) / 30;
+    let tk = ((hours_tk << 7) | (minutes_tk << 1) | half_minutes) as u16;
+    
+    // Create GLONASS ephemeris structure
+    let mut eph = GlonassEphemeris {
+        flag: 1,
+        valid: 1,
+        slot: svid as u8,
+        freq: data[10] as i8,
+        tk,
+        P: 0xc0,  // P=11, ln=0, P4=0, P3=0, P2=0, P1=00 (will update P2 after tb)
+        M: 1,     // assume GLONASS-M satellite
+        Ft: 0,    // no data
+        n: svid as u8,  // satellite number
+        Bn: data[6] as u8,
+        En: data[14] as u8,
+        tb: 0,    // will be calculated below
+        day: 1,   // placeholder - would need proper GLONASS time conversion
+        gamma: data[1],
+        tn: -data[0],
+        dtn: 0.0, // no data in RINEX
+        x: data[3] * 1e3,
+        y: data[7] * 1e3,
+        z: data[11] * 1e3,
+        vx: data[4] * 1e3,
+        vy: data[8] * 1e3,
+        vz: data[12] * 1e3,
+        ax: data[5] * 1e3,
+        ay: data[9] * 1e3,
+        az: data[13] * 1e3,
+        tc: 0.0,  // derived variable
+        PosVelT: KinematicInfo::default(),  // derived variable
+    };
+    
+    // Calculate tb (reference time in seconds, aligned to 15-minute intervals)
+    let millis = (hour as i32 * 3600 + minute as i32 * 60 + second as i32) * 1000;
+    eph.tb = ((millis + 450000) / 900000 * 900) as u32;
+    
+    // Update P2 bit based on tb (P2 = 1 if tb interval number is odd)
+    if (eph.tb / 900) & 1 != 0 {
+        eph.P |= 0x04; // Set P2 bit
+    }
+    
+    Some(eph)
+}
+
+// GPS almanac parser (simplified YUMA format)
+fn parse_gps_almanac<I>(line: &str, lines: &mut I) -> Option<GpsAlmanac>
+where 
+    I: Iterator<Item = Result<String, std::io::Error>>
+{
+    // YUMA format starts with "*****"
+    if !line.starts_with("*****") {
+        return None;
+    }
+    
+    let mut alm = GpsAlmanac::default();
+    
+    // Read 13 lines of data
+    let mut data_lines = Vec::new();
+    for _ in 0..13 {
+        if let Some(Ok(data_line)) = lines.next() {
+            data_lines.push(data_line);
+        } else {
+            return None;
+        }
+    }
+    
+    if data_lines.len() < 13 {
+        return None;
+    }
+    
+    // Parse each field (data starts at column 27)
+    alm.svid = data_lines[0][27..].trim().parse().ok()?;
+    alm.health = data_lines[1][27..].trim().parse().ok()?;
+    alm.ecc = data_lines[2][27..].trim().parse().ok()?;
+    alm.toa = data_lines[3][27..].trim().parse().ok()?;
+    alm.i0 = data_lines[4][27..].trim().parse().ok()?;
+    alm.omega_dot = data_lines[5][27..].trim().parse().ok()?;
+    alm.sqrtA = data_lines[6][27..].trim().parse().ok()?;
+    alm.omega0 = data_lines[7][27..].trim().parse().ok()?;
+    alm.w = data_lines[8][27..].trim().parse().ok()?;
+    alm.M0 = data_lines[9][27..].trim().parse().ok()?;
+    alm.af0 = data_lines[10][27..].trim().parse().ok()?;
+    alm.af1 = data_lines[11][27..].trim().parse().ok()?;
+    alm.week = data_lines[12][27..].trim().parse().ok()?;
+    
+    alm.valid = 1;
+    
+    Some(alm)
+}
+
+// GLONASS almanac parser (simplified format)
+fn parse_glonass_almanac<I>(line: &str, lines: &mut I) -> Option<GlonassAlmanac>
+where 
+    I: Iterator<Item = Result<String, std::io::Error>>
+{
+    // Simple format parser - looking for slot number and data
+    let parts: Vec<&str> = line.split_whitespace().collect();
+    if parts.len() < 2 {
+        return None;
+    }
+    
+    let slot: i16 = parts[0].parse().ok()?;
+    
+    // Read multiple lines to get all almanac data
+    let mut all_data: Vec<String> = Vec::new();
+    for part in &parts[1..] {
+        all_data.push(part.to_string());
+    }
+    
+    // Read additional lines if needed
+    for _ in 0..3 {
+        if let Some(Ok(data_line)) = lines.next() {
+            let line_parts: Vec<String> = data_line.trim().split_whitespace().map(|s| s.to_string()).collect();
+            for part in line_parts {
+                all_data.push(part);
+            }
+        }
+    }
+    
+    if all_data.len() < 8 {
+        return None;
+    }
+    
+    let mut alm = GlonassAlmanac::default();
+    alm.flag = 1;
+    
+    // Parse GLONASS almanac fields (simplified)
+    if let Ok(freq) = all_data[0].parse::<i8>() {
+        alm.freq = freq;
+    }
+    if let Ok(day) = all_data[1].parse::<i16>() {
+        alm.day = day;
+    }
+    if let Ok(t) = all_data[2].parse::<f64>() {
+        alm.t = t;
+    }
+    if let Ok(lambda) = all_data[3].parse::<f64>() {
+        alm.lambda = lambda;
+    }
+    if let Ok(di) = all_data[4].parse::<f64>() {
+        alm.di = di;
+    }
+    if let Ok(ecc) = all_data[5].parse::<f64>() {
+        alm.ecc = ecc;
+    }
+    if let Ok(w) = all_data[6].parse::<f64>() {
+        alm.w = w;
+    }
+    if let Ok(dt) = all_data[7].parse::<f64>() {
+        alm.dt = dt;
+    }
+    
+    alm.leap_year = 0; // Would need proper calculation
+    
+    Some(alm)
 }
 
 /// Парсит BeiDou эфемериды из RINEX формата (упрощенная версия)
@@ -1452,23 +1709,6 @@ where
     None
 }
 
-/// Парсит GPS альманах (упрощенная версия)
-fn parse_gps_almanac<I>(_lines: &mut I) -> Option<Vec<GpsAlmanac>>
-where
-    I: Iterator<Item = Result<String, std::io::Error>>
-{
-    // Заглушка для GPS альманаха
-    None
-}
-
-/// Парсит ГЛОНАСС альманах (упрощенная версия)
-fn parse_glonass_almanac<I>(_lines: &mut I) -> Option<Vec<GlonassAlmanac>>
-where
-    I: Iterator<Item = Result<String, std::io::Error>>
-{
-    // Заглушка для ГЛОНАСС альманаха
-    None
-}
 
 /// Парсит BeiDou альманах (упрощенная версия)
 fn parse_beidou_almanac<I>(_lines: &mut I) -> Option<Vec<GpsAlmanac>>
