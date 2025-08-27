@@ -295,20 +295,20 @@ pub fn get_satellite_param(
             satellite_param.GroupDelay[SIGNAL_INDEX_L5] = eph.tgd_ext[3];
         },
         GnssSystem::BdsSystem => {
-            satellite_param.GroupDelay[SIGNAL_INDEX_B1C] = eph.tgd_ext[1];
-            satellite_param.GroupDelay[SIGNAL_INDEX_B1I] = eph.tgd;
-            satellite_param.GroupDelay[SIGNAL_INDEX_B2I] = eph.tgd2;
-            satellite_param.GroupDelay[SIGNAL_INDEX_B3I] = 0.0;
-            satellite_param.GroupDelay[SIGNAL_INDEX_B2A] = eph.tgd_ext[3];
-            satellite_param.GroupDelay[SIGNAL_INDEX_B2B] = eph.tgd_ext[4];
-            satellite_param.GroupDelay[SIGNAL_INDEX_B2A + 2] = (eph.tgd_ext[3] + eph.tgd_ext[4]) / 2.0; // B2AB
+            satellite_param.GroupDelay[0] = eph.tgd_ext[1]; // B1C
+            satellite_param.GroupDelay[1] = eph.tgd; // B1I  
+            satellite_param.GroupDelay[2] = eph.tgd2; // B2I
+            satellite_param.GroupDelay[3] = 0.0; // B3I
+            satellite_param.GroupDelay[4] = eph.tgd_ext[3]; // B2A
+            satellite_param.GroupDelay[5] = eph.tgd_ext[4]; // B2B
+            satellite_param.GroupDelay[6] = (eph.tgd_ext[3] + eph.tgd_ext[4]) / 2.0; // B2AB
         },
         GnssSystem::GalileoSystem => {
-            satellite_param.GroupDelay[SIGNAL_INDEX_E1] = eph.tgd;
-            satellite_param.GroupDelay[SIGNAL_INDEX_E5A] = eph.tgd_ext[2];
-            satellite_param.GroupDelay[SIGNAL_INDEX_E5B] = eph.tgd_ext[4];
+            satellite_param.GroupDelay[0] = eph.tgd; // E1
+            satellite_param.GroupDelay[1] = eph.tgd_ext[2]; // E5A
+            satellite_param.GroupDelay[2] = eph.tgd_ext[4]; // E5B
             satellite_param.GroupDelay[3] = (eph.tgd_ext[2] + eph.tgd_ext[4]) / 2.0; // E5
-            satellite_param.GroupDelay[SIGNAL_INDEX_E6] = eph.tgd_ext[4];
+            satellite_param.GroupDelay[4] = eph.tgd_ext[4]; // E6
         },
         _ => {}
     }
@@ -376,7 +376,7 @@ pub fn get_iono_delay(iono_delay_l1: f64, system: GnssSystem, signal_index: usiz
                 SIGNAL_INDEX_E1 => iono_delay_l1,
                 SIGNAL_INDEX_E5A => iono_delay_l1 * 1.7932703213610586, // (154/115)^2
                 SIGNAL_INDEX_E5B => iono_delay_l1 * 1.7032461936225223, // (154/118)^2
-                SIGNAL_INDEX_E5 => iono_delay_l1 * 1.7473889738252685, // E5 (154/116.5)^2
+                SIGNAL_INDEX_L5 => iono_delay_l1 * 1.7473889738252685, // L5 (154/116.5)^2
                 SIGNAL_INDEX_E6 => iono_delay_l1 * 1.517824, // (154/125)^2
                 _ => iono_delay_l1,
             }
@@ -1069,20 +1069,20 @@ pub fn get_satellite_param_with_prediction(
             satellite_param.GroupDelay[SIGNAL_INDEX_L5] = eph.tgd_ext[3];
         },
         GnssSystem::BdsSystem => {
-            satellite_param.GroupDelay[SIGNAL_INDEX_B1C] = eph.tgd_ext[1];
-            satellite_param.GroupDelay[SIGNAL_INDEX_B1I] = eph.tgd;
-            satellite_param.GroupDelay[SIGNAL_INDEX_B2I] = eph.tgd2;
-            satellite_param.GroupDelay[SIGNAL_INDEX_B3I] = 0.0;
-            satellite_param.GroupDelay[SIGNAL_INDEX_B2A] = eph.tgd_ext[3];
-            satellite_param.GroupDelay[SIGNAL_INDEX_B2B] = eph.tgd_ext[4];
-            satellite_param.GroupDelay[SIGNAL_INDEX_B2A + 2] = (eph.tgd_ext[3] + eph.tgd_ext[4]) / 2.0; // B2AB
+            satellite_param.GroupDelay[0] = eph.tgd_ext[1]; // B1C
+            satellite_param.GroupDelay[1] = eph.tgd; // B1I  
+            satellite_param.GroupDelay[2] = eph.tgd2; // B2I
+            satellite_param.GroupDelay[3] = 0.0; // B3I
+            satellite_param.GroupDelay[4] = eph.tgd_ext[3]; // B2A
+            satellite_param.GroupDelay[5] = eph.tgd_ext[4]; // B2B
+            satellite_param.GroupDelay[6] = (eph.tgd_ext[3] + eph.tgd_ext[4]) / 2.0; // B2AB
         },
         GnssSystem::GalileoSystem => {
-            satellite_param.GroupDelay[SIGNAL_INDEX_E1] = eph.tgd;
-            satellite_param.GroupDelay[SIGNAL_INDEX_E5A] = eph.tgd_ext[2];
-            satellite_param.GroupDelay[SIGNAL_INDEX_E5B] = eph.tgd_ext[4];
+            satellite_param.GroupDelay[0] = eph.tgd; // E1
+            satellite_param.GroupDelay[1] = eph.tgd_ext[2]; // E5A
+            satellite_param.GroupDelay[2] = eph.tgd_ext[4]; // E5B
             satellite_param.GroupDelay[3] = (eph.tgd_ext[2] + eph.tgd_ext[4]) / 2.0; // E5
-            satellite_param.GroupDelay[SIGNAL_INDEX_E6] = eph.tgd_ext[4];
+            satellite_param.GroupDelay[4] = eph.tgd_ext[4]; // E6
         },
         _ => {}
     }
