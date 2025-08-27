@@ -194,9 +194,15 @@ impl CNavBit {
         let mut reduced_alm = [0u32; 32];
         let mut midi_alm = [[0u32; 4]; 32];
         for i in 0..32 {
-            self.compose_alm_words(&alm[i], &mut reduced_alm[i], &mut midi_alm[i]);
-            if (alm[i].valid & 1) != 0 && self.toa == INVALID_TOA {
-                self.toa = ((alm[i].week as u32) << 8) + ((alm[i].toa as u32) >> 12);
+            if i < alm.len() {
+                self.compose_alm_words(&alm[i], &mut reduced_alm[i], &mut midi_alm[i]);
+                if (alm[i].valid & 1) != 0 && self.toa == INVALID_TOA {
+                    self.toa = ((alm[i].week as u32) << 8) + ((alm[i].toa as u32) >> 12);
+                }
+            } else {
+                // Заполняем нулями если альманахов недостаточно
+                reduced_alm[i] = 0u32;
+                midi_alm[i] = [0u32; 4];
             }
         }
         self.reduced_alm.copy_from_slice(&reduced_alm);

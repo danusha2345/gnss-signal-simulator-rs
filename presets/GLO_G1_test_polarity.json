@@ -1,0 +1,19 @@
+{
+	"nav": "/mnt/c/msys64/home/Daniil/IFdataGen_standalone/misc/rinex_nav_files/brdm0010.25n",
+	"sites": {
+		"pos": [55.929769, 37.518118, 147],
+		"vel": [0, 0, 0]
+	},
+	"start": "2025-01-01 00:00:00.0",
+	"mask": 10,
+	"glonass_maskout": 0,
+	"sigType": 3,
+	"output": {
+		"type": 0,
+		"format": 2,
+		"sampleRate": 2046000,
+		"centerFrequency": 1602000000,
+		"bandwidth": 2046000,
+		"freqSel": [0, 0, 0, 0x01]
+	}
+}

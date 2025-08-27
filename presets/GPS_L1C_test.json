@@ -1,0 +1,65 @@
+{
+    "time": {
+        "type": "UTC",
+        "year": 2025,
+        "month": 6,
+        "day": 29,
+        "hour": 12,
+        "minute": 0,
+        "second": 0
+    },
+    "trajectory": {
+        "name": "static",
+        "initPosition": {
+            "type": "LLA",
+            "format": "d",
+            "longitude": -114.2847,
+            "latitude": 48.4928,
+            "altitude": 100.0
+        },
+        "initVelocity": {
+            "type": "SCU",
+            "speed": 0,
+            "course": 0,
+            "up": 0
+        },
+        "trajectoryList": [{
+            "type": "Const",
+            "time": 90.0
+        }]
+    },
+    "ephemeris": {
+        "type": "RINEX",
+        "name": "EphData/rinex_v3_20251800000.rnx"
+    },
+    "output": {
+        "type": "IFdata",
+        "format": "IQ8",
+        "sampleFreq": 5.0,
+        "centerFreq": 1575.42,
+        "name": "GPS_L1C_test.C8",
+        "config": {
+            "elevationMask": 4
+        }
+    },
+    "systemSelect": [
+        {"system": "GPS", "enable": true, "signalSelect": [
+            {"signal": "L1CA", "enable": false},
+            {"signal": "L1C", "enable": true},
+            {"signal": "L2C", "enable": false},
+            {"signal": "L2P", "enable": false},
+            {"signal": "L5", "enable": false}
+        ]},
+        {"system": "BDS", "enable": false},
+        {"system": "GAL", "enable": false},
+        {"system": "GLO", "enable": false}
+    ],
+    "power": {
+        "noiseFloor": -174,
+        "initPower": {
+            "unit": "dBHz",
+            "value": 45
+        },
+        "elevationAdjust": true
+    }
+}

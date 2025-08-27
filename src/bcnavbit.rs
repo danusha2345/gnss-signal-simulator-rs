@@ -327,19 +327,25 @@ impl BCNavBit {
     pub fn set_almanac(&mut self, alm: &[GpsAlmanac]) -> i32 {
         // fill in almanac page
         for i in 0..63 {
-            // Извлекаем данные перед вызовом метода, чтобы избежать конфликта заимствований
-            let alm_item = &alm[i];
+            if i < alm.len() {
+                // Извлекаем данные перед вызовом метода, чтобы избежать конфликта заимствований
+                let alm_item = &alm[i];
 
-            // Теперь можем вызвать статический метод без конфликта заимствований
-            Self::fill_bds_almanac_page(
-                alm_item,
-                &mut self.midi_almanac[i],
-                &mut self.reduced_almanac[i],
-            );
-
-            if (alm[i].valid & 1) != 0 {
-                self.almanac_toa = (alm[i].toa >> 12) as u32;
-                self.almanac_week = alm[i].week as u32;
+                // Теперь можем вызвать статический метод без конфликта заимствований
+                Self::fill_bds_almanac_page(
+                    alm_item,
+                    &mut self.midi_almanac[i],
+                    &mut self.reduced_almanac[i],
+                );
+                
+                if (alm[i].valid & 1) != 0 {
+                    self.almanac_toa = (alm[i].toa >> 12) as u32;
+                    self.almanac_week = alm[i].week as u32;
+                }
+            } else {
+                // Заполняем нулями если альманахов недостаточно
+                self.midi_almanac[i] = [0u32; 7];
+                self.reduced_almanac[i] = [0u32; 2];
             }
         }
 
