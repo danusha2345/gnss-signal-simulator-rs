@@ -324,8 +324,8 @@ impl INavBit {
         0
     }
 
-    pub fn SetEphemeris(&mut self, svid: i32, Eph: &INavGpsEphemeris) -> i32 {
-        if !(1..=36).contains(&svid) || !Eph.valid {
+    pub fn SetEphemeris(&mut self, svid: i32, Eph: &GpsEphemeris) -> i32 {
+        if !(1..=36).contains(&svid) || Eph.valid == 0 {
             return 0;
         }
         let svid_idx = (svid - 1) as usize;
@@ -335,25 +335,29 @@ impl INavBit {
         svid
     }
 
-    pub fn SetAlmanac(&mut self, Alm: &[INavGpsAlmanac; 36]) -> i32 {
+    pub fn SetAlmanac(&mut self, Alm: &[GpsAlmanac]) -> i32 {
         let mut week = 0;
 
-        for i in 0..36 {
+        let alm_len = Alm.len().min(36);
+        for i in 0..alm_len {
             if (Alm[i].valid & 1) != 0 {
                 week = Alm[i].week;
                 break;
             }
         }
         for i in 0..12 {
-            let alm_slice = &Alm[i * 3..i * 3 + 3];
-            Self::ComposeAlmWords(alm_slice, 
-                               &mut self.GalAlmData[i],
-                               week);
+            let slice_end = ((i + 1) * 3).min(alm_len);
+            if i * 3 < slice_end {
+                let alm_slice = &Alm[i * 3..slice_end];
+                Self::ComposeAlmWords(alm_slice, 
+                                   &mut self.GalAlmData[i],
+                                   week);
+            }
         }
         0
     }
 
-    pub fn SetIonoUtc(&mut self, IonoParam: &IonoNequick, UtcParam: &INavGpsUtc) -> i32 {
+    pub fn SetIonoUtc(&mut self, IonoParam: &IonoNequick, UtcParam: &UtcParam) -> i32 {
         let mut IonoWords: [u32; 2] = [0; 2];
         
         let UintValue = Self::UnscaleUint(IonoParam.ai0, -2);
@@ -390,7 +394,7 @@ impl INavBit {
         }
     }
 
-    fn ComposeEphWords(Ephemeris: &INavGpsEphemeris, EphData: &mut [u32]) {
+    fn ComposeEphWords(Ephemeris: &GpsEphemeris, EphData: &mut [u32]) {
         // Word 1
         EphData[0] = 0x04000000 | COMPOSE_BITS!(Ephemeris.iodc, 16, 10) | COMPOSE_BITS!((Ephemeris.toe / 60), 2, 14);
         let IntValue = Self::UnscaleInt(Ephemeris.M0 / PI, -31);
@@ -469,7 +473,7 @@ impl INavBit {
         EphData[18] |= COMPOSE_BITS!(IntValue, 23, 1); // E1B DVS
     }
 
-    fn ComposeAlmWords(Almanac: &[INavGpsAlmanac], AlmData: &mut [u32], week: i32) {
+    fn ComposeAlmWords(Almanac: &[GpsAlmanac], AlmData: &mut [u32], week: i32) {
         let toa = if (Almanac[0].valid & 1) != 0 { Almanac[0].toa } 
                   else if (Almanac[1].valid & 1) != 0 { Almanac[1].toa } 
                   else if (Almanac[2].valid & 1) != 0 { Almanac[2].toa } 
@@ -502,7 +506,7 @@ impl INavBit {
         }
     }
 
-    fn ComposeUtcWords(UtcParam: &INavGpsUtc, GalUtcData: &mut [u32]) {
+    fn ComposeUtcWords(UtcParam: &UtcParam, GalUtcData: &mut [u32]) {
         // Word 6 for UTC parameters
         GalUtcData[0] = 0x18000000; // put Type=6 to 6MSB
         let IntValue = Self::UnscaleInt(UtcParam.A0, -30);
@@ -624,69 +628,8 @@ impl INavBit {
 
 // Use GnssTime from types.rs instead
 
-#[derive(Copy, Clone)]
-pub struct INavGpsEphemeris {
-    pub valid: bool,
-    pub iodc: u32,
-    pub toe: u32,
-    pub toc: u32,
-    pub M0: f64,
-    pub ecc: f64,
-    pub sqrtA: f64,
-    pub omega0: f64,
-    pub i0: f64,
-    pub w: f64,
-    pub idot: f64,
-    pub omega_dot: f64,
-    pub delta_n: f64,
-    pub cuc: f64,
-    pub cus: f64,
-    pub crc: f64,
-    pub crs: f64,
-    pub ura: u32,
-    pub svid: u32,
-    pub cic: f64,
-    pub cis: f64,
-    pub af0: f64,
-    pub af1: f64,
-    pub af2: f64,
-    pub tgd: f64,
-    pub tgd2: f64,
-    pub health: u32,
-}
 
-#[derive(Copy, Clone, Default)]
-pub struct INavGpsAlmanac {
-    pub valid: u8,
-    pub flag: u8,
-    pub health: u8,
-    pub svid: u8,
-    pub toa: i32,
-    pub week: i32,
-    pub M0: f64,
-    pub ecc: f64,
-    pub sqrtA: f64,
-    pub omega0: f64,
-    pub i0: f64,
-    pub w: f64,
-    pub omega_dot: f64,
-    pub af0: f64,
-    pub af1: f64,
-}
 
-#[derive(Copy, Clone, Default)]
-pub struct INavGpsUtc {
-    pub A0: f64,
-    pub A1: f64,
-    pub A2: f64,
-    pub WN: i16,
-    pub WNLSF: i16,
-    pub tot: u8,
-    pub TLS: i8,
-    pub TLSF: i8,
-    pub DN: u8,
-    pub flag: u32,
-}
 
 #[derive(Copy, Clone, Default)]
 pub struct IonoNequick {

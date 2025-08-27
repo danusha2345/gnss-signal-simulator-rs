@@ -28,7 +28,7 @@ use std::fs::File;
 use std::io::{Write, BufWriter};
 use std::time::Instant;
 
-use crate::inavbit::{INavGpsEphemeris, INavGpsAlmanac, INavGpsUtc, IonoNequick as INavIonoNequick};
+use crate::inavbit::{IonoNequick as INavIonoNequick};
 use std::env;
 use crate::types::*;
 use crate::complex_number::ComplexNumber;
@@ -287,63 +287,10 @@ impl NavBitTrait for INavBit {
         self.0.GetFrameData(start_time, svid, param, nav_bits)
     }
     fn set_ephemeris(&mut self, svid: i32, eph: &GpsEphemeris) { 
-        // Convert GpsEphemeris to INavGpsEphemeris for INavBit
-        let inav_eph = INavGpsEphemeris {
-            valid: eph.valid != 0,
-            iodc: eph.iodc as u32,
-            toe: eph.toe as u32,
-            toc: eph.toc as u32,
-            M0: eph.M0,
-            ecc: eph.ecc,
-            sqrtA: eph.sqrtA,
-            omega0: eph.omega0,
-            i0: eph.i0,
-            w: eph.w,
-            omega_dot: eph.omega_dot,
-            idot: eph.idot,
-            delta_n: eph.delta_n,
-            cuc: eph.cuc,
-            cus: eph.cus,
-            crc: eph.crc,
-            crs: eph.crs,
-            cic: eph.cic,
-            cis: eph.cis,
-            af0: eph.af0,
-            af1: eph.af1,
-            af2: eph.af2,
-            ura: eph.ura as u32,
-            svid: eph.svid as u32,
-            tgd: eph.tgd,
-            tgd2: eph.tgd2,
-            health: eph.health as u32,
-        };
-        self.0.SetEphemeris(svid, &inav_eph);
+        self.0.SetEphemeris(svid, eph);
     }
     fn set_almanac(&mut self, alm: &[GpsAlmanac]) { 
-        // Convert slice to fixed array for INavBit
-        let mut inav_alm: [INavGpsAlmanac; 36] = [INavGpsAlmanac::default(); 36];
-        
-        for (i, gps_alm) in alm.iter().enumerate().take(36) {
-            inav_alm[i] = INavGpsAlmanac {
-                valid: gps_alm.valid,
-                flag: gps_alm.flag,
-                health: gps_alm.health,
-                svid: gps_alm.svid,
-                toa: gps_alm.toa,
-                week: gps_alm.week,
-                M0: gps_alm.M0,
-                ecc: gps_alm.ecc,
-                sqrtA: gps_alm.sqrtA,
-                omega0: gps_alm.omega0,
-                i0: gps_alm.i0,
-                w: gps_alm.w,
-                omega_dot: gps_alm.omega_dot,
-                af0: gps_alm.af0,
-                af1: gps_alm.af1,
-            };
-        }
-        
-        self.0.SetAlmanac(&inav_alm);
+        self.0.SetAlmanac(alm);
     }
     fn set_iono_utc(&mut self, iono_param: Option<&IonoParam>, utc_param: Option<&UtcParam>) {
         if let (Some(iono), Some(utc)) = (iono_param, utc_param) {
@@ -355,21 +302,7 @@ impl NavBitTrait for INavBit {
                 flag: iono.flag,
             };
             
-            // Convert UtcParam to INavGpsUtc
-            let inav_utc = INavGpsUtc {
-                A0: utc.A0,
-                A1: utc.A1,
-                A2: utc.A2,
-                WN: utc.WN,
-                WNLSF: utc.WNLSF,
-                tot: utc.tot,
-                TLS: utc.TLS,
-                TLSF: utc.TLSF,
-                DN: utc.DN,
-                flag: utc.flag,
-            };
-            
-            self.0.SetIonoUtc(&inav_iono, &inav_utc);
+            self.0.SetIonoUtc(&inav_iono, utc);
         }
     }
     fn get_type(&self) -> NavDataType { NavDataType::INav }
