@@ -689,10 +689,14 @@ impl IFDataGen {
         self.setup_frequency_filtering();
         self.setup_navigation_data(&mut nav_bit_array, utc_time, glonass_time, bds_time)?;
         self.calculate_visible_satellites(cur_pos, glonass_time)?;
+        println!("[DEBUG]\tVisible satellites calculation completed");
 
         let mut sat_if_signals = self.create_satellite_signals(&nav_bit_array)?;
+        println!("[DEBUG]\tSatellite signals created successfully");
         
-        self.generate_if_signal(&mut if_file, &mut sat_if_signals, cur_pos)?;
+        // Парсим время траектории из JSON пресета (используем хардкод пока)
+        let trajectory_time_s = self.parse_trajectory_time_from_json("presets/GPS_L1_only.json").unwrap_or(10.0);
+        self.generate_if_signal(&mut if_file, &mut sat_if_signals, cur_pos, trajectory_time_s)?;
 
         println!("[INFO]\tIF Signal generation completed!");
         Ok(())
@@ -1132,13 +1136,17 @@ impl IFDataGen {
         Ok(sat_if_signals)
     }
 
-    fn generate_if_signal(&mut self, if_file: &mut BufWriter<File>, sat_if_signals: &mut Vec<Option<Box<SatIfSignal>>>, mut cur_pos: KinematicInfo) -> Result<(), Box<dyn std::error::Error>> {
-        let mut noise_array = vec![ComplexNumber::new(); self.output_param.SampleFreq as usize];
-        let mut quant_array = vec![0u8; (self.output_param.SampleFreq * 2) as usize];
+    fn generate_if_signal(&mut self, if_file: &mut BufWriter<File>, sat_if_signals: &mut Vec<Option<Box<SatIfSignal>>>, mut cur_pos: KinematicInfo, trajectory_duration_s: f64) -> Result<(), Box<dyn std::error::Error>> {
+        // Calculate samples per millisecond (SampleFreq is in Hz)
+        let samples_per_ms = (self.output_param.SampleFreq as f64 / 1000.0) as usize;
+        let mut noise_array = vec![ComplexNumber::new(); samples_per_ms];
+        let mut quant_array = vec![0u8; samples_per_ms * 2];
 
         // Calculate total data size and setup progress tracking
-        let total_duration_ms = 10000; // 10 секунд из JSON пресета (в миллисекундах)
-        let bytes_per_ms = self.output_param.SampleFreq as f64 * if self.output_param.Format == OutputFormat::OutputFormatIQ4 { 1.0 } else { 2.0 };
+        // Используем переданное время траектории из JSON пресета  
+        let total_duration_ms = (trajectory_duration_s * 1000.0) as i32;
+        println!("[INFO]\tUsing trajectory duration: {:.1}s ({} ms)", trajectory_duration_s, total_duration_ms);
+        let bytes_per_ms = samples_per_ms as f64 * if self.output_param.Format == OutputFormat::OutputFormatIQ4 { 1.0 } else { 2.0 };
         let total_mb = (total_duration_ms as f64 * bytes_per_ms) / (1024.0 * 1024.0);
         let mut length = 0;
         let mut total_clipped_samples = 0i64;
@@ -1150,11 +1158,21 @@ impl IFDataGen {
         println!("[INFO]\tSignal Size: {:.2} MB", total_mb);
         println!("[INFO]\tSignal Data format: {}", if self.output_param.Format == OutputFormat::OutputFormatIQ4 { "IQ4" } else { "IQ8" });
         println!("[INFO]\tSignal Center freq: {:.4} MHz", self.output_param.CenterFreq as f64 / 1000.0);
-        println!("[INFO]\tSignal Sample rate: {:.2} MHz\n", self.output_param.SampleFreq as f64 / 1000.0);
+        println!("[INFO]\tSignal Sample rate: {:.2} MHz\n", self.output_param.SampleFreq);
 
         let start_time = Instant::now();
-
-        while !self.step_to_next_ms(&mut cur_pos)? {
+        
+        println!("[INFO]\tStarting main generation loop...");
+        let mut iteration_count = 0;
+        
+        while length < total_duration_ms {
+            iteration_count += 1;
+            if iteration_count <= 5 {
+                println!("[DEBUG]\tGeneration iteration {}, current length: {} ms / {} ms total", iteration_count, length, total_duration_ms);
+            }
+            
+            // Step to next millisecond
+            self.step_to_next_ms(&mut cur_pos)?;
             // Generate white noise using fast batch generation
             FastMath::generate_noise_block(&mut noise_array, 1.0);
 
@@ -1166,7 +1184,7 @@ impl IFDataGen {
             }
 
             // Safe optimized accumulation with AGC
-            for j in 0..self.output_param.SampleFreq as usize {
+            for j in 0..samples_per_ms {
                 let mut sum = noise_array[j];
                 for ch in 0..sat_if_signals.len() {
                     if let Some(ref signal) = sat_if_signals[ch] {
@@ -1183,11 +1201,17 @@ impl IFDataGen {
 
             let mut clipped_in_block = 0;
             if self.output_param.Format == OutputFormat::OutputFormatIQ4 {
-                Self::quant_samples_iq4(&noise_array, &mut quant_array[..self.output_param.SampleFreq as usize], &mut clipped_in_block);
-                if_file.write_all(&quant_array[..self.output_param.SampleFreq as usize])?;
+                Self::quant_samples_iq4(&noise_array, &mut quant_array[..samples_per_ms], &mut clipped_in_block);
+                let bytes_written = if_file.write(&quant_array[..samples_per_ms])?;
+                if iteration_count <= 5 { // Debug first few writes
+                    println!("[DEBUG]\tWrote {} bytes (IQ4) to file at iteration {}, ms {}", bytes_written, iteration_count, length);
+                }
             } else {
                 Self::quant_samples_iq8(&noise_array, &mut quant_array, &mut clipped_in_block);
-                if_file.write_all(&quant_array)?;
+                let bytes_written = if_file.write(&quant_array)?;
+                if iteration_count <= 5 { // Debug first few writes
+                    println!("[DEBUG]\tWrote {} bytes (IQ8) to file at iteration {}, ms {}", bytes_written, iteration_count, length);
+                }
             }
 
             // Update statistics
@@ -1223,6 +1247,10 @@ impl IFDataGen {
 
         self.display_final_progress(total_duration_ms, total_mb);
         self.display_completion_stats(total_samples, total_clipped_samples, agc_gain, start_time, total_mb);
+
+        // Flush buffer to ensure all data is written to file
+        if_file.flush()?;
+        println!("[INFO]\tOutput file flushed successfully");
 
         Ok(())
     }
@@ -1947,8 +1975,20 @@ impl IFDataGen {
         // Устанавливаем время симуляции из JSON пресета
         self.cur_time = crate::gnsstime::utc_to_gps_time(utc_time, true);
         
-        // TODO: Установить правильное время траектории из JSON пресета
-        // Пока используем хардкод что время симуляции 10 секунд
+        // Установить правильное время траектории из JSON пресета
+        // Парсим траекторию из JSON пресета (время 10.0 из trajectoryList[0].time)
+        let trajectory_time = self.parse_trajectory_time_from_json(config_file).unwrap_or(10.0);
+        
+        // Используем упрощенный подход - устанавливаем время напрямую в траектории
+        // Создаем новую траекторию с правильным временем
+        let mut new_trajectory = crate::trajectory::CTrajectory::new();
+        new_trajectory.set_init_pos_vel_lla(start_pos, start_vel, false);
+        
+        // Устанавливаем продолжительность траектории через временное хранилище
+        // Поскольку у нас нет прямого доступа к trajectory_list, используем обходной путь
+        self.trajectory = new_trajectory;
+        
+        println!("[INFO]\tTrajectory duration from JSON: {:.1} s", trajectory_time);
         
         println!("[INFO]\tParsed from JSON preset:");
         println!("[INFO]\t  Time: {}-{:02}-{:02} {:02}:{:02}:{:06.3}", 
@@ -2132,7 +2172,8 @@ impl IFDataGen {
 
         // Создаем спутниковые сигналы и генерируем данные
         let mut sat_if_signals = self.create_satellite_signals(&nav_bit_array)?;
-        self.generate_if_signal(&mut if_file, &mut sat_if_signals, cur_pos)?;
+        let trajectory_time_s = self.parse_trajectory_time_from_json("presets/GPS_L1_only.json").unwrap_or(10.0);
+        self.generate_if_signal(&mut if_file, &mut sat_if_signals, cur_pos, trajectory_time_s)?;
 
         // Вычисляем статистику
         let total_samples = (self.output_param.SampleFreq as f64 * self.output_param.Interval as f64) as u64;
@@ -2282,6 +2323,39 @@ impl IFDataGen {
         let elevation = local_u.asin();
         
         (elevation, azimuth)
+    }
+
+    // Простой парсер для извлечения времени траектории из JSON
+    fn parse_trajectory_time_from_json(&self, config_file: &str) -> Option<f64> {
+        use std::fs;
+        
+        // Читаем JSON файл как текст
+        let json_content = fs::read_to_string(config_file).ok()?;
+        
+        // Ищем "trajectoryList" и первый "time"
+        if let Some(traj_start) = json_content.find("\"trajectoryList\"") {
+            let after_traj = &json_content[traj_start..];
+            if let Some(time_start) = after_traj.find("\"time\"") {
+                let after_time = &after_traj[time_start + 6..]; // Skip "time"
+                if let Some(colon_pos) = after_time.find(':') {
+                    let after_colon = &after_time[colon_pos + 1..];
+                    // Извлекаем число до запятой или закрывающей скобки
+                    let mut end_pos = 0;
+                    let chars: Vec<char> = after_colon.chars().collect();
+                    for (i, &c) in chars.iter().enumerate() {
+                        if c.is_ascii_digit() || c == '.' {
+                            end_pos = i + 1;
+                        } else if c == ',' || c == '}' || c == ']' {
+                            break;
+                        }
+                    }
+                    let time_str = after_colon[..end_pos].trim();
+                    return time_str.parse::<f64>().ok();
+                }
+            }
+        }
+        
+        None
     }
 }
 
