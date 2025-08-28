@@ -117,8 +117,16 @@ impl FastMath {
 
     // Batch noise generation for better cache efficiency
     pub fn generate_noise_block(output: &mut [ComplexNumber], sigma: f64) {
-        for i in 0..output.len() {
-            output[i] = Self::fast_gaussian_noise(sigma);
+        // OPTIMIZED: Generate noise in batches for better cache locality
+        const BATCH_SIZE: usize = 64; // Process in batches for better performance
+        
+        let mut i = 0;
+        while i < output.len() {
+            let end = (i + BATCH_SIZE).min(output.len());
+            for j in i..end {
+                output[j] = Self::fast_gaussian_noise(sigma);
+            }
+            i = end;
         }
     }
 }
