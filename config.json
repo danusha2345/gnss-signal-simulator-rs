@@ -1,0 +1,63 @@
+{
+    "version": 1.0,
+    "description": "Example GNSS IF Data Generation Configuration",
+    "time": {
+        "type": "UTC",
+        "year": 2025,
+        "month": 1,
+        "day": 1,
+        "hour": 12,
+        "minute": 0,
+        "second": 0
+    },
+    "trajectory": {
+        "name": "Static position test",
+        "initPosition": {
+            "type": "LLA",
+            "format": "d",
+            "longitude": 0.0,
+            "latitude": 0.0,
+            "altitude": 100.0
+        },
+        "initVelocity": {
+            "type": "SCU",
+            "speed": 0.0,
+            "course": 0.0
+        },
+        "trajectoryList": [
+            {
+                "type": "Const",
+                "time": 10.0
+            }
+        ]
+    },
+    "ephemeris": {
+        "type": "RINEX",
+        "name": "ephemeris.rnx"
+    },
+    "output": {
+        "type": "IFdata",
+        "format": "IQ8",
+        "sampleFreq": 5.0,
+        "centerFreq": 1575.42,
+        "name": "output.dat",
+        "config": {
+            "elevationMask": 5
+        },
+        "systemSelect": [
+            {
+                "system": "GPS",
+                "signal": "L1CA",
+                "enable": true
+            }
+        ]
+    },
+    "power": {
+        "noiseFloor": -174,
+        "initPower": {
+            "unit": "dBHz",
+            "value": 45
+        },
+        "elevationAdjust": true
+    }
+}

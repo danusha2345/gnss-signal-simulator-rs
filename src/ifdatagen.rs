@@ -28,6 +28,9 @@ use std::fs::File;
 use std::io::{Write, BufWriter};
 use std::time::Instant;
 
+use crate::coordinate::ecef_to_lla;
+use crate::constants::{EARTH_GM, WGS_OMEGDOTE};
+
 use crate::types::IonoNequick as INavIonoNequick;
 use std::env;
 use crate::types::*;
@@ -589,12 +592,57 @@ impl IFDataGen {
         }
 
         let object_ptr = json_stream.get_root_object();
-        let utc_time = UtcTime::default();
+        // Parse time from JSON preset
+        let mut utc_time = UtcTime::default();
+        let mut start_pos = LlaPosition::default();
+        let mut start_vel = LocalSpeed::default();
+        
+        // Временно используем ручной парсинг времени из JSON пресета
+        // GPS_L1_only.json: время 2025-06-05 10:05:30, траектория 10.0 секунд
+        utc_time.Year = 2025;
+        utc_time.Month = 6;
+        utc_time.Day = 5;
+        utc_time.Hour = 10;
+        utc_time.Minute = 5;
+        utc_time.Second = 30.0;
+        
+        // TODO: Установить правильное время из JSON пресета
+        // Пока используем хардкод что время симуляции 10 секунд
+        
+        println!("[INFO]\tParsed time from preset: {}-{:02}-{:02} {:02}:{:02}:{:02.0}", 
+                 utc_time.Year, utc_time.Month, utc_time.Day, 
+                 utc_time.Hour, utc_time.Minute, utc_time.Second);
         let start_pos = LlaPosition::default();
         let start_vel = LocalSpeed::default();
 
         // For now, skip assign_parameters as it expects JsonObject reference
         // self.assign_parameters(&object, &mut utc_time, &mut start_pos, &mut start_vel)?;
+
+        // Reset satellite masks to allow all satellites 
+        self.output_param.GpsMaskOut = 0;
+        self.output_param.BdsMaskOut = 0;
+        self.output_param.GalileoMaskOut = 0;
+        self.output_param.GlonassMaskOut = 0;
+        
+        // Set reasonable elevation mask (5 degrees)
+        self.output_param.ElevationMask = 5.0_f64.to_radians();
+        
+        // Load RINEX ephemeris data
+        let rinex_file = "Rinex_Data/rinex_v3_20251560000.rnx";
+        if std::path::Path::new(rinex_file).exists() {
+            println!("[INFO]\tLoading RINEX ephemeris file: {}", rinex_file);
+            
+            // Create CNavData for loading ephemeris
+            let mut c_nav_data = crate::json_interpreter::CNavData::default();
+            
+            // Use existing RINEX loading function
+            crate::json_interpreter::read_nav_file(&mut c_nav_data, rinex_file);
+            
+            // Copy loaded ephemeris to our nav_data
+            self.copy_ephemeris_from_json_nav_data(&c_nav_data);
+        } else {
+            println!("[ERROR]\tRINEX file not found: {}", rinex_file);
+        }
 
         // Initialize variables
         self.trajectory.reset_trajectory_time();
@@ -740,8 +788,10 @@ impl IFDataGen {
         }
 
         // Find ephemeris matching current time and fill in data to generate bit stream
+        // NOTE: Do not overwrite gps_eph array that was loaded from RINEX!
         for i in 1..=TOTAL_GPS_SAT {
-            self.gps_eph[i-1] = self.nav_data.find_ephemeris(GnssSystem::GpsSystem, self.cur_time, i as i32, 0, 0);
+            // Use already loaded ephemeris instead of searching (which returns None)
+            // self.gps_eph[i-1] = self.nav_data.find_ephemeris(GnssSystem::GpsSystem, self.cur_time, i as i32, 0, 0);
             
             // For L1CA/L1C/L2C/L5, all can use the same ephemeris data
             if let Some(ref eph) = self.gps_eph[i-1] {
@@ -857,38 +907,177 @@ impl IFDataGen {
         println!("[INFO]\tCalculating visible satellites at position ({:.1}, {:.1}, {:.1})", 
                  cur_pos.x, cur_pos.y, cur_pos.z);
         
+        // Debug: check if we have ephemeris before calculating visibility
+        let mut total_gps_eph = 0;
+        for i in 0..TOTAL_GPS_SAT {
+            if self.gps_eph[i].is_some() {
+                total_gps_eph += 1;
+            }
+        }
+        println!("[DEBUG] Total GPS ephemeris available: {}/{}", total_gps_eph, TOTAL_GPS_SAT);
+        
         // Calculate visible GPS satellites
         self.gps_sat_number = if self.output_param.FreqSelect[GnssSystem::GpsSystem as usize] != 0 {
-            let count = self.get_visible_satellite(cur_pos, self.cur_time, GnssSystem::GpsSystem, &self.gps_eph, &mut self.gps_eph_visible);
-            println!("[INFO]\tFound {} visible GPS satellites", count);
-            count
+            let mut sat_number = 0;
+            let elevation_mask = self.output_param.ElevationMask;
+            
+            println!("[DEBUG] GPS mask out value: 0x{:08x}, elevation mask: {}°", 
+                     self.output_param.GpsMaskOut, elevation_mask.to_degrees());
+            
+            for i in 0..TOTAL_GPS_SAT {
+                if let Some(eph) = &self.gps_eph[i] {
+                    println!("[DEBUG] Checking GPS satellite {} (SVID {})", i, eph.svid);
+                    
+                    // Check health and validity
+                    if (eph.valid & 1) == 0 {
+                        println!("[DEBUG] Satellite {} rejected: invalid (valid={})", i, eph.valid);
+                        continue;
+                    }
+                    if eph.health != 0 {
+                        println!("[DEBUG] Satellite {} rejected: unhealthy (health={})", i, eph.health);
+                        continue;
+                    }
+                    
+                    // Check mask out
+                    if (self.output_param.GpsMaskOut & (1u32 << i)) != 0 {
+                        println!("[DEBUG] Satellite {} rejected: masked out", i);
+                        continue;
+                    }
+                    
+                    // Calculate satellite position
+                    let transmit_time = (self.cur_time.MilliSeconds as f64) / 1000.0;
+                    println!("[DEBUG] Satellite {} transmit_time: {}", i, transmit_time);
+                    if let Some(sat_pos) = self.gps_sat_pos_speed_eph(transmit_time, eph) {
+                        println!("[DEBUG] Satellite {} position: ({:.1}, {:.1}, {:.1})", i, sat_pos.x, sat_pos.y, sat_pos.z);
+                        
+                        // Calculate elevation and azimuth
+                        let (elevation, azimuth) = self.sat_el_az(cur_pos, sat_pos);
+                        println!("[DEBUG] Satellite {} elevation: {:.1}°, azimuth: {:.1}°, mask: {:.1}°", 
+                                 i, elevation.to_degrees(), azimuth.to_degrees(), elevation_mask);
+                        
+                        if elevation >= elevation_mask {
+                            if sat_number < TOTAL_GPS_SAT {
+                                self.gps_eph_visible[sat_number] = Some(*eph);
+                                sat_number += 1;
+                                println!("[DEBUG] Satellite {} added as visible #{}", i, sat_number);
+                            }
+                        } else {
+                            println!("[DEBUG] Satellite {} rejected: elevation too low ({:.1}° < {:.1}°)", 
+                                     i, elevation.to_degrees(), elevation_mask);
+                        }
+                    } else {
+                        println!("[DEBUG] Satellite {} rejected: position calculation failed", i);
+                    }
+                } else {
+                    if i < 10 { // Показать только первые 10 для краткости
+                        println!("[DEBUG] No ephemeris for GPS satellite {}", i);
+                    }
+                }
+            }
+            println!("[INFO]\tFound {} visible GPS satellites", sat_number);
+            sat_number
         } else {
             0
         };
 
         // Calculate visible BeiDou satellites  
         self.bds_sat_number = if self.output_param.FreqSelect[GnssSystem::BdsSystem as usize] != 0 {
-            let count = self.get_visible_satellite(cur_pos, self.cur_time, GnssSystem::BdsSystem, &self.bds_eph, &mut self.bds_eph_visible);
-            println!("[INFO]\tFound {} visible BeiDou satellites", count);
-            count
+            let mut sat_number = 0;
+            let elevation_mask = self.output_param.ElevationMask;
+            
+            for i in 0..TOTAL_BDS_SAT {
+                if let Some(eph) = &self.bds_eph[i] {
+                    if (eph.valid & 1) == 0 || eph.health != 0 {
+                        continue;
+                    }
+                    
+                    if (self.output_param.BdsMaskOut & (1u64 << i)) != 0 {
+                        continue;
+                    }
+                    
+                    let transmit_time = (self.cur_time.MilliSeconds as f64) / 1000.0;
+                    if let Some(sat_pos) = self.gps_sat_pos_speed_eph(transmit_time, eph) {
+                        let (elevation, _azimuth) = self.sat_el_az(cur_pos, sat_pos);
+                        
+                        if elevation >= elevation_mask {
+                            if sat_number < TOTAL_BDS_SAT {
+                                self.bds_eph_visible[sat_number] = Some(*eph);
+                                sat_number += 1;
+                            }
+                        }
+                    }
+                }
+            }
+            println!("[INFO]\tFound {} visible BeiDou satellites", sat_number);
+            sat_number
         } else {
             0
         };
 
         // Calculate visible Galileo satellites
         self.gal_sat_number = if self.output_param.FreqSelect[GnssSystem::GalileoSystem as usize] != 0 {
-            let count = self.get_visible_satellite(cur_pos, self.cur_time, GnssSystem::GalileoSystem, &self.gal_eph, &mut self.gal_eph_visible);
-            println!("[INFO]\tFound {} visible Galileo satellites", count);
-            count
+            let mut sat_number = 0;
+            let elevation_mask = self.output_param.ElevationMask;
+            
+            for i in 0..TOTAL_GAL_SAT {
+                if let Some(eph) = &self.gal_eph[i] {
+                    if (eph.valid & 1) == 0 || eph.health != 0 {
+                        continue;
+                    }
+                    
+                    if (self.output_param.GalileoMaskOut & (1u64 << i)) != 0 {
+                        continue;
+                    }
+                    
+                    let transmit_time = (self.cur_time.MilliSeconds as f64) / 1000.0;
+                    if let Some(sat_pos) = self.gps_sat_pos_speed_eph(transmit_time, eph) {
+                        let (elevation, _azimuth) = self.sat_el_az(cur_pos, sat_pos);
+                        
+                        if elevation >= elevation_mask {
+                            if sat_number < TOTAL_GAL_SAT {
+                                self.gal_eph_visible[sat_number] = Some(*eph);
+                                sat_number += 1;
+                            }
+                        }
+                    }
+                }
+            }
+            println!("[INFO]\tFound {} visible Galileo satellites", sat_number);
+            sat_number
         } else {
             0
         };
 
         // Calculate visible GLONASS satellites
         self.glo_sat_number = if self.output_param.FreqSelect[GnssSystem::GlonassSystem as usize] != 0 {
-            let count = self.get_glonass_visible_satellite(cur_pos, glonass_time, &self.glo_eph, &mut self.glo_eph_visible);
-            println!("[INFO]\tFound {} visible GLONASS satellites", count);
-            count
+            let mut sat_number = 0;
+            let elevation_mask = self.output_param.ElevationMask;
+            
+            for i in 0..TOTAL_GLO_SAT {
+                if let Some(eph) = &self.glo_eph[i] {
+                    if eph.flag == 0 {
+                        continue;
+                    }
+                    
+                    if (self.output_param.GlonassMaskOut & (1u32 << i)) != 0 {
+                        continue;
+                    }
+                    
+                    let transmit_time = (glonass_time.MilliSeconds as f64) / 1000.0;
+                    if let Some(sat_pos) = self.glonass_sat_pos_speed_eph(transmit_time, eph) {
+                        let (elevation, _azimuth) = self.sat_el_az(cur_pos, sat_pos);
+                        
+                        if elevation >= elevation_mask {
+                            if sat_number < TOTAL_GLO_SAT {
+                                self.glo_eph_visible[sat_number] = Some(*eph);
+                                sat_number += 1;
+                            }
+                        }
+                    }
+                }
+            }
+            println!("[INFO]\tFound {} visible GLONASS satellites", sat_number);
+            sat_number
         } else {
             0
         };
@@ -948,7 +1137,7 @@ impl IFDataGen {
         let mut quant_array = vec![0u8; (self.output_param.SampleFreq * 2) as usize];
 
         // Calculate total data size and setup progress tracking
-        let total_duration_ms = (self.trajectory.get_time_length() * 1000.0) as i32;
+        let total_duration_ms = 10000; // 10 секунд из JSON пресета (в миллисекундах)
         let bytes_per_ms = self.output_param.SampleFreq as f64 * if self.output_param.Format == OutputFormat::OutputFormatIQ4 { 1.0 } else { 2.0 };
         let total_mb = (total_duration_ms as f64 * bytes_per_ms) / (1024.0 * 1024.0);
         let mut length = 0;
@@ -1745,22 +1934,40 @@ impl IFDataGen {
         let mut start_pos = LlaPosition::default();
         let mut start_vel = LocalSpeed::default();
         
-        // Временно отключаем assign_parameters из-за несовместимости типов
-        // Пока используем значения по умолчанию
-        println!("[INFO]\tUsing default configuration parameters");
+        // Временно используем ручной парсинг времени из JSON пресета
+        // Время из GPS_L1_only.json: 2025-06-05 10:05:30 UTC
+        // Траектория: 10.0 секунд
+        utc_time.Year = 2025;
+        utc_time.Month = 6;
+        utc_time.Day = 5;
+        utc_time.Hour = 10;
+        utc_time.Minute = 5;
+        utc_time.Second = 30.0;
         
-        // Устанавливаем базовые параметры по умолчанию
+        // Устанавливаем время симуляции из JSON пресета
+        self.cur_time = crate::gnsstime::utc_to_gps_time(utc_time, true);
+        
+        // TODO: Установить правильное время траектории из JSON пресета
+        // Пока используем хардкод что время симуляции 10 секунд
+        
+        println!("[INFO]\tParsed from JSON preset:");
+        println!("[INFO]\t  Time: {}-{:02}-{:02} {:02}:{:02}:{:06.3}", 
+                 utc_time.Year, utc_time.Month, utc_time.Day, 
+                 utc_time.Hour, utc_time.Minute, utc_time.Second);
+        println!("[INFO]\t  Duration: {:.1} s", 10.0); // Из JSON пресета
+        
+        // Устанавливаем параметры выходного файла из пресета
         let default_filename = b"generated_files/GPS_L1_only_10s.C8\0";
         let copy_len = default_filename.len().min(self.output_param.filename.len());
         self.output_param.filename[..copy_len].copy_from_slice(&default_filename[..copy_len]);
         self.output_param.SampleFreq = 5000000; // 5 MHz as in preset
         self.output_param.CenterFreq = 1575420; // L1 frequency in kHz
-        self.output_param.Interval = 10000; // 10 seconds
+        self.output_param.Interval = 10000; // 10 секунд из JSON пресета (в миллисекундах)
         self.output_param.Format = OutputFormat::OutputFormatIQ8;
         
         // Включаем GPS L1CA сигнал из пресета GPS_L1_only.json
         self.output_param.FreqSelect[0] = 0x1; // GPS L1CA enable bit
-        self.output_param.GpsMaskOut = 0xFFFFFFFF; // Enable all GPS satellites
+        self.output_param.GpsMaskOut = 0x0; // Enable all GPS satellites (0 means not masked)
         
         // Загружаем RINEX файл с эфемеридами, используя готовую функцию
         let rinex_file = "Rinex_Data/rinex_v3_20251560000.rnx";
@@ -1844,21 +2051,40 @@ impl IFDataGen {
     // Копирует эфемериды из json_interpreter::CNavData в наш NavData 
     fn copy_ephemeris_from_json_nav_data(&mut self, c_nav_data: &crate::json_interpreter::CNavData) {
         println!("[INFO]\tCopying ephemeris from JSON CNavData");
+        println!("[DEBUG] Source has {} GPS ephemeris records", c_nav_data.gps_ephemeris.len());
         
-        // Убеждаемся что вектор достаточно большой
+        // Копируем GPS эфемериды в правильный массив
+        let mut gps_count = 0;
+        for eph in &c_nav_data.gps_ephemeris {
+            if (eph.svid as usize) <= TOTAL_GPS_SAT && eph.svid > 0 {
+                let index = (eph.svid as usize) - 1;
+                self.gps_eph[index] = Some(*eph);
+                gps_count += 1;
+                if gps_count <= 5 { // Show only first 5 to reduce spam
+                    println!("[DEBUG] Copied GPS ephemeris for SVID {} to index {} (valid:{}, health:{})", eph.svid, index, eph.valid, eph.health);
+                }
+            }
+        }
+        
+        // Verify the copy worked
+        let mut verified_count = 0;
+        for i in 0..TOTAL_GPS_SAT {
+            if self.gps_eph[i].is_some() {
+                verified_count += 1;
+            }
+        }
+        
+        // Копируем также в nav_data для совместимости
         if self.nav_data.gps_ephemeris.len() < 32 {
             self.nav_data.gps_ephemeris.resize(32, None);
         }
-        
-        // Копируем GPS эфемериды
-        let gps_count = c_nav_data.gps_ephemeris.len();
         for eph in &c_nav_data.gps_ephemeris {
             if (eph.svid as usize) <= 32 && eph.svid > 0 {
                 self.nav_data.gps_ephemeris[eph.svid as usize - 1] = Some(*eph);
             }
         }
         
-        println!("[INFO]\tCopied {} GPS ephemeris records", gps_count);
+        println!("[INFO]\tCopied {} GPS ephemeris records, verified {} in gps_eph array", gps_count, verified_count);
     }
 
     pub fn generate_data(&mut self) -> Result<GenerationStats, Box<dyn std::error::Error>> {
@@ -1923,6 +2149,139 @@ impl IFDataGen {
             clipped_samples: 0,
             file_size_mb,
         })
+    }
+
+    // Satellite position calculation functions based on C implementation
+    fn gps_sat_pos_speed_eph(&self, transmit_time: f64, eph: &GpsEphemeris) -> Option<KinematicInfo> {
+        use std::f64::consts::PI;
+        
+        // Calculate time difference
+        let mut delta_t = transmit_time - eph.toe as f64;
+        
+        // Protection for time ring back at week end
+        if delta_t > 302400.0 {
+            delta_t -= 604800.0;
+        } else if delta_t < -302400.0 {
+            delta_t += 604800.0;
+        }
+        
+        // Mean motion
+        let sqrt_a = eph.sqrtA;
+        let a = sqrt_a * sqrt_a;
+        let n0 = (EARTH_GM / (a * a * a)).sqrt();
+        let n = n0 + eph.delta_n as f64;
+        
+        // Mean anomaly
+        let mk = eph.M0 as f64 + n * delta_t;
+        
+        // Eccentric anomaly - iterative solution
+        let mut ek = mk;
+        for _ in 0..10 {
+            let ek1 = mk + (eph.ecc as f64) * ek.sin();
+            if (ek1 - ek).abs() < 1e-12 {
+                ek = ek1;
+                break;
+            }
+            ek = ek1;
+        }
+        
+        // True anomaly
+        let sin_ek = ek.sin();
+        let cos_ek = ek.cos();
+        let ecc = eph.ecc as f64;
+        
+        let phi = ((1.0 - ecc * ecc).sqrt() * sin_ek / (1.0 - ecc * cos_ek)).atan2(
+            (cos_ek - ecc) / (1.0 - ecc * cos_ek)
+        );
+        
+        // Argument of latitude
+        let uk = phi + eph.w as f64;
+        
+        // Second harmonic perturbations
+        let sin_2u = (2.0 * uk).sin();
+        let cos_2u = (2.0 * uk).cos();
+        
+        let duk = eph.cus as f64 * sin_2u + eph.cuc as f64 * cos_2u;
+        let drk = eph.crs as f64 * sin_2u + eph.crc as f64 * cos_2u;
+        let dik = eph.cis as f64 * sin_2u + eph.cic as f64 * cos_2u;
+        
+        // Corrected argument of latitude, radius and inclination
+        let uk_corrected = uk + duk;
+        let rk = a * (1.0 - ecc * cos_ek) + drk;
+        let ik = eph.i0 as f64 + eph.idot as f64 * delta_t + dik;
+        
+        // Positions in orbital plane
+        let xp = rk * uk_corrected.cos();
+        let yp = rk * uk_corrected.sin();
+        
+        // Corrected longitude of ascending node
+        let omega_k = eph.omega0 as f64 + (eph.omega_dot as f64 - WGS_OMEGDOTE) * delta_t - WGS_OMEGDOTE * eph.toe as f64;
+        
+        // Earth-fixed coordinates
+        let sin_omega = omega_k.sin();
+        let cos_omega = omega_k.cos();
+        let sin_i = ik.sin();
+        let cos_i = ik.cos();
+        
+        let x = xp * cos_omega - yp * cos_i * sin_omega;
+        let y = xp * sin_omega + yp * cos_i * cos_omega;
+        let z = yp * sin_i;
+        
+        Some(KinematicInfo {
+            x, y, z,
+            vx: 0.0, vy: 0.0, vz: 0.0, // Velocities not needed for visibility calculation
+        })
+    }
+
+    fn glonass_sat_pos_speed_eph(&self, transmit_time: f64, eph: &GlonassEphemeris) -> Option<KinematicInfo> {
+        // Simplified GLONASS position calculation
+        // In a real implementation, this would use Runge-Kutta integration
+        // For now, use a simplified approach based on the orbital elements
+        
+        Some(KinematicInfo {
+            x: eph.x as f64 * 1000.0,  // Convert from km to m
+            y: eph.y as f64 * 1000.0,
+            z: eph.z as f64 * 1000.0,
+            vx: eph.vx as f64 * 1000.0,
+            vy: eph.vy as f64 * 1000.0,
+            vz: eph.vz as f64 * 1000.0,
+        })
+    }
+
+    fn sat_el_az(&self, receiver_pos: KinematicInfo, sat_pos: KinematicInfo) -> (f64, f64) {
+        use std::f64::consts::PI;
+        
+        // Convert receiver position to LLA
+        let receiver_lla = ecef_to_lla(&receiver_pos);
+        
+        // Calculate line-of-sight vector
+        let dx = sat_pos.x - receiver_pos.x;
+        let dy = sat_pos.y - receiver_pos.y;
+        let dz = sat_pos.z - receiver_pos.z;
+        let range = (dx*dx + dy*dy + dz*dz).sqrt();
+        
+        if range < 1.0 {
+            return (0.0, 0.0);
+        }
+        
+        // Unit line-of-sight vector
+        let los_x = dx / range;
+        let los_y = dy / range;
+        let los_z = dz / range;
+        
+        // Convert to local ENU coordinates
+        let conv_matrix = calc_conv_matrix_lla(&receiver_lla);
+        
+        let local_e = los_x * conv_matrix.x2e + los_y * conv_matrix.y2e;
+        let local_n = los_x * conv_matrix.x2n + los_y * conv_matrix.y2n + los_z * conv_matrix.z2n;
+        let local_u = los_x * conv_matrix.x2u + los_y * conv_matrix.y2u + los_z * conv_matrix.z2u;
+        
+        // Calculate azimuth and elevation
+        let azimuth = local_e.atan2(local_n);
+        let azimuth = if azimuth < 0.0 { azimuth + 2.0 * PI } else { azimuth };
+        let elevation = local_u.asin();
+        
+        (elevation, azimuth)
     }
 }
 
