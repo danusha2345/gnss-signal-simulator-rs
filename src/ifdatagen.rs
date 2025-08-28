@@ -1155,7 +1155,9 @@ impl IFDataGen {
         
         // PERFORMANCE OPTIMIZATION: Use real GNSS signal generation with optimizations
         let debug_mode = false; // Always use full signal generation
-        let max_satellites_for_debug = 3; // Limit to 3 satellites for faster debugging
+        // TODO: Make max_satellites configurable via command line or JSON
+        // For now, None means use all available satellites (restore original behavior)
+        let max_satellites_for_debug: Option<usize> = None; // Use all satellites (was 3)
 
         println!("[INFO]\tStarting signal generation loop...");
         println!("[INFO]\tSignal Duration: {:.2} s", total_duration_ms as f64 / 1000.0);
@@ -1210,8 +1212,12 @@ impl IFDataGen {
                 // CRITICAL OPTIMIZATION: Generate satellite signals more efficiently
                 let current_time = self.cur_time;
                 
-                // Limit active satellites for debugging performance
-                let active_sats = sat_if_signals.len().min(max_satellites_for_debug);
+                // Use all available satellites or limit for debugging if specified
+                let active_sats = if let Some(limit) = max_satellites_for_debug {
+                    sat_if_signals.len().min(limit)
+                } else {
+                    sat_if_signals.len() // Use all satellites
+                };
                 
                 // Only update satellite parameters every 10ms (they change slowly)
                 if should_update_sat_params {
