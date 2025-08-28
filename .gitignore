@@ -1,1 +1,30 @@
-/target
+# Rust build artifacts
+/target/
+Cargo.lock
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+
+# Generated signal files (large binary files)
+generated_files/*.C8
+generated_files/*.bin
+
+# Debug logs
+*.log
+
+# Performance profiling
+perf.data*
+flamegraph.svg
