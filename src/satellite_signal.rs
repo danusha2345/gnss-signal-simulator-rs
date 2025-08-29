@@ -24,7 +24,6 @@ use crate::gnsstime::GnssTimeConverter;
 use crate::pilotbit::get_pilot_bits;
 use crate::types::{GnssTime, GnssSystem};
 use crate::NavDataType;
-use crate::ifdatagen::NavBitTrait;
 
 const AMPLITUDE_1_2: f64 = 0.707_106_781_186_547_6;
 const AMPLITUDE_1_4: f64 = 0.5;
@@ -61,7 +60,7 @@ pub struct SatelliteSignal {
     sat_signal: i32,
     svid: i32,
     current_frame: i32,
-    nav_data: Option<Box<dyn NavBitTrait>>,
+    nav_data: Option<crate::nav_data::NavData>,
     is_in_time_marker: bool,
     time_marker_bits: [u8; 30],
     data_bits: [u8; 4096], // Adjusted size for safety
@@ -93,7 +92,7 @@ impl SatelliteSignal {
         }
     }
 
-    pub fn set_signal_attribute(&mut self, system: GnssSystem, signal_index: i32, p_nav_data: Option<Box<dyn NavBitTrait>>, svid: i32) -> bool {
+    pub fn set_signal_attribute(&mut self, system: GnssSystem, signal_index: i32, p_nav_data: Option<crate::nav_data::NavData>, svid: i32) -> bool {
         // Define constants for pattern matching
         const L1CA: i32 = crate::SIGNAL_INDEX_L1CA as i32;
         const L1C: i32 = crate::SIGNAL_INDEX_L1C as i32;
@@ -218,7 +217,12 @@ impl SatelliteSignal {
             if string_position < 300 {
                 self.is_in_time_marker = true;
                 if string_position == 0 {
-                    //GNavBit::get_time_marker(&mut self.time_marker_bits);
+                    use crate::gnavbit::GNavBit;
+                    let mut time_marker_i32 = vec![0i32; 30];
+                    GNavBit::get_time_marker(&mut time_marker_i32);
+                    for i in 0..30 {
+                        self.time_marker_bits[i] = time_marker_i32[i] as u8;
+                    }
                 }
                 let time_marker_bit_index = string_position / 10;
                 data_bit = if time_marker_bit_index < 30 { if self.time_marker_bits[time_marker_bit_index as usize] != 0 { -1 } else { 1 } } else { 1 };

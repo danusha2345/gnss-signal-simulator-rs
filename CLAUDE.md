@@ -31,6 +31,7 @@ This is a GNSS (Global Navigation Satellite System) signal generation library wr
 ### Data Types
 
 Core types are defined in `src/types.rs` including:
+
 - `GnssTime`, `UtcTime`, `GlonassTime` for time representation
 - `AlmanacType`, `GnssSystem` enums for system identification
 - Various ephemeris and almanac structures

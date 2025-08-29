@@ -37,6 +37,7 @@ pub mod l5cnavbit;
 pub mod lnavbit;
 pub mod navbit;
 pub mod navdata;
+pub mod nav_data;  // NEW: Unified NavData enum for parallelization
 pub mod pilotbit;
 pub mod powercontrol;
 pub mod prngenerate;
@@ -77,6 +78,7 @@ pub use l5cnavbit::*;
 pub use lnavbit::*;
 pub use navbit::*;
 pub use navdata::{CNavData, NavDataType};
+pub use nav_data::{NavData, NavMessageType};
 pub use pilotbit::*;
 pub use powercontrol::*;
 pub use prngenerate::*;

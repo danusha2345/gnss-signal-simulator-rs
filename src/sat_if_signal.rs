@@ -13,7 +13,7 @@ use crate::satellite_param::{get_travel_time, get_carrier_phase, get_transmit_ti
 use crate::satellite_signal::SatelliteSignal;
 use crate::constants::*;
 use crate::fastmath::FastMath;
-use crate::ifdatagen::NavBitTrait;
+use wide::f64x4;  // SIMD векторизация для 4 элементов за раз
 
 pub struct SatIfSignal {
     sample_number: i32,
@@ -82,7 +82,7 @@ impl SatIfSignal {
         }
     }
 
-    pub fn init_state(&mut self, cur_time: GnssTime, p_sat_param: &SatelliteParam, p_nav_data: Option<Box<dyn NavBitTrait>>) {
+    pub fn init_state(&mut self, cur_time: GnssTime, p_sat_param: &SatelliteParam, p_nav_data: Option<crate::nav_data::NavData>) {
         self.sat_param = Some(*p_sat_param);
         if !self.satellite_signal.set_signal_attribute(self.system, self.signal_index, p_nav_data, self.svid) {
             // In Rust, we might handle this by setting self.satellite_signal.nav_data to None,
@@ -251,6 +251,137 @@ impl SatIfSignal {
             };
             
             cur_phase += phase_step;
+        }
+    }
+
+    /// SIMD-оптимизированная генерация IF сигнала
+    /// Обрабатывает 4 отсчета одновременно используя векторизацию
+    pub fn get_if_sample_simd(&mut self, cur_time: GnssTime) {
+        // Получаем параметры спутника (аналогично обычной версии)
+        let p_sat_param = if let Some(ref sat_param) = self.sat_param {
+            sat_param
+        } else {
+            return; // Если нет параметров спутника, выходим
+        };
+        
+        // Подготовка всех параметров
+        let ms_offset = cur_time.MilliSeconds - self.signal_time.MilliSeconds;
+        let phase_increment = (self.if_freq as f64) / 1000.0;
+        let code_attribute = self.prn_sequence.attribute.as_ref().unwrap();
+        let chip_advance = code_attribute.chip_rate as f64;
+        let code_step = chip_advance / (self.sample_number as f64);
+        let base_chip_offset = (ms_offset as f64) * code_attribute.chip_rate as f64;
+        let amp = 10.0_f64.powf((p_sat_param.CN0 as f64 - 3000.0) / 1000.0) / (self.sample_number as f64).sqrt();
+        let phase_step = phase_increment / (self.sample_number as f64);
+        let nav_value = if self.data_signal.real >= 0.0 { 1.0 } else { -1.0 };
+        
+        // SIMD векторы для обработки 4 элементов за раз
+        let code_step_vec = f64x4::splat(code_step);
+        let phase_step_vec = f64x4::splat(phase_step);
+        let amp_vec = f64x4::splat(amp);
+        let nav_value_vec = f64x4::splat(nav_value);
+        let base_phase_vec = f64x4::new([0.0, phase_step, phase_step * 2.0, phase_step * 3.0]);
+        let phase_increment_vec = f64x4::splat(phase_step * 4.0);
+        let two_pi_vec = f64x4::splat(2.0 * std::f64::consts::PI);
+        let base_chip_vec = f64x4::new([
+            base_chip_offset,
+            base_chip_offset + code_step,
+            base_chip_offset + code_step * 2.0,
+            base_chip_offset + code_step * 3.0
+        ]);
+        let chip_increment_vec = f64x4::splat(code_step * 4.0);
+        
+        let mut cur_phase_vec = base_phase_vec;
+        let mut cur_chip_vec = base_chip_vec;
+        
+        // Обработка групп по 4 элемента
+        let samples_per_group = 4;
+        let full_groups = (self.sample_number as usize) / samples_per_group;
+        
+        if let Some(data_prn) = &self.prn_sequence.data_prn {
+            for group in 0..full_groups {
+                let base_idx = group * samples_per_group;
+                
+                // SIMD векторизованная обработка PRN кодов
+                let chip_indices: [i32; 4] = [
+                    (cur_chip_vec.as_array_ref()[0] as i32) % 1023,
+                    (cur_chip_vec.as_array_ref()[1] as i32) % 1023,
+                    (cur_chip_vec.as_array_ref()[2] as i32) % 1023,
+                    (cur_chip_vec.as_array_ref()[3] as i32) % 1023,
+                ];
+                
+                // Получение PRN битов
+                let prn_bits = f64x4::new([
+                    if chip_indices[0] >= 0 && (chip_indices[0] as usize) < data_prn.len() && data_prn[chip_indices[0] as usize] != 0 { -1.0 } else { 1.0 },
+                    if chip_indices[1] >= 0 && (chip_indices[1] as usize) < data_prn.len() && data_prn[chip_indices[1] as usize] != 0 { -1.0 } else { 1.0 },
+                    if chip_indices[2] >= 0 && (chip_indices[2] as usize) < data_prn.len() && data_prn[chip_indices[2] as usize] != 0 { -1.0 } else { 1.0 },
+                    if chip_indices[3] >= 0 && (chip_indices[3] as usize) < data_prn.len() && data_prn[chip_indices[3] as usize] != 0 { -1.0 } else { 1.0 },
+                ]);
+                
+                // Векторизованная тригонометрия
+                let angles = cur_phase_vec * two_pi_vec;
+                let cos_vals = f64x4::new([
+                    FastMath::fast_cos(angles.as_array_ref()[0]),
+                    FastMath::fast_cos(angles.as_array_ref()[1]),
+                    FastMath::fast_cos(angles.as_array_ref()[2]),
+                    FastMath::fast_cos(angles.as_array_ref()[3]),
+                ]);
+                let sin_vals = f64x4::new([
+                    FastMath::fast_sin(angles.as_array_ref()[0]),
+                    FastMath::fast_sin(angles.as_array_ref()[1]),
+                    FastMath::fast_sin(angles.as_array_ref()[2]),
+                    FastMath::fast_sin(angles.as_array_ref()[3]),
+                ]);
+                
+                // Векторизованные вычисления амплитуд
+                let real_vals = prn_bits * nav_value_vec * cos_vals * amp_vec;
+                let imag_vals = prn_bits * nav_value_vec * sin_vals * amp_vec;
+                
+                // Сохранение результатов
+                for i in 0..samples_per_group {
+                    self.sample_array[base_idx + i] = ComplexNumber {
+                        real: real_vals.as_array_ref()[i],
+                        imag: imag_vals.as_array_ref()[i],
+                    };
+                }
+                
+                // Обновление векторов для следующей группы
+                cur_phase_vec += phase_increment_vec;
+                cur_chip_vec += chip_increment_vec;
+            }
+        }
+        
+        // Обработка оставшихся элементов (если их меньше 4)
+        let remaining = (self.sample_number as usize) % samples_per_group;
+        if remaining > 0 {
+            let start_idx = full_groups * samples_per_group;
+            let mut cur_phase = cur_phase_vec.as_array_ref()[0];
+            let mut cur_chip = cur_chip_vec.as_array_ref()[0];
+            
+            for i in 0..remaining {
+                let chip_index = (cur_chip as i32) % 1023;
+                let prn_bit = if let Some(data_prn) = &self.prn_sequence.data_prn {
+                    if chip_index >= 0 && (chip_index as usize) < data_prn.len() && data_prn[chip_index as usize] != 0 { 
+                        -1.0 
+                    } else { 
+                        1.0 
+                    }
+                } else { 
+                    1.0 
+                };
+                
+                let angle = cur_phase * 2.0 * std::f64::consts::PI;
+                let cos_val = FastMath::fast_cos(angle);
+                let sin_val = FastMath::fast_sin(angle);
+                
+                self.sample_array[start_idx + i] = ComplexNumber {
+                    real: prn_bit * nav_value * cos_val * amp,
+                    imag: prn_bit * nav_value * sin_val * amp,
+                };
+                
+                cur_phase += phase_step;
+                cur_chip += code_step;
+            }
         }
     }
 

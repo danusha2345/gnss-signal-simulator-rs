@@ -47,6 +47,7 @@ use crate::powercontrol::{CPowerControl, SignalPower};
 use crate::trajectory::CTrajectory;
 use crate::types::SatelliteParam;
 use crate::navdata::NavDataType;
+use crate::nav_data::NavData as UnifiedNavData;
 
 #[derive(Debug)]
 pub struct GenerationStats {
@@ -457,6 +458,7 @@ impl NavBitTrait for GNavBit {
     fn clone_box(&self) -> Box<dyn NavBitTrait> { Box::new(self.clone()) }
 }
 use crate::fastmath::FastMath;
+use rayon::prelude::*;
 
 // Constants for quantization and time conversion
 const QUANT_SCALE_IQ4: f64 = 3.0;
@@ -701,25 +703,25 @@ impl IFDataGen {
         println!("[INFO]\tIF Signal generation completed!");
         Ok(())
     } 
-   fn create_nav_bit_instances(&self) -> Vec<Option<Box<dyn NavBitTrait>>> {
-        let mut nav_bit_array: Vec<Option<Box<dyn NavBitTrait>>> = Vec::with_capacity(14);
+   fn create_nav_bit_instances(&self) -> Vec<Option<UnifiedNavData>> {
+        let mut nav_bit_array: Vec<Option<UnifiedNavData>> = Vec::with_capacity(14);
         
         for i in 0..14 {
-            let nav_bit: Option<Box<dyn NavBitTrait>> = match i {
-                0 => Some(Box::new(LNavBit::new())),      // DataBitLNav
-                1 => Some(Box::new(CNavBit::new())),      // DataBitCNav
-                2 => Some(Box::new(CNav2Bit::new())),     // DataBitCNav2
-                3 => Some(Box::new(L5CNavBit::new())),    // DataBitL5CNav
-                4 => Some(Box::new(GNavBit::new())),      // DataBitGNav
-                5 => None,                                // DataBitGNav2
-                6 => Some(Box::new(D1D2NavBit::new())),   // DataBitD1D2
-                7 => Some(Box::new(BCNav1Bit::new())),    // DataBitBCNav1
-                8 => Some(Box::new(BCNav2Bit::new())),    // DataBitBCNav2
-                9 => Some(Box::new(BCNav3Bit::new())),    // DataBitBCNav3
-                10 => Some(Box::new(INavBit::new())),     // DataBitINav
-                11 => Some(Box::new(FNavBit::new())),     // DataBitFNav
-                12 => None,                               // DataBitECNav
-                13 => None,                               // DataBitSbas
+            let nav_bit: Option<UnifiedNavData> = match i {
+                0 => Some(UnifiedNavData::LNav(LNavBit::new())),           // DataBitLNav
+                1 => Some(UnifiedNavData::CNav(ActualCNavBit::new())), // DataBitCNav
+                2 => Some(UnifiedNavData::CNav2(ActualCNav2Bit::new())), // DataBitCNav2
+                3 => Some(UnifiedNavData::L5CNav(L5CNavBit::new())),   // DataBitL5CNav
+                4 => Some(UnifiedNavData::GNav(GNavBit::new())),       // DataBitGNav
+                5 => None,                                      // DataBitGNav2
+                6 => Some(UnifiedNavData::D1D2Nav(ActualD1D2NavBit::new())), // DataBitD1D2
+                7 => Some(UnifiedNavData::BCNav1(ActualBCNav1Bit::new())), // DataBitBCNav1
+                8 => Some(UnifiedNavData::BCNav2(ActualBCNav2Bit::new())), // DataBitBCNav2
+                9 => Some(UnifiedNavData::BCNav3(ActualBCNav3Bit::new())), // DataBitBCNav3
+                10 => Some(UnifiedNavData::INav(ActualINavBit::new())),   // DataBitINav
+                11 => Some(UnifiedNavData::FNav(ActualFNavBit::new())),   // DataBitFNav
+                12 => None,                                    // DataBitECNav
+                13 => None,                                    // DataBitSbas
                 _ => None,
             };
             nav_bit_array.push(nav_bit);
@@ -762,7 +764,7 @@ impl IFDataGen {
         // (Implementation continues with similar pattern for other systems)
     }
 
-    fn setup_navigation_data(&mut self, nav_bit_array: &mut Vec<Option<Box<dyn NavBitTrait>>>, 
+    fn setup_navigation_data(&mut self, nav_bit_array: &mut Vec<Option<UnifiedNavData>>, 
                            utc_time: UtcTime, glonass_time: GlonassTime, bds_time: GnssTime) -> Result<(), Box<dyn std::error::Error>> {
         
         // Set Ionosphere and UTC parameters for different navigation data bits
@@ -1108,11 +1110,11 @@ impl IFDataGen {
         Ok(())
     }
 
-    fn create_satellite_signals(&mut self, nav_bit_array: &Vec<Option<Box<dyn NavBitTrait>>>) -> Result<Vec<Option<Box<SatIfSignal>>>, Box<dyn std::error::Error>> {
+    fn create_satellite_signals(&mut self, nav_bit_array: &Vec<Option<UnifiedNavData>>) -> Result<Vec<Option<Box<SatIfSignal>>>, Box<dyn std::error::Error>> {
         let mut sat_if_signals: Vec<Option<Box<SatIfSignal>>> = (0..TOTAL_SAT_CHANNEL).map(|_| None).collect();
         let mut total_channel_number = 0;
 
-        println!("[INFO]\tUsing sequential processing - OpenMP not available in Rust");
+        println!("[INFO]\tUsing Rayon parallelization for satellite processing");
 
         println!("[INFO]\tGenerating IF data with following satellite signals:\n");
 
@@ -1219,42 +1221,37 @@ impl IFDataGen {
                     sat_if_signals.len() // Use all satellites
                 };
                 
-                // Only update satellite parameters every 10ms (they change slowly)
-                if should_update_sat_params {
-                    for i in 0..active_sats {
-                        if let Some(ref mut sig) = sat_if_signals[i] {
-                            sig.get_if_sample(current_time);
+                // OPTIMIZED: Parallel satellite processing with rayon
+                // NavData enum supports Sync + Send, enabling parallelization!
+                sat_if_signals[..active_sats]
+                    .par_iter_mut()
+                    .for_each(|sig_option| {
+                        if let Some(ref mut sig) = sig_option {
+                            // SIMD оптимизация: используем векторизованную функцию
+                            sig.get_if_sample_simd(current_time);
                         }
-                    }
-                } else {
-                    // Use fast cached version for non-update cycles
-                    for i in 0..active_sats {
-                        if let Some(ref mut sig) = sat_if_signals[i] {
-                            sig.get_if_sample(current_time); // This will use fast path due to caching
-                        }
-                    }
-                }
+                    });
 
-                // OPTIMIZED: Vectorized signal accumulation
-                for j in 0..samples_per_ms {
-                    let mut sum = noise_array[j];
-                    
-                    // Unroll inner loop for better performance
-                    for signal in sat_if_signals.iter() {
-                        if let Some(ref sig) = signal {
-                            if j < sig.sample_array.len() {
-                                let sample = sig.sample_array[j];
-                                sum.real += sample.real;
-                                sum.imag += sample.imag;
+                // OPTIMIZED: Parallel signal accumulation with rayon
+                noise_array
+                    .par_iter_mut()
+                    .enumerate()
+                    .for_each(|(j, sum)| {
+                        // Accumulate all satellite signals efficiently
+                        for signal in sat_if_signals.iter().take(active_sats) {
+                            if let Some(ref sig) = signal {
+                                if j < sig.sample_array.len() {
+                                    let sample = sig.sample_array[j];
+                                    sum.real += sample.real;
+                                    sum.imag += sample.imag;
+                                }
                             }
                         }
-                    }
-                    
-                    // Apply AGC
-                    sum.real *= agc_gain;
-                    sum.imag *= agc_gain;
-                    noise_array[j] = sum;
-                }
+                        
+                        // Apply AGC
+                        sum.real *= agc_gain;
+                        sum.imag *= agc_gain;
+                    });
             }
 
             let mut clipped_in_block = 0;
@@ -1343,7 +1340,7 @@ impl IFDataGen {
         Ok(())
     }
 
-    fn get_nav_data<'a>(&self, sat_system: GnssSystem, sat_signal_index: i32, nav_bit_array: &'a Vec<Option<Box<dyn NavBitTrait>>>) -> Option<&'a Box<dyn NavBitTrait>> {
+    fn get_nav_data<'a>(&self, sat_system: GnssSystem, sat_signal_index: i32, nav_bit_array: &'a Vec<Option<UnifiedNavData>>) -> Option<&'a UnifiedNavData> {
         const L1CA: i32 = SIGNAL_INDEX_L1CA as i32;
         const L1C: i32 = SIGNAL_INDEX_L1C as i32;
         const L2C: i32 = SIGNAL_INDEX_L2C as i32;
@@ -1912,7 +1909,7 @@ impl IFDataGen {
     // Вспомогательные методы для assign_parameters (упрощенная версия)
     // В полной реализации здесь должен быть полный парсер JSON параметров
 
-    fn create_gps_signals(&self, sat_if_signals: &mut Vec<Option<Box<SatIfSignal>>>, mut total_channel_number: usize, nav_bit_array: &Vec<Option<Box<dyn NavBitTrait>>>) -> Result<usize, Box<dyn std::error::Error>> {
+    fn create_gps_signals(&self, sat_if_signals: &mut Vec<Option<Box<SatIfSignal>>>, mut total_channel_number: usize, nav_bit_array: &Vec<Option<UnifiedNavData>>) -> Result<usize, Box<dyn std::error::Error>> {
         for i in 0..self.gps_sat_number {
             if let Some(eph) = &self.gps_eph_visible[i] {
                 for signal_index in SIGNAL_INDEX_L1CA..=SIGNAL_INDEX_L5 {
@@ -1923,7 +1920,7 @@ impl IFDataGen {
                         
                         let nav_data = self.get_nav_data(GnssSystem::GpsSystem, signal_index as i32, nav_bit_array);
                         // Cloning the boxed trait object
-                        let nav_data_clone = nav_data.map(|nav| nav.clone_box());
+                        let nav_data_clone = nav_data.cloned();
 
                         new_signal.init_state(self.cur_time, &self.gps_sat_param[eph.svid as usize - 1], nav_data_clone);
                         sat_if_signals[total_channel_number] = Some(Box::new(new_signal));
@@ -1935,7 +1932,7 @@ impl IFDataGen {
         Ok(total_channel_number)
     }
 
-    fn create_bds_signals(&self, sat_if_signals: &mut Vec<Option<Box<SatIfSignal>>>, mut total_channel_number: usize, nav_bit_array: &Vec<Option<Box<dyn NavBitTrait>>>) -> Result<usize, Box<dyn std::error::Error>> {
+    fn create_bds_signals(&self, sat_if_signals: &mut Vec<Option<Box<SatIfSignal>>>, mut total_channel_number: usize, nav_bit_array: &Vec<Option<UnifiedNavData>>) -> Result<usize, Box<dyn std::error::Error>> {
         for i in 0..self.bds_sat_number {
             if let Some(eph) = &self.bds_eph_visible[i] {
                 for signal_index in SIGNAL_INDEX_B1C..=SIGNAL_INDEX_B2AB {
@@ -1945,7 +1942,7 @@ impl IFDataGen {
                         let mut new_signal = SatIfSignal::new(self.output_param.SampleFreq, if_freq, GnssSystem::BdsSystem, signal_index as i32, eph.svid);
                         
                         let nav_data = self.get_nav_data(GnssSystem::BdsSystem, signal_index as i32, nav_bit_array);
-                        let nav_data_clone = nav_data.map(|nav| nav.clone_box());
+                        let nav_data_clone = nav_data.cloned();
 
                         new_signal.init_state(self.cur_time, &self.bds_sat_param[eph.svid as usize - 1], nav_data_clone);
                         sat_if_signals[total_channel_number] = Some(Box::new(new_signal));
@@ -1957,7 +1954,7 @@ impl IFDataGen {
         Ok(total_channel_number)
     }
 
-    fn create_galileo_signals(&self, sat_if_signals: &mut Vec<Option<Box<SatIfSignal>>>, mut total_channel_number: usize, nav_bit_array: &Vec<Option<Box<dyn NavBitTrait>>>) -> Result<usize, Box<dyn std::error::Error>> {
+    fn create_galileo_signals(&self, sat_if_signals: &mut Vec<Option<Box<SatIfSignal>>>, mut total_channel_number: usize, nav_bit_array: &Vec<Option<UnifiedNavData>>) -> Result<usize, Box<dyn std::error::Error>> {
         for i in 0..self.gal_sat_number {
             if let Some(eph) = &self.gal_eph_visible[i] {
                 for signal_index in SIGNAL_INDEX_E1..=SIGNAL_INDEX_E6 {
@@ -1967,7 +1964,7 @@ impl IFDataGen {
                         let mut new_signal = SatIfSignal::new(self.output_param.SampleFreq, if_freq, GnssSystem::GalileoSystem, signal_index as i32, eph.svid);
                         
                         let nav_data = self.get_nav_data(GnssSystem::GalileoSystem, signal_index as i32, nav_bit_array);
-                        let nav_data_clone = nav_data.map(|nav| nav.clone_box());
+                        let nav_data_clone = nav_data.cloned();
 
                         new_signal.init_state(self.cur_time, &self.gal_sat_param[eph.svid as usize - 1], nav_data_clone);
                         sat_if_signals[total_channel_number] = Some(Box::new(new_signal));
@@ -1979,7 +1976,7 @@ impl IFDataGen {
         Ok(total_channel_number)
     }
 
-    fn create_glonass_signals(&self, sat_if_signals: &mut Vec<Option<Box<SatIfSignal>>>, mut total_channel_number: usize, nav_bit_array: &Vec<Option<Box<dyn NavBitTrait>>>) -> Result<usize, Box<dyn std::error::Error>> {
+    fn create_glonass_signals(&self, sat_if_signals: &mut Vec<Option<Box<SatIfSignal>>>, mut total_channel_number: usize, nav_bit_array: &Vec<Option<UnifiedNavData>>) -> Result<usize, Box<dyn std::error::Error>> {
         for i in 0..self.glo_sat_number {
             if let Some(eph) = &self.glo_eph_visible[i] {
                 for signal_index in SIGNAL_INDEX_G1..=SIGNAL_INDEX_G2 {
@@ -1989,7 +1986,7 @@ impl IFDataGen {
                         let mut new_signal = SatIfSignal::new(self.output_param.SampleFreq, if_freq, GnssSystem::GlonassSystem, signal_index as i32, eph.n);
                         
                         let nav_data = self.get_nav_data(GnssSystem::GlonassSystem, signal_index as i32, nav_bit_array);
-                        let nav_data_clone = nav_data.map(|nav| nav.clone_box());
+                        let nav_data_clone = nav_data.cloned();
 
                         new_signal.init_state(self.cur_time, &self.glo_sat_param[eph.n as usize - 1], nav_data_clone);
                         sat_if_signals[total_channel_number] = Some(Box::new(new_signal));
@@ -2187,14 +2184,17 @@ impl IFDataGen {
 
     pub fn generate_data(&mut self) -> Result<GenerationStats, Box<dyn std::error::Error>> {
         // Используем стандартные данные пока не реализованы get методы
-        let utc_time = UtcTime {
-            Year: 2025,
-            Month: 6,
-            Day: 5,
-            Hour: 10,
-            Minute: 5,
-            Second: 30.0
-        };
+        let utc_time = self.parse_utc_time_from_json("presets/GPS_L1_only.json").unwrap_or_else(|| {
+            println!("[WARNING]\tFailed to parse time from JSON, using default time");
+            UtcTime {
+                Year: 2025,
+                Month: 6,
+                Day: 5,
+                Hour: 10,
+                Minute: 5,
+                Second: 30.0
+            }
+        });
         let start_pos = LlaPosition {
             lon: -114.2847_f64.to_radians(),
             lat: 48.4928_f64.to_radians(),
@@ -2384,6 +2384,41 @@ impl IFDataGen {
     }
 
     // Простой парсер для извлечения времени траектории из JSON
+    fn parse_utc_time_from_json(&self, config_file: &str) -> Option<UtcTime> {
+        use std::fs;
+        let json_content = fs::read_to_string(config_file).ok()?;
+        
+        // Simple JSON parsing for time section
+        let time_start = json_content.find("\"time\": {")?;
+        let time_end = json_content[time_start..].find("}")?;
+        let time_section = &json_content[time_start..time_start + time_end + 1];
+        
+        let year = Self::extract_json_field(time_section, "year")?;
+        let month = Self::extract_json_field(time_section, "month")?;
+        let day = Self::extract_json_field(time_section, "day")?;
+        let hour = Self::extract_json_field(time_section, "hour")?;
+        let minute = Self::extract_json_field(time_section, "minute")?;
+        let second = Self::extract_json_field(time_section, "second")?;
+        
+        Some(UtcTime {
+            Year: year as i32,
+            Month: month as i32,
+            Day: day as i32,
+            Hour: hour as i32,
+            Minute: minute as i32,
+            Second: second
+        })
+    }
+    
+    fn extract_json_field(json_section: &str, field_name: &str) -> Option<f64> {
+        let field_pattern = format!("\"{}\": ", field_name);
+        let start = json_section.find(&field_pattern)?;
+        let value_start = start + field_pattern.len();
+        let value_end = json_section[value_start..].find([',', '\n', '}'].as_ref())?;
+        let value_str = json_section[value_start..value_start + value_end].trim();
+        value_str.parse().ok()
+    }
+
     fn parse_trajectory_time_from_json(&self, config_file: &str) -> Option<f64> {
         use std::fs;
         
