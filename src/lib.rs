@@ -53,6 +53,11 @@ pub mod complex_number;
 pub mod coordinate;
 pub mod inavbit;
 pub mod ldpc;
+// МАКСИМАЛЬНОЕ АППАРАТНОЕ УСКОРЕНИЕ
+pub mod avx512_intrinsics;
+#[cfg(feature = "gpu")]
+pub mod cuda_acceleration;
+pub mod benchmarks;
 
 pub use almanac::*;
 pub use bcnav1bit::*;
@@ -89,3 +94,7 @@ pub use satellite_signal::*;
 pub use sat_if_signal::*;
 pub use inavbit::*;
 pub use ldpc::*;
+pub use avx512_intrinsics::*;
+#[cfg(feature = "gpu")]
+pub use cuda_acceleration::*;
+pub use benchmarks::*;

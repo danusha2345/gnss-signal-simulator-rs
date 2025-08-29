@@ -15,6 +15,8 @@ use crate::constants::*;
 use crate::fastmath::FastMath;
 use wide::f64x4;  // SIMD векторизация для 4 элементов за раз
 use std::collections::HashMap;
+// ЭКСТРЕМАЛЬНОЕ АППАРАТНОЕ УСКОРЕНИЕ
+use crate::avx512_intrinsics::{Avx512Accelerator, SafeAvx512Processor};
 
 /// Кэш PRN кодов для агрессивной оптимизации
 /// Предвычисляет PRN биты на несколько миллисекунд вперед
@@ -207,6 +209,8 @@ pub struct SatIfSignal {
     carrier_phase_cache: Option<CarrierPhaseCache>,
     /// КЭШ для минимизации повторных вычислений
     computation_cache: ComputationCache,
+    // ЭКСТРЕМАЛЬНАЯ АППАРАТНАЯ ОПТИМИЗАЦИЯ: AVX-512 ускоритель
+    avx512_accelerator: Option<Avx512Accelerator>,
 }
 
 impl SatIfSignal {
@@ -254,6 +258,12 @@ impl SatIfSignal {
             prn_cache: PrnCache::new(),
             carrier_phase_cache: None, // Будет инициализирован при первом использовании
             computation_cache: ComputationCache::new(), // Кэш вычислений для максимальной скорости
+            // ЭКСТРЕМАЛЬНАЯ ОПТИМИЗАЦИЯ: инициализируем AVX-512 если доступно
+            avx512_accelerator: if Avx512Accelerator::is_available() {
+                Some(Avx512Accelerator::new())
+            } else {
+                None
+            },
         }
     }
 

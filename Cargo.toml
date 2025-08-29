@@ -7,3 +7,19 @@ edition = "2021"
 rand = "0.8"
 rayon = "1.8"
 wide = "0.7"  # SIMD векторизация
+# МАКСИМАЛЬНОЕ АППАРАТНОЕ УСКОРЕНИЕ: GPU + AVX-512  
+cudarc = { version = "0.11", features = ["f16", "cuda-12050"], optional = true }
+
+[features]
+default = []
+gpu = ["cudarc"]
+avx512 = []
+
+[profile.release]
+opt-level = 3
+lto = "fat" 
+codegen-units = 1
+panic = "abort"
+# КРИТИЧЕСКИЕ ФЛАГИ ДЛЯ МАКСИМАЛЬНОЙ ПРОИЗВОДИТЕЛЬНОСТИ
+[profile.release.build-override]
+opt-level = 3

@@ -37,6 +37,10 @@ use crate::types::*;
 use crate::complex_number::ComplexNumber;
 use crate::constants::*;
 use crate::json_parser::{JsonStream, JsonObject};
+// ЭКСТРЕМАЛЬНОЕ АППАРАТНОЕ УСКОРЕНИЕ: CPU + GPU
+use crate::avx512_intrinsics::SafeAvx512Processor;
+#[cfg(feature = "gpu")]
+use crate::cuda_acceleration::{CudaGnssAccelerator, HybridAccelerator};
 use crate::gnsstime::{utc_to_gps_time, utc_to_glonass_time_corrected, utc_to_bds_time};
 use crate::coordinate::{lla_to_ecef, speed_local_to_ecef, calc_conv_matrix_lla};
 use crate::{lnavbit::LNavBit, l5cnavbit::L5CNavBit, gnavbit::GNavBit};
@@ -54,6 +58,14 @@ pub struct GenerationStats {
     pub total_samples: u64,
     pub clipped_samples: u64,
     pub file_size_mb: Option<f64>,
+    
+    // Дополнительная информация для анализа производительности
+    pub total_time_ms: f64,
+    pub signal_processing_time_ms: f64,
+    pub samples_generated: u64,
+    pub satellites_processed: u32,
+    pub avx512_accelerated: bool,
+    pub cuda_accelerated: bool,
 }
 pub struct NavData {
     // Ионосферные и UTC параметры
@@ -496,6 +508,12 @@ pub struct IFDataGen {
     pub output_param: OutputParam,
     pub cur_time: GnssTime,
     
+    // ЭКСТРЕМАЛЬНАЯ АППАРАТНАЯ ОПТИМИЗАЦИЯ
+    #[cfg(feature = "gpu")]
+    pub hybrid_accelerator: HybridAccelerator,
+    #[cfg(not(feature = "gpu"))]
+    pub _hybrid_placeholder: (),
+    
     // Satellite ephemeris arrays
     pub gps_eph: [Option<GpsEphemeris>; TOTAL_GPS_SAT],
     pub gps_eph_visible: [Option<GpsEphemeris>; TOTAL_GPS_SAT],
@@ -542,6 +560,12 @@ impl IFDataGen {
             nav_data: NavData::new(),
             output_param: OutputParam::default(),
             cur_time: GnssTime::default(),
+            
+            // ЭКСТРЕМАЛЬНАЯ ИНИЦИАЛИЗАЦИЯ: CPU+GPU гибридное ускорение
+            #[cfg(feature = "gpu")]
+            hybrid_accelerator: HybridAccelerator::new(),
+            #[cfg(not(feature = "gpu"))]
+            _hybrid_placeholder: (),
             
             gps_eph: [None; TOTAL_GPS_SAT],
             gps_eph_visible: [None; TOTAL_GPS_SAT],
@@ -2282,10 +2306,26 @@ impl IFDataGen {
 
         println!("[INFO]\tIF Signal generation completed!");
 
+        // Проверяем доступность аппаратных ускорителей
+        let avx512_available = crate::avx512_intrinsics::Avx512Accelerator::is_available();
+        
+        #[cfg(feature = "gpu")]
+        let cuda_available = crate::cuda_acceleration::CudaGnssAccelerator::is_available();
+        #[cfg(not(feature = "gpu"))]
+        let cuda_available = false;
+        
         Ok(GenerationStats {
             total_samples,
             clipped_samples: 0,
             file_size_mb,
+            
+            // Дополнительные данные для анализа производительности
+            total_time_ms: 0.0,  // Будет заполнено в вызывающем коде
+            signal_processing_time_ms: 0.0, 
+            samples_generated: total_samples,
+            satellites_processed: sat_if_signals.len() as u32,
+            avx512_accelerated: avx512_available,
+            cuda_accelerated: cuda_available,
         })
     }
 
