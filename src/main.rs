@@ -54,15 +54,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("[INFO]\tLoading JSON configuration: {}", config_file);
     
-    // Инициализация компонентов
-    let start_time = Instant::now();
+    // ============= ДЕТАЛЬНЫЕ ИЗМЕРЕНИЯ ПРОИЗВОДИТЕЛЬНОСТИ =============
+    let total_start = Instant::now();
+    println!("[TIMING]\tStarting performance measurement...");
     
-    // Создание основных компонентов системы
+    // ЭТАП 1: Создание компонентов
+    let init_start = Instant::now();
     let mut if_data_gen = IFDataGen::new();
+    let init_duration = init_start.elapsed();
+    println!("[TIMING]\tComponent initialization: {:.3}s", init_duration.as_secs_f64());
     
-    // Загрузка конфигурации
+    // ЭТАП 2: Загрузка конфигурации
+    let config_start = Instant::now();
     match if_data_gen.load_config(config_file) {
         Ok(_) => {
+            let config_duration = config_start.elapsed();
+            println!("[TIMING]\tConfiguration loading: {:.3}s", config_duration.as_secs_f64());
             println!("[INFO]\tConfiguration loaded successfully");
         }
         Err(e) => {
@@ -71,15 +78,40 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     
-    // Инициализация системы
+    // ЭТАП 3: Инициализация системы (включая парсинг RINEX)
+    let system_init_start = Instant::now();
     if_data_gen.initialize()?;
+    let system_init_duration = system_init_start.elapsed();
+    println!("[TIMING]\tSystem initialization (RINEX parsing): {:.3}s", system_init_duration.as_secs_f64());
     println!("[INFO]\tSystem initialized");
     
-    // Запуск генерации данных
+    // ЭТАП 4: Генерация данных (основная работа)
     println!("[INFO]\tStarting IF data generation...");
+    let generation_start = Instant::now();
     let result = if_data_gen.generate_data();
+    let generation_duration = generation_start.elapsed();
     
-    let duration = start_time.elapsed();
+    let total_duration = total_start.elapsed();
+    
+    // ============= АНАЛИЗ ВРЕМЕНИ ПО ЭТАПАМ =============
+    println!("================================================================================");
+    println!("                          DETAILED TIMING BREAKDOWN");
+    println!("================================================================================");
+    println!("[TIMING]\tComponent init:     {:.3}s ({:.1}%)", 
+        init_duration.as_secs_f64(),
+        init_duration.as_secs_f64() / total_duration.as_secs_f64() * 100.0);
+    println!("[TIMING]\tConfig loading:     {:.3}s ({:.1}%)", 
+        config_start.elapsed().as_secs_f64(),
+        config_start.elapsed().as_secs_f64() / total_duration.as_secs_f64() * 100.0);
+    println!("[TIMING]\tSystem init/RINEX:  {:.3}s ({:.1}%)", 
+        system_init_duration.as_secs_f64(),
+        system_init_duration.as_secs_f64() / total_duration.as_secs_f64() * 100.0);
+    println!("[TIMING]\tSignal generation:  {:.3}s ({:.1}%)", 
+        generation_duration.as_secs_f64(),
+        generation_duration.as_secs_f64() / total_duration.as_secs_f64() * 100.0);
+    println!("[TIMING]\tTotal time:         {:.3}s (100.0%)", total_duration.as_secs_f64());
+    
+    let duration = total_duration;
     
     // Обработка результатов
     match result {

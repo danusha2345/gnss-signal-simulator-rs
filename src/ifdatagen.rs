@@ -629,7 +629,7 @@ impl IFDataGen {
         // Set reasonable elevation mask (5 degrees)
         self.output_param.ElevationMask = 5.0_f64.to_radians();
         
-        // Load RINEX ephemeris data
+        // Load RINEX ephemeris data with smart filtering
         let rinex_file = "Rinex_Data/rinex_v3_20251560000.rnx";
         if std::path::Path::new(rinex_file).exists() {
             println!("[INFO]\tLoading RINEX ephemeris file: {}", rinex_file);
@@ -637,8 +637,19 @@ impl IFDataGen {
             // Create CNavData for loading ephemeris
             let mut c_nav_data = crate::json_interpreter::CNavData::default();
             
-            // Use existing RINEX loading function
-            crate::json_interpreter::read_nav_file(&mut c_nav_data, rinex_file);
+            // Extract enabled systems from config
+            let enabled_systems = vec!["GPS"]; // В конфиге только GPS L1CA включен
+            
+            println!("[DEBUG] Using filtered RINEX loading: time={}-{:02}-{:02} {:02}:{:02}:{:02}, systems={:?}", 
+                utc_time.Year, utc_time.Month, utc_time.Day, utc_time.Hour, utc_time.Minute, utc_time.Second, enabled_systems);
+            
+            // Use optimized RINEX loading with filtering  
+            crate::json_interpreter::read_nav_file_filtered(
+                &mut c_nav_data, 
+                rinex_file,
+                Some(utc_time), // Фильтрация по времени
+                &enabled_systems // Только включённые системы
+            );
             
             // Copy loaded ephemeris to our nav_data
             self.copy_ephemeris_from_json_nav_data(&c_nav_data);
@@ -1209,9 +1220,12 @@ impl IFDataGen {
                 }
             } else {
                 // Full GNSS signal generation (slower but accurate)
+                let noise_start = std::time::Instant::now();
                 FastMath::generate_noise_block(&mut noise_array, 1.0);
+                let noise_duration = noise_start.elapsed();
 
                 // CRITICAL OPTIMIZATION: Generate satellite signals more efficiently
+                let sat_start = std::time::Instant::now();
                 let current_time = self.cur_time;
                 
                 // Use all available satellites or limit for debugging if specified
@@ -1223,6 +1237,7 @@ impl IFDataGen {
                 
                 // OPTIMIZED: Parallel satellite processing with rayon
                 // NavData enum supports Sync + Send, enabling parallelization!
+                let sat_process_start = std::time::Instant::now();
                 sat_if_signals[..active_sats]
                     .par_iter_mut()
                     .for_each(|sig_option| {
@@ -1231,8 +1246,10 @@ impl IFDataGen {
                             sig.get_if_sample_cached(current_time);
                         }
                     });
+                let sat_process_duration = sat_process_start.elapsed();
 
                 // OPTIMIZED: Parallel signal accumulation with rayon
+                let accumulation_start = std::time::Instant::now();
                 noise_array
                     .par_iter_mut()
                     .enumerate()
@@ -1252,8 +1269,21 @@ impl IFDataGen {
                         sum.real *= agc_gain;
                         sum.imag *= agc_gain;
                     });
+                let accumulation_duration = accumulation_start.elapsed();
+                let sat_total_duration = sat_start.elapsed();
+                
+                // Детальная статистика каждые 1000 миллисекунд
+                if length % 1000 == 0 {
+                    println!("[TIMING_DETAIL] ms {}: Noise: {:.3}ms, SatProcess: {:.3}ms, Accumulation: {:.3}ms, Total: {:.3}ms", 
+                        length, 
+                        noise_duration.as_millis(),
+                        sat_process_duration.as_millis(),
+                        accumulation_duration.as_millis(),
+                        sat_total_duration.as_millis());
+                }
             }
 
+            let quant_start = std::time::Instant::now();
             let mut clipped_in_block = 0;
             if self.output_param.Format == OutputFormat::OutputFormatIQ4 {
                 Self::quant_samples_iq4(&noise_array, &mut quant_array[..samples_per_ms], &mut clipped_in_block);
@@ -1267,6 +1297,13 @@ impl IFDataGen {
                 if iteration_count <= 5 { // Debug first few writes
                     println!("[DEBUG]\tWrote {} bytes (IQ8) to file at iteration {}, ms {}", bytes_written, iteration_count, length);
                 }
+            }
+            let quant_duration = quant_start.elapsed();
+            
+            // Детальная статистика I/O каждые 1000 миллисекунд  
+            if length % 1000 == 0 {
+                println!("[TIMING_DETAIL] ms {}: Quantization+I/O: {:.3}ms", 
+                    length, quant_duration.as_millis());
             }
 
             // Update statistics

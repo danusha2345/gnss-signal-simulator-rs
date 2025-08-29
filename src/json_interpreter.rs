@@ -23,6 +23,7 @@ use std::os::raw::c_char;
 use crate::trajectory::CTrajectory;
 use crate::types::*;
 use crate::powercontrol::SignalPower;
+use crate::utc_to_gps_time;
 use crate::{JsonObject, CPowerControl};
 use crate::{lla_to_ecef, gps_time_to_utc, bds_time_to_utc, glonass_time_to_utc, speed_ecef_to_local, ecef_to_lla};
 use crate::types::{GpsEphemeris, GlonassEphemeris, GpsAlmanac, GlonassAlmanac, UtcParam};
@@ -624,9 +625,14 @@ pub fn read_nav_file_limited(nav_data: &mut CNavData, filename: &str, max_per_sy
              gps_count, glonass_count, beidou_count, galileo_count);
 }
 
-/// Читает навигационные данные из RINEX файла
+/// Читает навигационные данные из RINEX файла с фильтрацией
 /// Поддерживает RINEX 2.x и 3.x форматы для GPS, ГЛОНАСС, BeiDou, Galileo
-pub fn read_nav_file(nav_data: &mut CNavData, filename: &str) {
+pub fn read_nav_file_filtered(
+    nav_data: &mut CNavData, 
+    filename: &str,
+    target_time: Option<UtcTime>,
+    enabled_systems: &[&str]
+) {
     use std::fs::File;
     use std::io::{BufRead, BufReader};
     
@@ -643,7 +649,32 @@ pub fn read_nav_file(nav_data: &mut CNavData, filename: &str) {
     let mut lines = reader.lines();
     let mut header_complete = false;
     
-    // Простая реализация RINEX парсера
+    // Создаём фильтр систем для быстрой проверки
+    let gps_enabled = enabled_systems.contains(&"GPS");
+    let glonass_enabled = enabled_systems.contains(&"GLONASS"); 
+    let beidou_enabled = enabled_systems.contains(&"BeiDou");
+    let galileo_enabled = enabled_systems.contains(&"Galileo");
+    
+    println!("[INFO] RINEX filtering: GPS={}, GLONASS={}, BeiDou={}, Galileo={}", 
+        gps_enabled, glonass_enabled, beidou_enabled, galileo_enabled);
+    
+    if !gps_enabled && !glonass_enabled && !beidou_enabled && !galileo_enabled {
+        println!("[WARN] No GNSS systems enabled - skipping RINEX parsing");
+        return;
+    }
+    
+    // Временные рамки для фильтрации (±2 часа от целевого времени)
+    let time_window_hours = 2.0;
+    
+    // Счетчики для статистики фильтрации
+    let mut gps_parsed = 0;
+    let mut gps_accepted = 0;
+    let mut other_skipped = 0;
+    
+    // Кэш лучших эфемерид по SVID для умной фильтрации (u8 -> i32)
+    let mut best_ephemeris: std::collections::HashMap<u8, (GpsEphemeris, f64)> = std::collections::HashMap::new();
+    
+    // Оптимизированный RINEX парсер с фильтрацией
     while let Some(Ok(line)) = lines.next() {
         // Пропустить заголовок до "END OF HEADER"
         if !header_complete {
@@ -683,44 +714,73 @@ pub fn read_nav_file(nav_data: &mut CNavData, filename: &str) {
         
         let system_char = line.chars().next().unwrap_or(' ');
         match system_char {
-            'G' | ' ' => {
-                // GPS эфемериды
-                println!("[DEBUG] Trying to parse GPS ephemeris: {}", &line[..std::cmp::min(20, line.len())]);
+            'G' | ' ' if gps_enabled => {
+                // GPS эфемериды (только если GPS включена в конфиге)
                 if let Some(eph) = parse_gps_ephemeris(&line, &mut lines) {
-                    nav_data.add_gps_ephemeris(eph);
-                } else {
-                    println!("[DEBUG] Failed to parse GPS ephemeris");
+                    gps_parsed += 1;
+                    
+                    // Умная фильтрация: оставляем только лучшую эфемериду для каждого SVID
+                    if let Some(target) = target_time {
+                        if is_ephemeris_within_time_window(&eph, &target, time_window_hours) {
+                            let target_gps = utc_to_gps_time(target.clone(), false);
+                            let target_seconds = (target_gps.Week as f64) * 604800.0 + (target_gps.MilliSeconds as f64) / 1000.0;
+                            let eph_seconds = (eph.week as f64) * 604800.0 + (eph.toe as f64);
+                            let time_diff = (eph_seconds - target_seconds).abs();
+                            
+                            // Проверяем есть ли уже эфемерида для этого SVID
+                            match best_ephemeris.get(&eph.svid) {
+                                Some((_, existing_diff)) if time_diff < *existing_diff => {
+                                    // Новая эфемерида ближе по времени - заменяем
+                                    best_ephemeris.insert(eph.svid, (eph, time_diff));
+                                }
+                                None => {
+                                    // Первая эфемерида для этого SVID
+                                    best_ephemeris.insert(eph.svid, (eph, time_diff));
+                                }
+                                _ => {
+                                    // Существующая эфемерида лучше - игнорируем новую
+                                }
+                            }
+                        }
+                    } else {
+                        // Без временной фильтрации просто берем первую
+                        if !best_ephemeris.contains_key(&eph.svid) {
+                            best_ephemeris.insert(eph.svid, (eph, 0.0));
+                        }
+                    }
+                    
+                    // Ранний выход: если нашли эфемериды для 30+ SVID, хватит
+                    if best_ephemeris.len() >= 30 {
+                        println!("[INFO] Early exit: found {} GPS ephemeris, stopping RINEX parsing", best_ephemeris.len());
+                        break;
+                    }
                 }
             },
-            'R' => {
-                // ГЛОНАСС эфемериды
-                println!("[DEBUG] Trying to parse GLONASS ephemeris: {}", &line[..std::cmp::min(20, line.len())]);
+            'R' if glonass_enabled => {
+                // ГЛОНАСС эфемериды (только если GLONASS включена)
                 if let Some(eph) = parse_glonass_ephemeris_correct(&line, &mut lines) {
                     nav_data.add_glonass_ephemeris(eph);
-                } else {
-                    println!("[DEBUG] Failed to parse GLONASS ephemeris");
                 }
             },
-            'C' => {
-                // BeiDou эфемериды (используем GPS формат)
-                println!("[DEBUG] Trying to parse BeiDou ephemeris: {}", &line[..std::cmp::min(20, line.len())]);
+            'C' if beidou_enabled => {
+                // BeiDou эфемериды (только если BeiDou включена)
                 if let Some(mut eph) = parse_gps_ephemeris(&line, &mut lines) {
                     // Конвертируем в BeiDou формат
                     eph.toe = eph.toe - 14; // BDT отстает от GPS времени на 14 секунд
                     nav_data.add_beidou_ephemeris(eph);
-                } else {
-                    println!("[DEBUG] Failed to parse BeiDou ephemeris");
                 }
             },
-            'E' => {
-                // Galileo эфемериды (используем GPS формат)
-                println!("[DEBUG] Trying to parse Galileo ephemeris: {}", &line[..std::cmp::min(20, line.len())]);
+            'E' if galileo_enabled => {
+                // Galileo эфемериды (только если Galileo включена)
                 if let Some(eph) = parse_gps_ephemeris(&line, &mut lines) {
                     // Конвертируем в Galileo формат (GST синхронизован с GPS)
                     nav_data.add_galileo_ephemeris(eph);
-                } else {
-                    println!("[DEBUG] Failed to parse Galileo ephemeris");
                 }
+            },
+            'G' | ' ' | 'R' | 'C' | 'E' => {
+                // Система отключена в конфиге - пропускаем эфемериду
+                other_skipped += 1;
+                skip_ephemeris_lines(&mut lines);
             },
             _ => {
                 // Неизвестный тип, пропускаем
@@ -729,7 +789,54 @@ pub fn read_nav_file(nav_data: &mut CNavData, filename: &str) {
         }
     }
     
-    println!("[INFO]\tNavigation file loaded successfully: {}", filename);
+    // Добавляем лучшие эфемериды в nav_data
+    for (svid, (eph, _time_diff)) in best_ephemeris {
+        nav_data.add_gps_ephemeris(eph);
+        gps_accepted += 1;
+    }
+    
+    println!("[INFO]\tNavigation file loaded successfully (filtered): {}", filename);
+    println!("[INFO]\tSmart filtering results: GPS parsed={}, accepted={} unique SVIDs, other systems skipped={}", 
+        gps_parsed, gps_accepted, other_skipped);
+    
+    if gps_enabled && gps_accepted == 0 {
+        println!("[WARN]\tNo GPS ephemeris accepted after filtering - check time window");
+    }
+}
+
+/// Оригинальная функция для обратной совместимости
+pub fn read_nav_file(nav_data: &mut CNavData, filename: &str) {
+    // Загружаем все системы без фильтрации (старое поведение)
+    read_nav_file_filtered(nav_data, filename, None, &["GPS", "GLONASS", "BeiDou", "Galileo"]);
+}
+
+/// Проверяет попадает ли эфемерида в временное окно
+fn is_ephemeris_within_time_window(eph: &GpsEphemeris, target_time: &UtcTime, window_hours: f64) -> bool {
+    // Простая проверка по toe (time of ephemeris) в секундах GPS недели
+    let target_gps = utc_to_gps_time(*target_time, false);
+    let target_seconds = (target_gps.Week as f64) * 604800.0 + (target_gps.MilliSeconds as f64) / 1000.0;
+    let eph_seconds = (eph.week as f64) * 604800.0 + (eph.toe as f64);
+    
+    let time_diff_hours = (eph_seconds - target_seconds).abs() / 3600.0;
+    let within_window = time_diff_hours <= window_hours;
+    
+    // Отладочная информация для первых нескольких эфемерид
+    if !within_window {
+        println!("[DEBUG_TIME] SVID {}: eph_time={:.1}h, target_time={:.1}h, diff={:.1}h > window={:.1}h - REJECTED",
+            eph.svid, eph_seconds/3600.0, target_seconds/3600.0, time_diff_hours, window_hours);
+    }
+    
+    within_window
+}
+
+/// Пропускает строки эфемериды (7 строк для GPS/BeiDou/Galileo, 3 для GLONASS)
+fn skip_ephemeris_lines<T: Iterator<Item = Result<String, std::io::Error>>>(lines: &mut T) {
+    // Для универсальности пропускаем максимально 7 строк
+    for _ in 0..7 {
+        if lines.next().is_none() {
+            break;
+        }
+    }
 }
 
 /// Читает альманахи спутников из файла
@@ -1650,7 +1757,6 @@ where
     eph.valid = 1;
     eph.flag = 1;
     
-    println!("[DEBUG] Successfully parsed GPS ephemeris for SVID {}", eph.svid);
     Some(eph)
 }
 

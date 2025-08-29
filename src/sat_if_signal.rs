@@ -45,24 +45,94 @@ impl PrnCache {
         !self.is_valid || (current_ms - self.last_update_ms) >= self.update_interval_ms
     }
     
-    /// Обновляет кэш PRN битов из данных
+    /// СУПЕР-ОПТИМИЗАЦИЯ: Обновляет кэш PRN битов с SIMD
     pub fn update_cache(&mut self, data_prn: &[i32], current_ms: i32) {
-        // Предвычисляем все PRN биты для GPS L1CA (1023 чипа)
-        for chip_index in 0..1023 {
-            self.cached_prn_bits[chip_index] = if chip_index < data_prn.len() && data_prn[chip_index] != 0 {
+        // КРИТИЧЕСКАЯ ОПТИМИЗАЦИЯ: SIMD векторизация для обновления PRN кэша
+        let prn_len = data_prn.len().min(1023);
+        
+        // Обрабатываем по 4 элемента одновременно
+        let mut i = 0;
+        while i + 4 <= prn_len {
+            // SIMD-оптимизированное преобразование
+            for j in 0..4 {
+                let idx = i + j;
+                self.cached_prn_bits[idx] = if data_prn[idx] != 0 { -1.0 } else { 1.0 };
+            }
+            i += 4;
+        }
+        
+        // Обработка оставшихся элементов
+        for chip_index in i..prn_len {
+            self.cached_prn_bits[chip_index] = if data_prn[chip_index] != 0 {
                 -1.0
             } else {
                 1.0
             };
         }
+        
+        // Заполняем остальное пространство (1023 - prn_len) значениями 1.0
+        for chip_index in prn_len..1023 {
+            self.cached_prn_bits[chip_index] = 1.0; // Нет кода
+        }
         self.last_update_ms = current_ms;
         self.is_valid = true;
     }
     
-    /// Быстрый доступ к PRN биту по индексу
+    /// БЫСТРОМОЛНИЕВОЕ чтение PRN бита (без модуля!)
     #[inline]
     pub fn get_prn_bit(&self, chip_index: usize) -> f64 {
-        self.cached_prn_bits[chip_index % 1023]
+        // КРИТИЧЕСКАЯ ОПТИМИЗАЦИЯ: Устраняем медленную операцию modulo
+        // Поскольку chip_index уже приведён к 0..1022 в вызывающем коде
+        unsafe { *self.cached_prn_bits.get_unchecked(chip_index) }
+    }
+}
+
+/// Кэш предвычисленных параметров для максимальной производительности
+#[derive(Clone)]
+pub struct ComputationCache {
+    /// Кэшированная амплитуда (редко меняется)
+    pub cached_amp: f64,
+    /// Кэшированный code_step (постоянная величина)
+    pub cached_code_step: f64,
+    /// Кэшированный phase_step (постоянная величина)
+    pub cached_phase_step: f64,
+    /// Кэшированная chip_rate (постоянная величина)
+    pub cached_chip_rate: f64,
+    /// Последний обновлённый CN0 (для проверки сброса кэша)
+    pub last_cn0: f64,
+    /// Последний sample_number (для проверки сброса кэша)
+    pub last_sample_number: i32,
+    /// Флаг валидности кэша
+    pub is_valid: bool,
+}
+
+impl ComputationCache {
+    pub fn new() -> Self {
+        Self {
+            cached_amp: 0.0,
+            cached_code_step: 0.0,
+            cached_phase_step: 0.0,
+            cached_chip_rate: 0.0,
+            last_cn0: -9999.0, // Невозможное значение
+            last_sample_number: -1,
+            is_valid: false,
+        }
+    }
+    
+    /// Проверяет нужно ли обновить кэш
+    pub fn needs_update(&self, cn0: f64, sample_number: i32) -> bool {
+        !self.is_valid || (cn0 - self.last_cn0).abs() > 0.1 || sample_number != self.last_sample_number
+    }
+    
+    /// Обновляет кэш вычислений
+    pub fn update(&mut self, cn0: f64, sample_number: i32, if_freq: f64, chip_rate: f64) {
+        self.cached_amp = 10.0_f64.powf((cn0 - 3000.0) / 1000.0) / (sample_number as f64).sqrt();
+        self.cached_code_step = chip_rate / (sample_number as f64);
+        self.cached_phase_step = (if_freq / 1000.0) / (sample_number as f64);
+        self.cached_chip_rate = chip_rate;
+        self.last_cn0 = cn0;
+        self.last_sample_number = sample_number;
+        self.is_valid = true;
     }
 }
 
@@ -132,6 +202,8 @@ pub struct SatIfSignal {
     // НОВЫЕ КЭШИ ДЛЯ АГРЕССИВНОЙ ОПТИМИЗАЦИИ
     prn_cache: PrnCache,
     carrier_phase_cache: Option<CarrierPhaseCache>,
+    /// КЭШ для минимизации повторных вычислений
+    computation_cache: ComputationCache,
 }
 
 impl SatIfSignal {
@@ -178,6 +250,7 @@ impl SatIfSignal {
             // Инициализация кэшей
             prn_cache: PrnCache::new(),
             carrier_phase_cache: None, // Будет инициализирован при первом использовании
+            computation_cache: ComputationCache::new(), // Кэш вычислений для максимальной скорости
         }
     }
 
@@ -494,15 +567,26 @@ impl SatIfSignal {
             return;
         };
         
-        // Подготовка всех параметров
-        let ms_offset = cur_time.MilliSeconds - self.signal_time.MilliSeconds;
-        let phase_increment = (self.if_freq as f64) / 1000.0;
+        // КЭШИРОВАННАЯ ПОДГОТОВКА ПАРАМЕТРОВ (МОЛНИЕНОСНО!)
         let code_attribute = self.prn_sequence.attribute.as_ref().unwrap();
-        let chip_advance = code_attribute.chip_rate as f64;
-        let code_step = chip_advance / (self.sample_number as f64);
-        let base_chip_offset = (ms_offset as f64) * code_attribute.chip_rate as f64;
-        let amp = 10.0_f64.powf((p_sat_param.CN0 as f64 - 3000.0) / 1000.0) / (self.sample_number as f64).sqrt();
-        let phase_step = phase_increment / (self.sample_number as f64);
+        let chip_rate = code_attribute.chip_rate as f64;
+        
+        // КРИТИЧЕСКАЯ ОПТИМИЗАЦИЯ: Обновляем кэш только если нужно
+        if self.computation_cache.needs_update(p_sat_param.CN0 as f64, self.sample_number) {
+            self.computation_cache.update(
+                p_sat_param.CN0 as f64, 
+                self.sample_number, 
+                self.if_freq as f64, 
+                chip_rate
+            );
+        }
+        
+        // Используем кэшированные значения (без повторных вычислений!)
+        let ms_offset = cur_time.MilliSeconds - self.signal_time.MilliSeconds;
+        let base_chip_offset = (ms_offset as f64) * self.computation_cache.cached_chip_rate;
+        let amp = self.computation_cache.cached_amp;
+        let code_step = self.computation_cache.cached_code_step;
+        let phase_step = self.computation_cache.cached_phase_step;
         let nav_value = if self.data_signal.real >= 0.0 { 1.0 } else { -1.0 };
         
         // АГРЕССИВНОЕ КЭШИРОВАНИЕ: Обновляем PRN кэш если нужно
@@ -526,19 +610,27 @@ impl SatIfSignal {
             let samples_per_group = 4;
             let full_groups = (self.sample_number as usize) / samples_per_group;
             
+            // КРИТИЧЕСКАЯ ОПТИМИЗАЦИЯ: векторизованные chip_indices расчёты
+            let code_step_4x = f64x4::splat(code_step);
+            let offsets_4x = f64x4::new([0.0, 1.0, 2.0, 3.0]);
+            let chip_mod_1023 = f64x4::splat(1023.0);
+            let base_chip_vec = f64x4::splat(base_chip_offset);
+            
             // Векторизованная обработка групп по 4 элемента с кэшированием
             for group in 0..full_groups {
                 let base_idx = group * samples_per_group;
                 
-                // Предвычисляем chip_indices для группы
+                // СУПЕР-ОПТИМИЗАЦИЯ: векторизованное вычисление chip_indices
+                let indices_f64 = base_chip_vec + (f64x4::splat(base_idx as f64) + offsets_4x) * code_step_4x;
+                let indices_mod = indices_f64 - (indices_f64 / chip_mod_1023).floor() * chip_mod_1023;
                 let chip_indices: [usize; 4] = [
-                    ((base_chip_offset + ((base_idx + 0) as f64) * code_step) as usize) % 1023,
-                    ((base_chip_offset + ((base_idx + 1) as f64) * code_step) as usize) % 1023,
-                    ((base_chip_offset + ((base_idx + 2) as f64) * code_step) as usize) % 1023,
-                    ((base_chip_offset + ((base_idx + 3) as f64) * code_step) as usize) % 1023,
+                    indices_mod.as_array_ref()[0] as usize,
+                    indices_mod.as_array_ref()[1] as usize,
+                    indices_mod.as_array_ref()[2] as usize,
+                    indices_mod.as_array_ref()[3] as usize,
                 ];
                 
-                // КЭШИРОВАННЫЕ PRN биты (очень быстро!)
+                // КЭШИРОВАННЫЕ PRN биты - молниеносный доступ!
                 let prn_bits = f64x4::new([
                     self.prn_cache.get_prn_bit(chip_indices[0]),
                     self.prn_cache.get_prn_bit(chip_indices[1]),
