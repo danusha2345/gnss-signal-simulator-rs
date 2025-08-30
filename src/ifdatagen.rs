@@ -1434,8 +1434,15 @@ impl IFDataGen {
         let active_satellites = sat_if_signals.iter().filter(|s| s.is_some()).count();
         println!("🛰️  Активных спутников: {}", active_satellites);
         
+        // ========== ОПТИМИЗИРОВАННАЯ AGC СИСТЕМА ==========
+        // Поскольку амплитуды спутников уже безопасны (0.05), AGC работает как тонкая настройка
+        let mut agc_gain = 1.0; // Начинаем с единичного усиления, спутники уже имеют безопасные амплитуды
         let mut total_clipped_samples = 0i64;
         let mut total_samples_written = 0i64;
+        let mut agc_samples_for_stats = 0i64; // Отдельные счетчики для AGC
+        let mut agc_clipped_for_stats = 0i64;
+        
+        println!("🎚️  AGC: Начальный коэффициент: {:.3} (спутники имеют безопасные амплитуды 0.05)", agc_gain);
         
         // ОСНОВНОЙ ЦИКЛ: Обработка по блокам
         let num_blocks = (total_duration_ms + BLOCK_SIZE_MS - 1) / BLOCK_SIZE_MS;
@@ -1475,13 +1482,16 @@ impl IFDataGen {
             // Буфер для накопления данных блока (не весь файл!)
             let mut block_signal = vec![ComplexNumber::from_parts(0.0, 0.0); block_samples];
             
-            // Накапливаем сигналы всех спутников для этого блока
+            // Накапливаем сигналы всех спутников для этого блока с применением AGC
             for sample_idx in 0..block_samples {
                 for sat_option in sat_if_signals.iter() {
                     if let Some(ref satellite) = sat_option {
                         if let Some(block_data) = &satellite.block_data {
                             if sample_idx < block_data.len() {
-                                let sat_sample = block_data[sample_idx];
+                                let mut sat_sample = block_data[sample_idx];
+                                // ПРИМЕНЯЕМ AGC К КАЖДОМУ СПУТНИКУ ПЕРЕД СУММИРОВАНИЕМ
+                                sat_sample.real *= agc_gain;
+                                sat_sample.imag *= agc_gain;
                                 block_signal[sample_idx].real += sat_sample.real;
                                 block_signal[sample_idx].imag += sat_sample.imag;
                             }
@@ -1513,6 +1523,31 @@ impl IFDataGen {
             total_clipped_samples += clipped_in_block as i64;
             total_samples_written += block_samples as i64 * 2; // I + Q
             
+            // Обновляем счетчики AGC
+            agc_clipped_for_stats += clipped_in_block as i64;
+            agc_samples_for_stats += block_samples as i64 * 2; // I + Q
+            
+            // ========== АДАПТИВНЫЙ AGC КАЖДЫЕ 100ms ==========
+            if (block_start_ms % 100) == 0 && block_start_ms > 0 {
+                let agc_clipping_rate = agc_clipped_for_stats as f64 / agc_samples_for_stats as f64;
+                if agc_clipping_rate > 0.01 {
+                    // Если клиппинг больше 1%
+                    agc_gain *= 0.95; // Уменьшаем усиление на 5%
+                    println!("[AGC] 🎚️  Клиппинг {:.2}%, уменьшаем усиление до {:.3}", agc_clipping_rate * 100.0, agc_gain);
+                    agc_clipped_for_stats = 0; // Сбрасываем статистику
+                    agc_samples_for_stats = 0;
+                } else if agc_clipping_rate < 0.001 && agc_gain < 1.0 {
+                    // Если клиппинг меньше 0.1%
+                    agc_gain *= 1.02; // Увеличиваем усиление на 2%
+                    if agc_gain > 1.0 {
+                        agc_gain = 1.0;
+                    }
+                    println!("[AGC] 🎚️  Клиппинг {:.2}%, увеличиваем усиление до {:.3}", agc_clipping_rate * 100.0, agc_gain);
+                    agc_clipped_for_stats = 0; // Сбрасываем статистику
+                    agc_samples_for_stats = 0;
+                }
+            }
+            
             let write_duration = write_start.elapsed();
             println!("💾 Блок {} записан: {} MB за {:.1}ms", 
                      block_idx + 1, iq8_data.len() as f64 / (1024.0 * 1024.0), 
@@ -1532,6 +1567,12 @@ impl IFDataGen {
         if total_clipped_samples > 0 {
             let clip_rate = total_clipped_samples as f64 / (total_samples_written / 2) as f64 * 100.0;
             println!("⚠️  Клиппинг: {} сэмплов ({:.2}%)", total_clipped_samples, clip_rate);
+        }
+        
+        // ========== ФИНАЛЬНАЯ AGC СТАТИСТИКА ==========
+        println!("🎚️  Финальный AGC коэффициент: {:.3}", agc_gain);
+        if agc_gain < 1.0 {
+            println!("🎚️  AGC компенсировал усиление на {:.1}%", (1.0 - agc_gain) * 100.0);
         }
         
         if_file.flush()?;
