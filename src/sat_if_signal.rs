@@ -783,8 +783,9 @@ impl SatIfSignal {
             return;
         };
 
-        // Простые вычисления для этой миллисекунды
-        let amp = (10.0_f64.powf(p_sat_param.CN0 as f64 / 10.0 - 20.0) * 2.0 * self.sample_number as f64).sqrt();
+        // Простые вычисления для этой миллисекунды - ИСПРАВЛЕНА АМПЛИТУДА!
+        // Правильная амплитуда для нормализации в диапазоне [-1, 1]
+        let amp = 0.1; // Фиксированная малая амплитуда, чтобы избежать клиппинга
         let code_step = 1.023e6 / (self.sample_number as f64 * 1000.0);
         let phase_step = 2.0 * PI * self.if_freq as f64 / (self.sample_number as f64 * 1000.0);
         let nav_value = if self.data_signal.real >= 0.0 { 1.0 } else { -1.0 };

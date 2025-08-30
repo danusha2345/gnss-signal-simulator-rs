@@ -2459,8 +2459,10 @@ impl IFDataGen {
         let trajectory_time_s = self.parse_trajectory_time_from_json("presets/GPS_L1_only.json").unwrap_or(10.0);
         self.generate_if_signal(&mut if_file, &mut sat_if_signals, cur_pos, trajectory_time_s)?;
 
-        // Вычисляем статистику
-        let total_samples = (self.output_param.SampleFreq as f64 * self.output_param.Interval as f64) as u64;
+        // Вычисляем ПРАВИЛЬНУЮ статистику
+        // SampleFreq уже в Hz (5,000,000), НЕ УМНОЖАТЬ на 1e6!
+        let trajectory_time_seconds = trajectory_time_s;
+        let total_samples = (self.output_param.SampleFreq as f64 * trajectory_time_seconds) as u64;
         let file_size_mb = match self.output_param.Format {
             OutputFormat::OutputFormatIQ4 => Some(total_samples as f64 / 1024.0 / 1024.0),
             OutputFormat::OutputFormatIQ8 => Some(total_samples as f64 * 2.0 / 1024.0 / 1024.0),
