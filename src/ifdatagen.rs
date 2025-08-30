@@ -1442,7 +1442,7 @@ impl IFDataGen {
         let mut agc_samples_for_stats = 0i64; // Отдельные счетчики для AGC
         let mut agc_clipped_for_stats = 0i64;
         
-        println!("🎚️  AGC: Начальный коэффициент: {:.3} (спутники имеют безопасные амплитуды 0.05)", agc_gain);
+        println!("🎚️  AGC: Начальный коэффициент: {:.3} (спутники оптимизированы: 0.0667 × 15 ≈ 1.0)", agc_gain);
         
         // ОСНОВНОЙ ЦИКЛ: Обработка по блокам
         let num_blocks = (total_duration_ms + BLOCK_SIZE_MS - 1) / BLOCK_SIZE_MS;
