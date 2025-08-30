@@ -1,6 +1,6 @@
 {
 	"version": 1.0,
-	"description": "BeiDou B1C only - 5 MHz - 180 seconds test",
+	"description": "BeiDou B1C only - 5 MHz ",
 	"time": {
 		"type": "UTC",
 		"year": 2025,
@@ -27,7 +27,7 @@
 		"trajectoryList": [
 			{
 				"type": "Const",
-				"time": 300.0
+				"time": 10.0
 			}
 		]
 	},

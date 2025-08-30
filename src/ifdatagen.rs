@@ -641,8 +641,20 @@ impl IFDataGen {
         let start_pos = LlaPosition::default();
         let start_vel = LocalSpeed::default();
 
-        // For now, skip assign_parameters as it expects JsonObject reference
-        // self.assign_parameters(&object, &mut utc_time, &mut start_pos, &mut start_vel)?;
+        // Парсим JSON используя внешнюю функцию assign_parameters
+        unsafe {
+            crate::json_interpreter::assign_parameters(
+                object_ptr,
+                Some(&mut utc_time),
+                Some(&mut start_pos),
+                Some(&mut start_vel),
+                None, // trajectory
+                None, // nav_data  
+                Some(&mut self.output_param),
+                None, // power_control
+                None  // delay_config
+            );
+        }
 
         // Reset satellite masks to allow all satellites 
         self.output_param.GpsMaskOut = 0;
@@ -2318,10 +2330,7 @@ impl IFDataGen {
                  utc_time.Hour, utc_time.Minute, utc_time.Second);
         println!("[INFO]\t  Duration: {:.1} s", 10.0); // Из JSON пресета
         
-        // Устанавливаем параметры выходного файла из пресета
-        let default_filename = b"generated_files/GPS_L1_only_10s.C8\0";
-        let copy_len = default_filename.len().min(self.output_param.filename.len());
-        self.output_param.filename[..copy_len].copy_from_slice(&default_filename[..copy_len]);
+        // Параметры выходного файла используются из JSON пресета (уже загружены в load_config)
         self.output_param.SampleFreq = 5000000; // 5 MHz as in preset
         self.output_param.CenterFreq = 1575420; // L1 frequency in kHz
         self.output_param.Interval = 10000; // 10 секунд из JSON пресета (в миллисекундах)
