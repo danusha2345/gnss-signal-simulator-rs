@@ -42,3 +42,25 @@ Core types are defined in `src/types.rs` including:
 - JSON parsing capabilities through `src/json_*.rs` modules for configuration input
 
 The project uses minimal dependencies (only `rand` crate) and implements most functionality from scratch for GNSS signal processing.
+
+## Multi-System GNSS Generation
+
+The project now supports simultaneous multi-system signal generation with mathematically correct ephemeris synchronization:
+
+### Supported GNSS Systems
+- **GPS L1CA**: Legacy civilian signal (1575.42 MHz)
+- **BeiDou B1C**: Modern civilian signal (1575.42 MHz) 
+- **Multi-system**: Simultaneous GPS + BeiDou generation
+
+### Unified Epoch Algorithm
+A critical feature ensuring navigational correctness by forcing all satellites to use ephemeris data from the same time epoch (toe). This prevents mathematical inconsistencies that would occur if different satellites used ephemeris from different time periods.
+
+### Available Presets
+- `presets/GPS_L1_only.json` - GPS L1CA only generation
+- `presets/GPS_L1CA_BDS_B1C_dual.json` - Simultaneous GPS + BeiDou generation
+- Other multi-system configurations available
+
+### Performance Features
+- **Parallel Mode**: Enable with `GNSS_PARALLEL_MODE=true` environment variable
+- **High Performance**: Optimized Rayon-based parallel processing 
+- **Unified Output**: All systems generated into single IF data file
