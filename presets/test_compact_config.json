@@ -1,0 +1,68 @@
+{
+	"version": 1.0,
+	"description": "Тест CompactConfig - GPS L1CA + Galileo E1 - 100ms",
+	"time": {
+		"type": "UTC",
+		"year": 2025,
+		"month": 6,
+		"day": 5,
+		"hour": 10,
+		"minute": 5,
+		"second": 30
+	},
+	"trajectory": {
+		"name": "CompactConfig test scenario",
+		"initPosition": {
+			"type": "LLA",
+			"format": "d",
+			"longitude": -114.2847,
+			"latitude": 48.4928,
+			"altitude": 100.0
+		},
+		"initVelocity": {
+			"type": "SCU",
+			"speed": 0,
+			"course": 318.91
+		},
+		"trajectoryList": [
+			{
+				"type": "Const",
+				"time": 0.1
+			}
+		]
+	},
+	"ephemeris": {
+		"type": "RINEX",
+		"name": "Rinex_Data/rinex_v3_20251560000.rnx"
+	},
+	"output": {
+		"type": "IFdata",
+		"format": "IQ8",
+		"sampleFreq": 5.0,
+		"centerFreq": 1575.42,
+		"name": "generated_files/test_compact_config_100ms.C8",
+		"config": {
+			"elevationMask": 5
+		},
+		"systemSelect": [
+			{
+				"system": "GPS",
+				"signal": "L1CA",
+				"enable": true
+			},
+			{
+				"system": "Galileo",
+				"signal": "E1",
+				"enable": true
+			}
+		]
+	},
+	"power": {
+		"noiseFloor": -172,
+		"initPower": {
+			"unit": "dBHz",
+			"value": 45
+		},
+		"elevationAdjust": true
+	}
+}

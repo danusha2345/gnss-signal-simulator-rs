@@ -346,6 +346,7 @@ pub enum OutputFormat {
 #[derive(Debug, Clone)]
 pub struct OutputParam {
     pub filename: [u8; 256],
+    pub config_filename: String, // Путь к файлу конфигурации
     pub Type: OutputType,
     pub Format: OutputFormat,
     pub GpsMaskOut: u32,
@@ -356,13 +357,14 @@ pub struct OutputParam {
     pub Interval: i32,
     pub SampleFreq: i32,
     pub CenterFreq: i32,
-    pub FreqSelect: [u32; 8], // Увеличиваем для поддержки BDS и других систем
+    pub CompactConfig: CompactConfig, // 32-битная конфигурация
 }
 
 impl Default for OutputParam {
     fn default() -> Self {
         Self {
             filename: [0u8; 256],
+            config_filename: String::new(),
             Type: OutputType::default(),
             Format: OutputFormat::default(),
             GpsMaskOut: 0,
@@ -373,7 +375,7 @@ impl Default for OutputParam {
             Interval: 0,
             SampleFreq: 0,
             CenterFreq: 0,
-            FreqSelect: [0; 8],
+            CompactConfig: CompactConfig::default(),
         }
     }
 }
@@ -400,6 +402,103 @@ pub struct SatelliteParam {
     pub Azimuth: f64,
     pub RelativeSpeed: f64,
     pub LosVector: [f64; 3],
+}
+
+// Compact configuration structure - 32-bit approach
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CompactConfig {
+    pub config: u32,
+}
+
+// System parsing bits (0-3)
+pub const PARSE_GPS: u32     = 1 << 0;  // 0x1
+pub const PARSE_BDS: u32     = 1 << 1;  // 0x2
+pub const PARSE_GALILEO: u32 = 1 << 2;  // 0x4
+pub const PARSE_GLONASS: u32 = 1 << 3;  // 0x8
+
+// Signal generation bits (4-31) - mapped from SIGNAL_INDEX + 4
+pub const GEN_L1CA: u32  = 1 << 4;   // GPS L1CA  (SIGNAL_INDEX_L1CA + 4)
+pub const GEN_L1C: u32   = 1 << 5;   // GPS L1C   (SIGNAL_INDEX_L1C + 4)
+pub const GEN_L2C: u32   = 1 << 6;   // GPS L2C   (SIGNAL_INDEX_L2C + 4)
+pub const GEN_L2P: u32   = 1 << 7;   // GPS L2P   (SIGNAL_INDEX_L2P + 4)
+pub const GEN_L5: u32    = 1 << 8;   // GPS L5    (SIGNAL_INDEX_L5 + 4)
+pub const GEN_B1C: u32   = 1 << 12;  // BDS B1C   (SIGNAL_INDEX_B1C + 4)
+pub const GEN_B1I: u32   = 1 << 13;  // BDS B1I   (SIGNAL_INDEX_B1I + 4)
+pub const GEN_B2I: u32   = 1 << 14;  // BDS B2I   (SIGNAL_INDEX_B2I + 4)
+pub const GEN_B3I: u32   = 1 << 15;  // BDS B3I   (SIGNAL_INDEX_B3I + 4)
+pub const GEN_B2A: u32   = 1 << 16;  // BDS B2A   (SIGNAL_INDEX_B2A + 4)
+pub const GEN_B2B: u32   = 1 << 17;  // BDS B2B   (SIGNAL_INDEX_B2B + 4)
+pub const GEN_B2AB: u32  = 1 << 18;  // BDS B2AB  (SIGNAL_INDEX_B2AB + 4)
+pub const GEN_E1: u32    = 1 << 20;  // GAL E1    (SIGNAL_INDEX_E1 + 4)
+pub const GEN_E5A: u32   = 1 << 21;  // GAL E5A   (SIGNAL_INDEX_E5A + 4)
+pub const GEN_E5B: u32   = 1 << 22;  // GAL E5B   (SIGNAL_INDEX_E5B + 4)
+pub const GEN_E6: u32    = 1 << 24;  // GAL E6    (SIGNAL_INDEX_E6 + 4)
+pub const GEN_G1: u32    = 1 << 28;  // GLO G1    (SIGNAL_INDEX_G1 + 4)
+pub const GEN_G2: u32    = 1 << 29;  // GLO G2    (SIGNAL_INDEX_G2 + 4)
+pub const GEN_G3: u32    = 1 << 30;  // GLO G3    (SIGNAL_INDEX_G3 + 4)
+
+impl CompactConfig {
+    pub fn new() -> Self {
+        Self { config: 0 }
+    }
+
+    // Check if system parsing is enabled
+    pub fn should_parse_gps(&self) -> bool {
+        self.config & PARSE_GPS != 0
+    }
+
+    pub fn should_parse_bds(&self) -> bool {
+        self.config & PARSE_BDS != 0
+    }
+
+    pub fn should_parse_galileo(&self) -> bool {
+        self.config & PARSE_GALILEO != 0
+    }
+
+    pub fn should_parse_glonass(&self) -> bool {
+        self.config & PARSE_GLONASS != 0
+    }
+
+    // Check if signal generation is enabled
+    pub fn is_signal_enabled(&self, signal_bit: u32) -> bool {
+        self.config & signal_bit != 0
+    }
+
+    // Enable system parsing
+    pub fn enable_system_parsing(&mut self, system_bit: u32) {
+        self.config |= system_bit;
+    }
+
+    // Enable signal generation
+    pub fn enable_signal(&mut self, signal_bit: u32) {
+        self.config |= signal_bit;
+    }
+
+    // Convert SIGNAL_INDEX to generation bit
+    pub fn signal_index_to_gen_bit(signal_index: usize) -> Option<u32> {
+        match signal_index {
+            0 => Some(GEN_L1CA),   // SIGNAL_INDEX_L1CA
+            1 => Some(GEN_L1C),    // SIGNAL_INDEX_L1C
+            2 => Some(GEN_L2C),    // SIGNAL_INDEX_L2C
+            3 => Some(GEN_L2P),    // SIGNAL_INDEX_L2P
+            4 => Some(GEN_L5),     // SIGNAL_INDEX_L5
+            8 => Some(GEN_B1C),    // SIGNAL_INDEX_B1C
+            9 => Some(GEN_B1I),    // SIGNAL_INDEX_B1I
+            10 => Some(GEN_B2I),   // SIGNAL_INDEX_B2I
+            11 => Some(GEN_B3I),   // SIGNAL_INDEX_B3I
+            12 => Some(GEN_B2A),   // SIGNAL_INDEX_B2A
+            13 => Some(GEN_B2B),   // SIGNAL_INDEX_B2B
+            14 => Some(GEN_B2AB),  // SIGNAL_INDEX_B2AB
+            16 => Some(GEN_E1),    // SIGNAL_INDEX_E1
+            17 => Some(GEN_E5A),   // SIGNAL_INDEX_E5A
+            18 => Some(GEN_E5B),   // SIGNAL_INDEX_E5B
+            20 => Some(GEN_E6),    // SIGNAL_INDEX_E6
+            24 => Some(GEN_G1),    // SIGNAL_INDEX_G1
+            25 => Some(GEN_G2),    // SIGNAL_INDEX_G2
+            26 => Some(GEN_G3),    // SIGNAL_INDEX_G3
+            _ => None,
+        }
+    }
 }
 
 // Type aliases for backwards compatibility

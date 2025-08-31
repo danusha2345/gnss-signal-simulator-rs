@@ -9,7 +9,7 @@
 use crate::ComplexNumber;
 use std::sync::Once;
 use rand::Rng;
-use wide::{f64x4, i32x4, CmpEq};
+use wide::f64x4;
 
 pub struct FastMath;
 

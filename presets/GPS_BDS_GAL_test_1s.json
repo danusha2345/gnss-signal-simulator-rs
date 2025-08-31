@@ -1,0 +1,73 @@
+{
+	"version": 1.0,
+	"description": "Triple system test: GPS L1CA + BeiDou B1C + Galileo E1 - 5 MHz - 1 second",
+	"time": {
+		"type": "UTC",
+		"year": 2025,
+		"month": 6,
+		"day": 5,
+		"hour": 10,
+		"minute": 5,
+		"second": 30
+	},
+	"trajectory": {
+		"name": "GPS + BeiDou + Galileo test",
+		"initPosition": {
+			"type": "LLA",
+			"format": "d",
+			"longitude": -114.2847,
+			"latitude": 48.4928,
+			"altitude": 100.0
+		},
+		"initVelocity": {
+			"type": "SCU",
+			"speed": 0,
+			"course": 318.91
+		},
+		"trajectoryList": [
+			{
+				"type": "Const",
+				"time": 1
+			}
+		]
+	},
+	"ephemeris": {
+		"type": "RINEX",
+		"name": "Rinex_Data/rinex_v3_20251560000.rnx"
+	},
+	"output": {
+		"type": "IFdata",
+		"format": "IQ8",
+		"sampleFreq": 5.0,
+		"centerFreq": 1575.42,
+		"name": "generated_files/GPS_BDS_GAL_test_1s.C8",
+		"config": {
+			"elevationMask": 5
+		},
+		"systemSelect": [
+			{
+				"system": "GPS",
+				"signal": "L1CA",
+				"enable": true
+			},
+			{
+				"system": "BDS",
+				"signal": "B1C",
+				"enable": true
+			},
+			{
+				"system": "Galileo",
+				"signal": "E1",
+				"enable": true
+			}
+		]
+	},
+	"power": {
+		"noiseFloor": -172,
+		"initPower": {
+			"unit": "dBHz",
+			"value": 45
+		},
+		"elevationAdjust": true
+	}
+}

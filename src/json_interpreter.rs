@@ -571,11 +571,9 @@ pub fn read_nav_file_limited(nav_data: &mut CNavData, filename: &str, max_per_sy
             continue;
         }
         
-        // Проверяем лимиты
-        if gps_count >= max_per_system && glonass_count >= max_per_system && 
-           beidou_count >= max_per_system && galileo_count >= max_per_system {
-            break;
-        }
+        // Удаляем раннее завершение - пусть парсер дочитает файл до конца
+        // чтобы найти BeiDou и Galileo данные в конце RINEX файла
+        // Старый код прерывал парсинг слишком рано!
         
         let system_char = line.chars().next().unwrap_or(' ');
         
@@ -611,7 +609,7 @@ pub fn read_nav_file_limited(nav_data: &mut CNavData, filename: &str, max_per_sy
             'E' => {
                 if galileo_count < max_per_system {
                     println!("[DEBUG] Parsing Galileo ephemeris {}/{}: {}", galileo_count+1, max_per_system, &line[..std::cmp::min(20, line.len())]);
-                    if let Some(eph) = parse_gps_ephemeris(&line, &mut lines) {
+                    if let Some(eph) = parse_galileo_ephemeris(&line, &mut lines) {
                         nav_data.add_galileo_ephemeris(eph);
                         galileo_count += 1;
                     }
@@ -672,6 +670,8 @@ pub fn read_nav_file_filtered(
     let mut gps_accepted = 0;
     let mut beidou_parsed = 0;
     let mut beidou_accepted = 0;
+    let mut galileo_parsed = 0;
+    let mut galileo_accepted = 0;
     let mut other_skipped = 0;
     let mut total_lines_processed = 0;
     
@@ -723,11 +723,11 @@ pub fn read_nav_file_filtered(
         }
         
         let system_char = line.chars().next().unwrap_or(' ');
-        if system_char == 'C' {
-            println!("[DEBUG] Found C line at {}: {}", total_lines_processed, &line[..std::cmp::min(50, line.len())]);
-        }
+        
+        // Обрабатываем только заголовочные строки записей (как в C версии)
+        // Строки данных эфемерид начинаются с пробелов и читаются внутри parse_gps_ephemeris
         match system_char {
-            'G' | ' ' if gps_enabled => {
+            'G' if gps_enabled => {
                 // GPS эфемериды (только если GPS включена в конфиге)
                 if let Some(eph) = parse_gps_ephemeris(&line, &mut lines) {
                     gps_parsed += 1;
@@ -751,16 +751,9 @@ pub fn read_nav_file_filtered(
                         }
                     }
                     
-                    // Для мультисистемной генерации - не прерываем парсинг рано!
-                    // BeiDou данные находятся в конце файла (~строка 93528)
-                    let total_ephemeris: usize = gps_ephemeris_by_epoch.values()
-                        .map(|epoch_map| epoch_map.len()).sum();
-                    if total_ephemeris >= 100 && enabled_systems.len() == 1 && enabled_systems.contains(&"GPS") {
-                        // Раннее завершение только для GPS-only конфигурации
-                        println!("[INFO] GPS-only early exit: found {} GPS ephemeris across {} epochs", 
-                                total_ephemeris, gps_available_epochs.len());
-                        break;
-                    }
+                    // УДАЛЕНО: раннее завершение парсера мешает мультисистемной генерации
+                    // BeiDou и Galileo данные находятся в конце RINEX файла после ~93000 строк
+                    // Парсинг должен продолжаться до конца файла для всех систем
                 }
             },
             'R' if glonass_enabled => {
@@ -771,6 +764,7 @@ pub fn read_nav_file_filtered(
             },
             'C' if beidou_enabled => {
                 // BeiDou эфемериды (только если BeiDou включена)
+                println!("!!!! FOUND BEIDOU LINE AT {}: {} !!!!", total_lines_processed, &line[..std::cmp::min(50, line.len())]);
                 if let Some(eph) = parse_beidou_ephemeris(&line, &mut lines) {
                     // Добавляем в группу по эпохе
                     let epoch_key = eph.toe as i32;
@@ -786,6 +780,8 @@ pub fn read_nav_file_filtered(
                 if let Some(eph) = parse_gps_ephemeris(&line, &mut lines) {
                     // Конвертируем в Galileo формат (GST синхронизован с GPS)
                     nav_data.add_galileo_ephemeris(eph);
+                    galileo_parsed += 1;
+                    galileo_accepted += 1; // Пока без временной фильтрации для Galileo
                 }
             },
             'G' | ' ' if !gps_enabled => {
@@ -807,6 +803,18 @@ pub fn read_nav_file_filtered(
             'E' if !galileo_enabled => {
                 // Galileo отключена в конфиге - пропускаем эфемериду
                 other_skipped += 1;
+                continue;
+            },
+            'S' => {
+                // SBAS спутники - пропускаем запись целиком (7 строк данных)
+                println!("[DEBUG] Skipping SBAS satellite at line {}", total_lines_processed);
+                skip_ephemeris_lines(&mut lines);
+                other_skipped += 1;
+                continue;
+            },
+            ' ' => {
+                // Строки данных эфемерид начинаются с пробела - должны читаться внутри parse_*_ephemeris
+                // В основном цикле их нужно игнорировать (как в C версии)
                 continue;
             },
             _ => {
@@ -907,10 +915,16 @@ pub fn read_nav_file_filtered(
     if total_lines_processed < 50000 {
         println!("[WARN] Parser stopped early - BeiDou data starts around line 93528");
     }
+    if total_lines_processed < 93528 {
+        println!("[ERROR] Parser stopped before BeiDou data (line 93528) - this explains zero BeiDou satellites");
+    }
+    if total_lines_processed < 45048 {
+        println!("[ERROR] Parser stopped before Galileo data (line 45048) - this explains zero Galileo satellites");
+    }
     
     println!("[INFO]\tNavigation file loaded successfully (filtered): {}", filename);
-    println!("[INFO]\tUnified epoch filtering results: GPS parsed={}, accepted={}, BeiDou parsed={}, accepted={}, other systems skipped={}", 
-        gps_parsed, gps_accepted, beidou_parsed, beidou_accepted, other_skipped);
+    println!("[INFO]\tUnified epoch filtering results: GPS parsed={}, accepted={}, BeiDou parsed={}, accepted={}, Galileo parsed={}, accepted={}, other systems skipped={}", 
+        gps_parsed, gps_accepted, beidou_parsed, beidou_accepted, galileo_parsed, galileo_accepted, other_skipped);
     
     if gps_enabled && gps_accepted == 0 {
         println!("[WARN]\tNo GPS ephemeris accepted after filtering - check time window");
@@ -1155,10 +1169,8 @@ fn set_output_param(object: *mut JsonObject, output_param: &mut OutputParam) -> 
     output_param.Interval = 1000;
     
     // Default output GPS L1 only
-    output_param.FreqSelect[0] = 0x1;
-    output_param.FreqSelect[1] = 0;
-    output_param.FreqSelect[2] = 0;
-    output_param.FreqSelect[3] = 0;
+    output_param.CompactConfig.enable_system_parsing(crate::types::PARSE_GPS);
+    output_param.CompactConfig.enable_signal(crate::types::GEN_L1CA);
 
     unsafe {
         let mut current_object = object;
@@ -1478,9 +1490,9 @@ fn process_system_select(object: *mut JsonObject, output_param: &mut OutputParam
                         }
                         let object_type = get_object_type(current_object);
                         if object_type == 6 { // ValueTypeTrue
-                            output_param.FreqSelect[system as usize] |= 1 << signal_index;
+                            // Сигнал включен - обрабатывается новой системой CompactConfig
                         } else if object_type == 7 { // ValueTypeFalse
-                            output_param.FreqSelect[system as usize] &= !(1 << signal_index);
+                            // Сигнал выключен - обрабатывается новой системой CompactConfig
                         }
                     }
                 },
@@ -1841,8 +1853,8 @@ where
                 read_contents_data(&data_line, &mut data[i*4+3..i*4+7]);
             }
         } else {
-            println!("[DEBUG] Failed to read data line {}", i+1);
-            return None;
+            println!("[WARN] Failed to read ephemeris data line {} for SVID {} - incomplete record, skipping", i+1, eph.svid);
+            return None; // Все же возвращаем None для неполных записей, но с лучшим логированием
         }
     }
     
@@ -2104,15 +2116,11 @@ where
     I: Iterator<Item = Result<String, std::io::Error>>
 {
     // BeiDou uses similar format to GPS but with system-specific adjustments
-    let mut eph = parse_gps_ephemeris(line, lines)?;
+    let eph = parse_gps_ephemeris(line, lines)?;
     
-    // Convert to BeiDou-specific parameters
-    // BeiDou uses BDT (BeiDou Time) which differs from GPS time
-    eph.toe -= 14; // BDT is 14 seconds behind GPS time
-    eph.top -= 14;
-    
-    // BeiDou week number uses different epoch (January 1, 2006)
-    eph.week = eph.week.saturating_sub(1356); // Convert GPS week to BDS week
+    // RINEX данные уже приведены к единому времени GPS
+    // НЕ нужно делать дополнительные конвертации времени (как в C версии)
+    // eph.toe и eph.week остаются как есть
     
     // BeiDou uses CGCS2000 coordinate system (very similar to WGS84)
     // No significant adjustments needed for most applications
@@ -2121,22 +2129,19 @@ where
 }
 
 /// Парсит Galileo эфемериды из RINEX формата
-fn parse_galileo_ephemeris<I>(line: &str, lines: &mut I) -> Option<GpsEphemeris>
+fn parse_galileo_ephemeris<I>(line: &str, lines: &mut I) -> Option<GalileoEphemeris>
 where
     I: Iterator<Item = Result<String, std::io::Error>>
 {
     // Galileo uses GPS-compatible ephemeris format with system-specific adjustments
-    let mut eph = parse_gps_ephemeris(line, lines)?;
+    let eph = parse_gps_ephemeris(line, lines)?;
+    
+    // RINEX данные уже приведены к единому времени GPS
+    // НЕ нужно делать дополнительные конвертации времени (как в C версии)
+    // eph.toe и eph.week остаются как есть
     
     // Convert to Galileo-specific parameters
-    // Galileo System Time (GST) epoch: August 22, 1999 00:00:00 UTC
-    // GST is synchronized with TAI (continuous time scale)
-    
-    // Galileo week number starts from GST epoch
-    // GPS week 1024 corresponds to GST week 0 (August 22, 1999)
-    if eph.week >= 1024 {
-        eph.week -= 1024; // Convert GPS week to GST week
-    }
+    // Galileo System Time (GST) синхронизирована с GPS временем в RINEX
     
     // Galileo uses essentially the same coordinate system as GPS (WGS84)
     // Signal-in-space accuracy (SISA) mapping may differ from GPS URA

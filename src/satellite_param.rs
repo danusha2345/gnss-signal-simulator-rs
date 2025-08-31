@@ -442,14 +442,55 @@ pub fn get_wave_length(system: GnssSystem, signal_index: usize, freq_id: i32) ->
 
 /// Get travel time including group delay and ionospheric delay
 pub fn get_travel_time(satellite_param: &SatelliteParam, signal_index: usize) -> f64 {
-    let mut travel_time = satellite_param.TravelTime + satellite_param.GroupDelay[signal_index];
+    let array_index = map_signal_to_array_index(satellite_param.system, signal_index)
+        .unwrap_or(0); // Используем индекс 0 если не найден маппинг
+    let mut travel_time = satellite_param.TravelTime + satellite_param.GroupDelay[array_index];
     travel_time += get_iono_delay(satellite_param.IonoDelay, satellite_param.system, signal_index) / LIGHT_SPEED;
     travel_time
 }
 
+/// Отображение глобальных индексов сигналов в локальные индексы массивов
+fn map_signal_to_array_index(system: GnssSystem, signal_index: usize) -> Option<usize> {
+    match system {
+        GnssSystem::GpsSystem => {
+            match signal_index {
+                0..=7 => Some(signal_index), // GPS сигналы 0-7 отображаются напрямую
+                _ => None,
+            }
+        },
+        GnssSystem::BdsSystem => {
+            match signal_index {
+                8 => Some(0),  // SIGNAL_INDEX_B1C
+                9 => Some(1),  // SIGNAL_INDEX_B1I
+                10 => Some(2), // SIGNAL_INDEX_B2I
+                11 => Some(3), // SIGNAL_INDEX_B3I
+                12 => Some(4), // SIGNAL_INDEX_B2A
+                13 => Some(5), // SIGNAL_INDEX_B2B
+                14 => Some(6), // SIGNAL_INDEX_B2AB
+                _ => None,
+            }
+        },
+        GnssSystem::GalileoSystem => {
+            match signal_index {
+                16..=23 => Some(signal_index - 16), // Galileo сигналы 16-23 → 0-7
+                _ => None,
+            }
+        },
+        GnssSystem::GlonassSystem => {
+            match signal_index {
+                24..=31 => Some(signal_index - 24), // GLONASS сигналы 24-31 → 0-7
+                _ => None,
+            }
+        },
+        _ => None,
+    }
+}
+
 /// Get carrier phase measurement
 pub fn get_carrier_phase(satellite_param: &SatelliteParam, signal_index: usize) -> f64 {
-    let mut travel_time = satellite_param.TravelTime + satellite_param.GroupDelay[signal_index];
+    let array_index = map_signal_to_array_index(satellite_param.system, signal_index)
+        .unwrap_or(0); // Используем индекс 0 если не найден маппинг
+    let mut travel_time = satellite_param.TravelTime + satellite_param.GroupDelay[array_index];
     travel_time = travel_time * LIGHT_SPEED - get_iono_delay(satellite_param.IonoDelay, satellite_param.system, signal_index);
     travel_time / get_wave_length(satellite_param.system, signal_index, satellite_param.FreqID)
 }

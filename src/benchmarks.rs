@@ -1,5 +1,5 @@
 use std::time::{Duration, Instant};
-use crate::{avx512_intrinsics::*, sat_if_signal::SatIfSignal, complex_number::ComplexNumber, types::GnssSystem};
+use crate::{avx512_intrinsics::*, complex_number::ComplexNumber};
 
 #[cfg(feature = "gpu")]
 use crate::cuda_acceleration::*;
@@ -134,8 +134,8 @@ pub fn benchmark_prn_generation(samples: usize) -> PerformanceBenchmark {
 pub fn benchmark_complex_operations(samples: usize) -> PerformanceBenchmark {
     let mut benchmark = PerformanceBenchmark::new();
     
-    let mut signal1 = vec![ComplexNumber::from_parts(1.0, 0.5); samples];
-    let mut signal2 = vec![ComplexNumber::from_parts(0.8, -0.3); samples];
+    let signal1 = vec![ComplexNumber::from_parts(1.0, 0.5); samples];
+    let signal2 = vec![ComplexNumber::from_parts(0.8, -0.3); samples];
     let mut result = vec![ComplexNumber::from_parts(0.0, 0.0); samples];
     
     // CPU бенчмарк

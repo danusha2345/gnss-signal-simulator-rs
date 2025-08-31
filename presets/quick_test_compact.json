@@ -1,0 +1,63 @@
+{
+	"version": 1.0,
+	"description": "Быстрый тест CompactConfig - GPS L1CA - 50ms",
+	"time": {
+		"type": "UTC",
+		"year": 2025,
+		"month": 6,
+		"day": 5,
+		"hour": 10,
+		"minute": 5,
+		"second": 30
+	},
+	"trajectory": {
+		"name": "Quick CompactConfig test",
+		"initPosition": {
+			"type": "LLA",
+			"format": "d",
+			"longitude": -114.2847,
+			"latitude": 48.4928,
+			"altitude": 100.0
+		},
+		"initVelocity": {
+			"type": "SCU",
+			"speed": 0,
+			"course": 318.91
+		},
+		"trajectoryList": [
+			{
+				"type": "Const",
+				"time": 0.05
+			}
+		]
+	},
+	"ephemeris": {
+		"type": "RINEX",
+		"name": "Rinex_Data/rinex_v3_20251560000.rnx"
+	},
+	"output": {
+		"type": "IFdata",
+		"format": "IQ8",
+		"sampleFreq": 5.0,
+		"centerFreq": 1575.42,
+		"name": "generated_files/quick_test_compact_50ms.C8",
+		"config": {
+			"elevationMask": 5
+		},
+		"systemSelect": [
+			{
+				"system": "GPS",
+				"signal": "L1CA",
+				"enable": true
+			}
+		]
+	},
+	"power": {
+		"noiseFloor": -172,
+		"initPower": {
+			"unit": "dBHz",
+			"value": 45
+		},
+		"elevationAdjust": true
+	}
+}

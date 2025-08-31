@@ -1,4 +1,4 @@
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use gnss_rust::avx512_intrinsics::*;
 
 fn main() {

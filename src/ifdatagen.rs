@@ -36,9 +36,9 @@ use std::env;
 use crate::types::*;
 use crate::complex_number::ComplexNumber;
 use crate::constants::*;
-use crate::json_parser::{JsonStream, JsonObject};
+use crate::json_parser::JsonObject;
 // ЭКСТРЕМАЛЬНОЕ АППАРАТНОЕ УСКОРЕНИЕ: CPU + GPU
-use crate::avx512_intrinsics::{SafeAvx512Processor, Avx512Accelerator};
+use crate::avx512_intrinsics::SafeAvx512Processor;
 #[cfg(feature = "gpu")]
 use crate::cuda_acceleration::{CudaGnssAccelerator, HybridAccelerator};
 use crate::gnsstime::{utc_to_gps_time, utc_to_glonass_time_corrected, utc_to_bds_time};
@@ -136,11 +136,11 @@ impl NavData {
         let ephemeris_pool = match system {
             GnssSystem::GpsSystem => &self.gps_ephemeris,
             GnssSystem::BdsSystem => &self.bds_ephemeris,
-            GnssSystem::GalileoSystem => &self.gal_ephemeris,
+            GnssSystem::GalileoSystem => &self.gal_ephemeris, // ИСПРАВЛЕНО: используем правильное поле
             _ => return None,
         };
         
-        // Поиск наиболее подходящих эфемерид по SVID и времени (как в C++)
+        // Поиск наиболее подходящих эфемерид по SVID и времени (все системы используют Vec<Option<GpsEphemeris>>)
         for eph_opt in ephemeris_pool.iter() {
             if let Some(eph) = eph_opt {
                 if eph.svid as i32 == svid && (eph.valid & 1) != 0 && eph.health == 0 {
@@ -609,8 +609,8 @@ impl IFDataGen {
         
         // Используем значения по умолчанию  
         let mut utc_time = UtcTime::default();
-        let mut start_pos = LlaPosition::default();
-        let mut start_vel = LocalSpeed::default();
+        let start_pos = LlaPosition::default();
+        let start_vel = LocalSpeed::default();
         
         // Значения по умолчанию для тестирования
         utc_time.Year = 2025;
@@ -626,8 +626,8 @@ impl IFDataGen {
         println!("[INFO]\tParsed time from preset: {}-{:02}-{:02} {:02}:{:02}:{:02.0}", 
                  utc_time.Year, utc_time.Month, utc_time.Day, 
                  utc_time.Hour, utc_time.Minute, utc_time.Second);
-        let mut start_pos = LlaPosition::default();
-        let mut start_vel = LocalSpeed::default();
+        let start_pos = LlaPosition::default();
+        let start_vel = LocalSpeed::default();
 
         // Старый код удалён - используем новый чистый Rust JSON парсинг ниже
 
@@ -661,18 +661,18 @@ impl IFDataGen {
             // Создаем CNavData для загрузки эфемерид
             let mut c_nav_data = crate::json_interpreter::CNavData::default();
             
-            // Определяем включенные системы из JSON конфигурации (FreqSelect)
+            // Определяем включенные системы из JSON конфигурации (CompactConfig)
             let mut enabled_systems = Vec::new();
-            if self.output_param.FreqSelect[GnssSystem::GpsSystem as usize] != 0 {
+            if self.output_param.CompactConfig.should_parse_gps() {
                 enabled_systems.push("GPS");
             }
-            if self.output_param.FreqSelect[GnssSystem::GlonassSystem as usize] != 0 {
+            if self.output_param.CompactConfig.should_parse_glonass() {
                 enabled_systems.push("GLONASS");
             }
-            if self.output_param.FreqSelect[GnssSystem::BdsSystem as usize] != 0 {
+            if self.output_param.CompactConfig.should_parse_bds() {
                 enabled_systems.push("BeiDou");
             }
-            if self.output_param.FreqSelect[GnssSystem::GalileoSystem as usize] != 0 {
+            if self.output_param.CompactConfig.should_parse_galileo() {
                 enabled_systems.push("Galileo");
             }
             
@@ -736,7 +736,6 @@ impl IFDataGen {
         // Create navigation bit instances
         let mut nav_bit_array = self.create_nav_bit_instances();
 
-        self.setup_frequency_filtering();
         self.setup_navigation_data(&mut nav_bit_array, utc_time, glonass_time, bds_time)?;
         self.calculate_visible_satellites(cur_pos, glonass_time)?;
         println!("[DEBUG]\tVisible satellites calculation completed");
@@ -745,7 +744,7 @@ impl IFDataGen {
         println!("[DEBUG]\tSatellite signals created successfully");
         
         // Парсим время траектории из JSON пресета (используем хардкод пока)
-        let trajectory_time_s = self.parse_trajectory_time_from_json("presets/GPS_L1_only.json").unwrap_or(10.0);
+        let trajectory_time_s = self.parse_trajectory_time_from_json(&self.output_param.config_filename).unwrap_or(10.0);
         self.generate_if_signal(&mut if_file, &mut sat_if_signals, cur_pos, trajectory_time_s)?;
 
         println!("[INFO]\tIF Signal generation completed!");
@@ -778,39 +777,6 @@ impl IFDataGen {
         nav_bit_array
     }
 
-    fn setup_frequency_filtering(&mut self) {
-        // Determine whether signal within IF band (expanded bandwidth for multi-system support)
-        let bandwidth_expansion_factor = 1.0; // Use normal bandwidth
-        let freq_low = (self.output_param.CenterFreq as f64 - self.output_param.SampleFreq as f64 * bandwidth_expansion_factor / 2.0) * 1000.0;
-        let freq_high = (self.output_param.CenterFreq as f64 + self.output_param.SampleFreq as f64 * bandwidth_expansion_factor / 2.0) * 1000.0;
-
-        // GPS frequency filtering
-        if self.output_param.FreqSelect[GnssSystem::GpsSystem as usize] != 0 {
-            if (self.output_param.FreqSelect[GnssSystem::GpsSystem as usize] & (1 << SIGNAL_INDEX_L1CA)) != 0 
-                && (FREQ_GPS_L1 < freq_low || FREQ_GPS_L1 > freq_high) {
-                self.output_param.FreqSelect[GnssSystem::GpsSystem as usize] &= !(1 << SIGNAL_INDEX_L1CA);
-            }
-            if (self.output_param.FreqSelect[GnssSystem::GpsSystem as usize] & (1 << SIGNAL_INDEX_L1C)) != 0 
-                && (FREQ_GPS_L1 < freq_low || FREQ_GPS_L1 > freq_high) {
-                self.output_param.FreqSelect[GnssSystem::GpsSystem as usize] &= !(1 << SIGNAL_INDEX_L1C);
-            }
-            if (self.output_param.FreqSelect[GnssSystem::GpsSystem as usize] & (1 << SIGNAL_INDEX_L2C)) != 0 
-                && (FREQ_GPS_L2 < freq_low || FREQ_GPS_L2 > freq_high) {
-                self.output_param.FreqSelect[GnssSystem::GpsSystem as usize] &= !(1 << SIGNAL_INDEX_L2C);
-            }
-            if (self.output_param.FreqSelect[GnssSystem::GpsSystem as usize] & (1 << SIGNAL_INDEX_L2P)) != 0 
-                && (FREQ_GPS_L2 < freq_low || FREQ_GPS_L2 > freq_high) {
-                self.output_param.FreqSelect[GnssSystem::GpsSystem as usize] &= !(1 << SIGNAL_INDEX_L2P);
-            }
-            if (self.output_param.FreqSelect[GnssSystem::GpsSystem as usize] & (1 << SIGNAL_INDEX_L5)) != 0 
-                && (FREQ_GPS_L5 < freq_low || FREQ_GPS_L5 > freq_high) {
-                self.output_param.FreqSelect[GnssSystem::GpsSystem as usize] &= !(1 << SIGNAL_INDEX_L5);
-            }
-        }
-
-        // Similar filtering for BDS, Galileo, and GLONASS...
-        // (Implementation continues with similar pattern for other systems)
-    }
 
     fn setup_navigation_data(&mut self, nav_bit_array: &mut Vec<Option<UnifiedNavData>>, 
                            utc_time: UtcTime, glonass_time: GlonassTime, bds_time: GnssTime) -> Result<(), Box<dyn std::error::Error>> {
@@ -998,7 +964,7 @@ impl IFDataGen {
         println!("[DEBUG] Total GPS ephemeris available: {}/{}", total_gps_eph, TOTAL_GPS_SAT);
         
         // Calculate visible GPS satellites
-        self.gps_sat_number = if self.output_param.FreqSelect[GnssSystem::GpsSystem as usize] != 0 {
+        self.gps_sat_number = if self.output_param.CompactConfig.should_parse_gps() {
             let mut sat_number = 0;
             let elevation_mask = self.output_param.ElevationMask;
             
@@ -1028,7 +994,7 @@ impl IFDataGen {
                     // Calculate satellite position
                     let transmit_time = (self.cur_time.MilliSeconds as f64) / 1000.0;
                     println!("[DEBUG] Satellite {} transmit_time: {}", i, transmit_time);
-                    if let Some(sat_pos) = self.gps_sat_pos_speed_eph(transmit_time, eph) {
+                    if let Some(sat_pos) = self.gps_sat_pos_speed_eph(GnssSystem::GpsSystem, transmit_time, eph) {
                         println!("[DEBUG] Satellite {} position: ({:.1}, {:.1}, {:.1})", i, sat_pos.x, sat_pos.y, sat_pos.z);
                         
                         // Calculate elevation and azimuth
@@ -1062,10 +1028,13 @@ impl IFDataGen {
         };
 
         // Calculate visible BeiDou satellites  
-        println!("[DEBUG] FreqSelect array: {:?}", self.output_param.FreqSelect);
-        println!("[DEBUG] GnssSystem::BdsSystem as usize = {}", GnssSystem::BdsSystem as usize);
-        println!("[DEBUG] FreqSelect[{}] = {}", GnssSystem::BdsSystem as usize, self.output_param.FreqSelect[GnssSystem::BdsSystem as usize]);
-        self.bds_sat_number = if self.output_param.FreqSelect[GnssSystem::BdsSystem as usize] != 0 {
+        println!("[DEBUG] CompactConfig = 0x{:08x}", self.output_param.CompactConfig.config);
+        println!("[DEBUG] Parsing systems: GPS={}, BDS={}, GAL={}, GLO={}", 
+            self.output_param.CompactConfig.should_parse_gps(),
+            self.output_param.CompactConfig.should_parse_bds(), 
+            self.output_param.CompactConfig.should_parse_galileo(),
+            self.output_param.CompactConfig.should_parse_glonass());
+        self.bds_sat_number = if self.output_param.CompactConfig.should_parse_bds() {
             let mut sat_number = 0;
             let elevation_mask = self.output_param.ElevationMask;
             
@@ -1092,7 +1061,9 @@ impl IFDataGen {
                     }
                     
                     let transmit_time = (self.cur_time.MilliSeconds as f64) / 1000.0;
-                    if let Some(sat_pos) = self.gps_sat_pos_speed_eph(transmit_time, eph) {
+                    println!("[DEBUG] Checking BeiDou SVID {} at time {}", eph.svid, transmit_time);
+                    if let Some(sat_pos) = self.gps_sat_pos_speed_eph(GnssSystem::BdsSystem, transmit_time, eph) {
+                        println!("[DEBUG] BeiDou sat pos calculated: ({:.1}, {:.1}, {:.1})", sat_pos.x, sat_pos.y, sat_pos.z);
                         let (elevation, _azimuth) = self.sat_el_az(cur_pos, sat_pos);
                         
                         if elevation >= elevation_mask {
@@ -1114,33 +1085,57 @@ impl IFDataGen {
         };
 
         // Calculate visible Galileo satellites
-        self.gal_sat_number = if self.output_param.FreqSelect[GnssSystem::GalileoSystem as usize] != 0 {
+        self.gal_sat_number = if self.output_param.CompactConfig.should_parse_galileo() {
             let mut sat_number = 0;
+            let mut total_checked = 0;
+            let mut valid_failed = 0;
+            let mut mask_failed = 0;
+            let mut pos_failed = 0;
+            let mut elev_failed = 0;
             let elevation_mask = self.output_param.ElevationMask;
+            
+            println!("[DEBUG] Starting Galileo visibility check: elevation_mask={}", elevation_mask);
             
             for i in 0..TOTAL_GAL_SAT {
                 if let Some(eph) = &self.gal_eph[i] {
+                    total_checked += 1;
+                    println!("[DEBUG] GAL{:02} - svid={}, valid={}, health={}", i+1, eph.svid, eph.valid, eph.health);
+                    
                     if (eph.valid & 1) == 0 || eph.health != 0 {
+                        valid_failed += 1;
+                        println!("[DEBUG] GAL{:02} - FAILED: valid/health check", i+1);
                         continue;
                     }
                     
                     if (self.output_param.GalileoMaskOut & (1u64 << i)) != 0 {
+                        mask_failed += 1;
+                        println!("[DEBUG] GAL{:02} - FAILED: mask out", i+1);
                         continue;
                     }
                     
                     let transmit_time = (self.cur_time.MilliSeconds as f64) / 1000.0;
-                    if let Some(sat_pos) = self.gps_sat_pos_speed_eph(transmit_time, eph) {
-                        let (elevation, _azimuth) = self.sat_el_az(cur_pos, sat_pos);
+                    if let Some(sat_pos) = self.gps_sat_pos_speed_eph(GnssSystem::GalileoSystem, transmit_time, eph) {
+                        let (elevation, azimuth) = self.sat_el_az(cur_pos, sat_pos);
+                        println!("[DEBUG] GAL{:02} - elevation={:.1}°, azimuth={:.1}°", i+1, elevation.to_degrees(), azimuth.to_degrees());
                         
                         if elevation >= elevation_mask {
                             if sat_number < TOTAL_GAL_SAT {
                                 self.gal_eph_visible[sat_number] = Some(*eph);
                                 sat_number += 1;
+                                println!("[DEBUG] GAL{:02} - VISIBLE! Added as #{}", i+1, sat_number);
                             }
+                        } else {
+                            elev_failed += 1;
+                            println!("[DEBUG] GAL{:02} - FAILED: elevation {:.1}° < {:.1}°", i+1, elevation.to_degrees(), elevation_mask.to_degrees());
                         }
+                    } else {
+                        pos_failed += 1;
+                        println!("[DEBUG] GAL{:02} - FAILED: position calculation", i+1);
                     }
                 }
             }
+            println!("[DEBUG] Galileo summary: checked={}, valid_failed={}, mask_failed={}, pos_failed={}, elev_failed={}, visible={}", 
+                     total_checked, valid_failed, mask_failed, pos_failed, elev_failed, sat_number);
             println!("[INFO]\tFound {} visible Galileo satellites", sat_number);
             sat_number
         } else {
@@ -1148,7 +1143,7 @@ impl IFDataGen {
         };
 
         // Calculate visible GLONASS satellites
-        self.glo_sat_number = if self.output_param.FreqSelect[GnssSystem::GlonassSystem as usize] != 0 {
+        self.glo_sat_number = if self.output_param.CompactConfig.should_parse_glonass() {
             let mut sat_number = 0;
             let elevation_mask = self.output_param.ElevationMask;
             
@@ -1793,42 +1788,58 @@ impl IFDataGen {
     // Display and utility methods
     fn display_enabled_signals(&self) {
         // GPS signals
-        if self.output_param.FreqSelect[GnssSystem::GpsSystem as usize] != 0 {
+        if self.output_param.CompactConfig.should_parse_gps() {
             print!("\tGPS : [ ");
-            if (self.output_param.FreqSelect[GnssSystem::GpsSystem as usize] & (1 << SIGNAL_INDEX_L1CA)) != 0 { print!("L1CA "); }
-            if (self.output_param.FreqSelect[GnssSystem::GpsSystem as usize] & (1 << SIGNAL_INDEX_L1C)) != 0 { print!("L1C "); }
-            if (self.output_param.FreqSelect[GnssSystem::GpsSystem as usize] & (1 << SIGNAL_INDEX_L2C)) != 0 { print!("L2C "); }
-            if (self.output_param.FreqSelect[GnssSystem::GpsSystem as usize] & (1 << SIGNAL_INDEX_L5)) != 0 { print!("L5 "); }
+            if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_L1CA) { print!("L1CA "); }
+            if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_L1C) { print!("L1C "); }
+            if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_L2C) { print!("L2C "); }
+            if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_L5) { print!("L5 "); }
             println!("]");
         }
 
         // BDS signals
-        if self.output_param.FreqSelect[GnssSystem::BdsSystem as usize] != 0 {
+        let bds_signals_present = self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_B1C) ||
+                                 self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_B1I) ||
+                                 self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_B2I) ||
+                                 self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_B3I) ||
+                                 self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_B2A) ||
+                                 self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_B2B) ||
+                                 self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_B2AB);
+        if bds_signals_present {
             print!("\tBDS : [ ");
-            if (self.output_param.FreqSelect[GnssSystem::BdsSystem as usize] & (1 << SIGNAL_INDEX_B1C)) != 0 { print!("B1C "); }
-            if (self.output_param.FreqSelect[GnssSystem::BdsSystem as usize] & (1 << SIGNAL_INDEX_B1I)) != 0 { print!("B1I "); }
-            if (self.output_param.FreqSelect[GnssSystem::BdsSystem as usize] & (1 << SIGNAL_INDEX_B2I)) != 0 { print!("B2I "); }
-            if (self.output_param.FreqSelect[GnssSystem::BdsSystem as usize] & (1 << SIGNAL_INDEX_B2A)) != 0 { print!("B2a "); }
-            if (self.output_param.FreqSelect[GnssSystem::BdsSystem as usize] & (1 << SIGNAL_INDEX_B2B)) != 0 { print!("B2b "); }
-            if (self.output_param.FreqSelect[GnssSystem::BdsSystem as usize] & (1 << SIGNAL_INDEX_B3I)) != 0 { print!("B3I "); }
+            if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_B1C) { print!("B1C "); }
+            if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_B1I) { print!("B1I "); }
+            if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_B2I) { print!("B2I "); }
+            if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_B2A) { print!("B2a "); }
+            if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_B2B) { print!("B2b "); }
+            if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_B3I) { print!("B3I "); }
+            if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_B2AB) { print!("B2AB "); }
             println!("]");
         }
 
         // Galileo signals
-        if self.output_param.FreqSelect[GnssSystem::GalileoSystem as usize] != 0 {
+        let gal_signals_present = self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_E1) ||
+                                 self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_E5A) ||
+                                 self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_E5B) ||
+                                 self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_E6);
+        if gal_signals_present {
             print!("\tGAL : [ ");
-            if (self.output_param.FreqSelect[GnssSystem::GalileoSystem as usize] & (1 << SIGNAL_INDEX_E1)) != 0 { print!("E1 "); }
-            if (self.output_param.FreqSelect[GnssSystem::GalileoSystem as usize] & (1 << SIGNAL_INDEX_E5A)) != 0 { print!("E5a "); }
-            if (self.output_param.FreqSelect[GnssSystem::GalileoSystem as usize] & (1 << SIGNAL_INDEX_E5B)) != 0 { print!("E5b "); }
-            if (self.output_param.FreqSelect[GnssSystem::GalileoSystem as usize] & (1 << SIGNAL_INDEX_E6)) != 0 { print!("E6 "); }
+            if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_E1) { print!("E1 "); }
+            if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_E5A) { print!("E5a "); }
+            if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_E5B) { print!("E5b "); }
+            if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_E6) { print!("E6 "); }
             println!("]");
         }
 
         // GLONASS signals
-        if self.output_param.FreqSelect[GnssSystem::GlonassSystem as usize] != 0 {
+        let glo_signals_present = self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_G1) ||
+                                 self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_G2) ||
+                                 self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_G3);
+        if glo_signals_present {
             print!("\tGLO : [ ");
-            if (self.output_param.FreqSelect[GnssSystem::GlonassSystem as usize] & (1 << SIGNAL_INDEX_G1)) != 0 { print!("G1 "); }
-            if (self.output_param.FreqSelect[GnssSystem::GlonassSystem as usize] & (1 << SIGNAL_INDEX_G2)) != 0 { print!("G2 "); }
+            if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_G1) { print!("G1 "); }
+            if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_G2) { print!("G2 "); }
+            if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_G3) { print!("G3 "); }
             println!("]");
         }
         println!();
@@ -1840,29 +1851,32 @@ impl IFDataGen {
         let mut gal_signal_count = 0;
         let mut glo_signal_count = 0;
 
-        for signal_index in SIGNAL_INDEX_L1CA..=SIGNAL_INDEX_L5 {
-            if (self.output_param.FreqSelect[GnssSystem::GpsSystem as usize] & (1 << signal_index)) != 0 {
-                gps_signal_count += 1;
-            }
-        }
+        // Count GPS signals
+        if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_L1CA) { gps_signal_count += 1; }
+        if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_L1C) { gps_signal_count += 1; }
+        if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_L2C) { gps_signal_count += 1; }
+        if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_L2P) { gps_signal_count += 1; }
+        if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_L5) { gps_signal_count += 1; }
 
-        for signal_index in SIGNAL_INDEX_B1C..=SIGNAL_INDEX_B2B {
-            if (self.output_param.FreqSelect[GnssSystem::BdsSystem as usize] & (1 << signal_index)) != 0 {
-                bds_signal_count += 1;
-            }
-        }
+        // Count BDS signals
+        if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_B1C) { bds_signal_count += 1; }
+        if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_B1I) { bds_signal_count += 1; }
+        if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_B2I) { bds_signal_count += 1; }
+        if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_B3I) { bds_signal_count += 1; }
+        if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_B2A) { bds_signal_count += 1; }
+        if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_B2B) { bds_signal_count += 1; }
+        if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_B2AB) { bds_signal_count += 1; }
 
-        for signal_index in SIGNAL_INDEX_E1..=SIGNAL_INDEX_E6 {
-            if (self.output_param.FreqSelect[GnssSystem::GalileoSystem as usize] & (1 << signal_index)) != 0 {
-                gal_signal_count += 1;
-            }
-        }
+        // Count Galileo signals
+        if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_E1) { gal_signal_count += 1; }
+        if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_E5A) { gal_signal_count += 1; }
+        if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_E5B) { gal_signal_count += 1; }
+        if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_E6) { gal_signal_count += 1; }
 
-        for signal_index in SIGNAL_INDEX_G1..=SIGNAL_INDEX_G2 {
-            if (self.output_param.FreqSelect[GnssSystem::GlonassSystem as usize] & (1 << signal_index)) != 0 {
-                glo_signal_count += 1;
-            }
-        }
+        // Count GLONASS signals
+        if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_G1) { glo_signal_count += 1; }
+        if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_G2) { glo_signal_count += 1; }
+        if self.output_param.CompactConfig.is_signal_enabled(crate::types::GEN_G3) { glo_signal_count += 1; }
 
         (gps_signal_count, bds_signal_count, gal_signal_count, glo_signal_count)
     }
@@ -2239,9 +2253,18 @@ impl IFDataGen {
     fn create_gps_signals(&self, sat_if_signals: &mut Vec<Option<Box<SatIfSignal>>>, mut total_channel_number: usize, nav_bit_array: &Vec<Option<UnifiedNavData>>) -> Result<usize, Box<dyn std::error::Error>> {
         for i in 0..self.gps_sat_number {
             if let Some(eph) = &self.gps_eph_visible[i] {
-                for signal_index in SIGNAL_INDEX_L1CA..=SIGNAL_INDEX_L5 {
-                    if (self.output_param.FreqSelect[GnssSystem::GpsSystem as usize] & (1 << signal_index)) != 0 {
-                        let center_freq = SIGNAL_CENTER_FREQ[GnssSystem::GpsSystem as usize][signal_index];
+                // Check each GPS signal
+                let gps_signals = [
+                    (SIGNAL_INDEX_L1CA, crate::types::GEN_L1CA),
+                    (SIGNAL_INDEX_L1C, crate::types::GEN_L1C),
+                    (SIGNAL_INDEX_L2C, crate::types::GEN_L2C),
+                    (SIGNAL_INDEX_L2P, crate::types::GEN_L2P),
+                    (SIGNAL_INDEX_L5, crate::types::GEN_L5),
+                ];
+                
+                for &(signal_index, signal_mask) in &gps_signals {
+                    if self.output_param.CompactConfig.is_signal_enabled(signal_mask) {
+                        let center_freq = SIGNAL_CENTER_FREQ[GnssSystem::GpsSystem as usize][signal_index.min(7)];
                         let if_freq = (center_freq - self.output_param.CenterFreq as f64) as i32;
                         let mut new_signal = SatIfSignal::new(self.output_param.SampleFreq, if_freq, GnssSystem::GpsSystem, signal_index as i32, eph.svid);
                         
@@ -2262,9 +2285,20 @@ impl IFDataGen {
     fn create_bds_signals(&self, sat_if_signals: &mut Vec<Option<Box<SatIfSignal>>>, mut total_channel_number: usize, nav_bit_array: &Vec<Option<UnifiedNavData>>) -> Result<usize, Box<dyn std::error::Error>> {
         for i in 0..self.bds_sat_number {
             if let Some(eph) = &self.bds_eph_visible[i] {
-                for signal_index in SIGNAL_INDEX_B1C..=SIGNAL_INDEX_B2AB {
-                    if (self.output_param.FreqSelect[GnssSystem::BdsSystem as usize] & (1 << signal_index)) != 0 {
-                        let center_freq = SIGNAL_CENTER_FREQ[GnssSystem::BdsSystem as usize][signal_index];
+                // Check each BDS signal
+                let bds_signals = [
+                    (SIGNAL_INDEX_B1C, crate::types::GEN_B1C, 0),
+                    (SIGNAL_INDEX_B1I, crate::types::GEN_B1I, 1),
+                    (SIGNAL_INDEX_B2I, crate::types::GEN_B2I, 2),
+                    (SIGNAL_INDEX_B3I, crate::types::GEN_B3I, 3),
+                    (SIGNAL_INDEX_B2A, crate::types::GEN_B2A, 4),
+                    (SIGNAL_INDEX_B2B, crate::types::GEN_B2B, 5),
+                    (SIGNAL_INDEX_B2AB, crate::types::GEN_B2AB, 6),
+                ];
+                
+                for &(signal_index, signal_mask, freq_array_index) in &bds_signals {
+                    if self.output_param.CompactConfig.is_signal_enabled(signal_mask) {
+                        let center_freq = SIGNAL_CENTER_FREQ[GnssSystem::BdsSystem as usize][freq_array_index];
                         let if_freq = (center_freq - self.output_param.CenterFreq as f64) as i32;
                         let mut new_signal = SatIfSignal::new(self.output_param.SampleFreq, if_freq, GnssSystem::BdsSystem, signal_index as i32, eph.svid);
                         
@@ -2284,9 +2318,17 @@ impl IFDataGen {
     fn create_galileo_signals(&self, sat_if_signals: &mut Vec<Option<Box<SatIfSignal>>>, mut total_channel_number: usize, nav_bit_array: &Vec<Option<UnifiedNavData>>) -> Result<usize, Box<dyn std::error::Error>> {
         for i in 0..self.gal_sat_number {
             if let Some(eph) = &self.gal_eph_visible[i] {
-                for signal_index in SIGNAL_INDEX_E1..=SIGNAL_INDEX_E6 {
-                    if (self.output_param.FreqSelect[GnssSystem::GalileoSystem as usize] & (1 << signal_index)) != 0 {
-                        let center_freq = SIGNAL_CENTER_FREQ[GnssSystem::GalileoSystem as usize][signal_index];
+                // Check each Galileo signal  
+                let gal_signals = [
+                    (SIGNAL_INDEX_E1, crate::types::GEN_E1, 0),
+                    (SIGNAL_INDEX_E5A, crate::types::GEN_E5A, 1), 
+                    (SIGNAL_INDEX_E5B, crate::types::GEN_E5B, 2),
+                    (SIGNAL_INDEX_E6, crate::types::GEN_E6, 4),
+                ];
+                
+                for &(signal_index, signal_mask, freq_array_index) in &gal_signals {
+                    if self.output_param.CompactConfig.is_signal_enabled(signal_mask) {
+                        let center_freq = SIGNAL_CENTER_FREQ[GnssSystem::GalileoSystem as usize][freq_array_index.min(7)];
                         let if_freq = (center_freq - self.output_param.CenterFreq as f64) as i32;
                         let mut new_signal = SatIfSignal::new(self.output_param.SampleFreq, if_freq, GnssSystem::GalileoSystem, signal_index as i32, eph.svid);
                         
@@ -2306,9 +2348,16 @@ impl IFDataGen {
     fn create_glonass_signals(&self, sat_if_signals: &mut Vec<Option<Box<SatIfSignal>>>, mut total_channel_number: usize, nav_bit_array: &Vec<Option<UnifiedNavData>>) -> Result<usize, Box<dyn std::error::Error>> {
         for i in 0..self.glo_sat_number {
             if let Some(eph) = &self.glo_eph_visible[i] {
-                for signal_index in SIGNAL_INDEX_G1..=SIGNAL_INDEX_G2 {
-                    if (self.output_param.FreqSelect[GnssSystem::GlonassSystem as usize] & (1 << signal_index)) != 0 {
-                        let center_freq = SIGNAL_CENTER_FREQ[GnssSystem::GlonassSystem as usize][signal_index] + eph.freq as f64 * 562500.0;
+                // Check each GLONASS signal
+                let glo_signals = [
+                    (SIGNAL_INDEX_G1, crate::types::GEN_G1),
+                    (SIGNAL_INDEX_G2, crate::types::GEN_G2),
+                    (SIGNAL_INDEX_G3, crate::types::GEN_G3),
+                ];
+                
+                for &(signal_index, signal_mask) in &glo_signals {
+                    if self.output_param.CompactConfig.is_signal_enabled(signal_mask) {
+                        let center_freq = SIGNAL_CENTER_FREQ[GnssSystem::GlonassSystem as usize][signal_index.min(7)] + eph.freq as f64 * 562500.0;
                         let if_freq = (center_freq - self.output_param.CenterFreq as f64) as i32;
                         let mut new_signal = SatIfSignal::new(self.output_param.SampleFreq, if_freq, GnssSystem::GlonassSystem, signal_index as i32, eph.n);
                         
@@ -2330,6 +2379,9 @@ impl IFDataGen {
         println!("[UNIQUE-DEBUG] load_config called with: {}", config_file);
         println!("[INFO]\tLoading JSON file: {}", config_file);
         
+        // Сохраняем путь к config файлу
+        self.output_param.config_filename = config_file.to_string();
+        
         // Проверяем что файл существует
         if !std::path::Path::new(config_file).exists() {
             eprintln!("[ERROR]\tJSON file not found: {}", config_file);
@@ -2340,8 +2392,8 @@ impl IFDataGen {
 
         // Парсим параметры из JSON используя чистый Rust
         let mut utc_time = UtcTime::default();
-        let mut start_pos = LlaPosition::default();
-        let mut start_vel = LocalSpeed::default();
+        let start_pos = LlaPosition::default();
+        let start_vel = LocalSpeed::default();
         
         println!("[DEBUG] Filename before JSON parsing: {:?}", 
                 std::str::from_utf8(&self.output_param.filename[..20]).unwrap_or("invalid"));
@@ -2415,10 +2467,11 @@ impl IFDataGen {
                     
                     // Парсим системы спутников  
                     if let Some(system_select) = output.get("systemSelect").and_then(|v| v.as_array()) {
-                        // Сброс всех частот
-                        for i in 0..8 {
-                            self.output_param.FreqSelect[i] = 0;
-                        }
+                        use crate::types::*;
+                        use crate::constants::*;
+                        
+                        // Сброс конфигурации
+                        self.output_param.CompactConfig = CompactConfig::new();
                         
                         for system in system_select {
                             if let (Some(sys), Some(signal), Some(enable)) = (
@@ -2427,13 +2480,65 @@ impl IFDataGen {
                                 system.get("enable").and_then(|v| v.as_bool())
                             ) {
                                 if enable {
+                                    // Определяем системы для парсинга
+                                    match sys {
+                                        "GPS" => self.output_param.CompactConfig.enable_system_parsing(PARSE_GPS),
+                                        "BDS" => self.output_param.CompactConfig.enable_system_parsing(PARSE_BDS),
+                                        "Galileo" => self.output_param.CompactConfig.enable_system_parsing(PARSE_GALILEO),
+                                        "GLONASS" => self.output_param.CompactConfig.enable_system_parsing(PARSE_GLONASS),
+                                        _ => {}
+                                    }
+                                    
+                                    // Определяем сигналы для генерации
                                     match (sys, signal) {
-                                        ("BDS", "B1C") => self.output_param.FreqSelect[crate::types::GnssSystem::BdsSystem as usize] = 0x1,
-                                        ("GPS", "L1CA") => self.output_param.FreqSelect[0] = 0x1,
-                                        ("GPS", "L1C") => self.output_param.FreqSelect[0] = 0x2,
-                                        ("GPS", "L2C") => self.output_param.FreqSelect[1] = 0x1,
-                                        ("GPS", "L5") => self.output_param.FreqSelect[2] = 0x1,
-                                        ("Galileo", "E1") => self.output_param.FreqSelect[crate::types::GnssSystem::GalileoSystem as usize] |= 1 << crate::constants::SIGNAL_INDEX_E1,
+                                        ("GPS", "L1CA") => {
+                                            self.output_param.CompactConfig.enable_signal(GEN_L1CA);
+                                        }
+                                        ("GPS", "L1C") => {
+                                            self.output_param.CompactConfig.enable_signal(GEN_L1C);
+                                        }
+                                        ("GPS", "L2C") => {
+                                            self.output_param.CompactConfig.enable_signal(GEN_L2C);
+                                        }
+                                        ("GPS", "L5") => {
+                                            self.output_param.CompactConfig.enable_signal(GEN_L5);
+                                        }
+                                        ("BDS", "B1C") => {
+                                            self.output_param.CompactConfig.enable_signal(GEN_B1C);
+                                        }
+                                        ("BDS", "B1I") => {
+                                            self.output_param.CompactConfig.enable_signal(GEN_B1I);
+                                        }
+                                        ("BDS", "B2a") => {
+                                            self.output_param.CompactConfig.enable_signal(GEN_B2A);
+                                        }
+                                        ("BDS", "B2I") => {
+                                            self.output_param.CompactConfig.enable_signal(GEN_B2I);
+                                        }
+                                        ("BDS", "B2b") => {
+                                            self.output_param.CompactConfig.enable_signal(GEN_B2B);
+                                        }
+                                        ("BDS", "B3I") => {
+                                            self.output_param.CompactConfig.enable_signal(GEN_B3I);
+                                        }
+                                        ("Galileo", "E1") => {
+                                            self.output_param.CompactConfig.enable_signal(GEN_E1);
+                                        }
+                                        ("Galileo", "E5a") => {
+                                            self.output_param.CompactConfig.enable_signal(GEN_E5A);
+                                        }
+                                        ("Galileo", "E5b") => {
+                                            self.output_param.CompactConfig.enable_signal(GEN_E5B);
+                                        }
+                                        ("Galileo", "E6") => {
+                                            self.output_param.CompactConfig.enable_signal(GEN_E6);
+                                        }
+                                        ("GLONASS", "G1") => {
+                                            self.output_param.CompactConfig.enable_signal(GEN_G1);
+                                        }
+                                        ("GLONASS", "G2") => {
+                                            self.output_param.CompactConfig.enable_signal(GEN_G2);
+                                        }
                                         _ => {}
                                     }
                                 }
@@ -2491,18 +2596,18 @@ impl IFDataGen {
             // Создаем CNavData для загрузки эфемерид
             let mut c_nav_data = crate::json_interpreter::CNavData::default();
             
-            // Определяем включенные системы из JSON конфигурации (FreqSelect)
+            // Определяем включенные системы из JSON конфигурации (CompactConfig)
             let mut enabled_systems = Vec::new();
-            if self.output_param.FreqSelect[GnssSystem::GpsSystem as usize] != 0 {
+            if self.output_param.CompactConfig.should_parse_gps() {
                 enabled_systems.push("GPS");
             }
-            if self.output_param.FreqSelect[GnssSystem::GlonassSystem as usize] != 0 {
+            if self.output_param.CompactConfig.should_parse_glonass() {
                 enabled_systems.push("GLONASS");
             }
-            if self.output_param.FreqSelect[GnssSystem::BdsSystem as usize] != 0 {
+            if self.output_param.CompactConfig.should_parse_bds() {
                 enabled_systems.push("BeiDou");
             }
-            if self.output_param.FreqSelect[GnssSystem::GalileoSystem as usize] != 0 {
+            if self.output_param.CompactConfig.should_parse_galileo() {
                 enabled_systems.push("Galileo");
             }
             
@@ -2554,7 +2659,7 @@ impl IFDataGen {
             eph.week = 2200;
             eph.sqrtA = 5153.5; // Примерная полуось GPS орбиты
             eph.i0 = 55.0_f64.to_radians(); // Наклонение GPS орбит
-            eph.omega0 = ((svid - 1) as f64 * 45.0_f64.to_radians()); // Распределяем по долготе
+            eph.omega0 = (svid - 1) as f64 * 45.0_f64.to_radians(); // Распределяем по долготе
             eph.ecc = 0.01; // Небольшой эксцентриситет
             eph.omega_dot = -2.6e-9;
             
@@ -2706,13 +2811,12 @@ impl IFDataGen {
         let mut nav_bit_array = self.create_nav_bit_instances();
         
         // Настраиваем систему
-        self.setup_frequency_filtering();
         self.setup_navigation_data(&mut nav_bit_array, utc_time, glonass_time, bds_time)?;
         self.calculate_visible_satellites(cur_pos, glonass_time)?;
 
         // Создаем спутниковые сигналы и генерируем данные
         let mut sat_if_signals = self.create_satellite_signals(&nav_bit_array)?;
-        let trajectory_time_s = self.parse_trajectory_time_from_json("presets/GPS_L1_only.json").unwrap_or(10.0);
+        let trajectory_time_s = self.parse_trajectory_time_from_json(&self.output_param.config_filename).unwrap_or(10.0);
         self.generate_if_signal(&mut if_file, &mut sat_if_signals, cur_pos, trajectory_time_s)?;
 
         // Вычисляем ПРАВИЛЬНУЮ статистику
@@ -2751,8 +2855,8 @@ impl IFDataGen {
     }
 
     // Satellite position calculation functions based on C implementation
-    fn gps_sat_pos_speed_eph(&self, transmit_time: f64, eph: &GpsEphemeris) -> Option<KinematicInfo> {
-        use std::f64::consts::PI;
+    fn gps_sat_pos_speed_eph(&self, system: GnssSystem, transmit_time: f64, eph: &GpsEphemeris) -> Option<KinematicInfo> {
+        
         
         // Calculate time difference
         let mut delta_t = transmit_time - eph.toe as f64;
