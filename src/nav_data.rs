@@ -299,7 +299,7 @@ impl NavData {
     /// Создать навигационные данные для GLONASS
     pub fn new_glonass(signal_type: i32) -> Option<Self> {
         match signal_type {
-            1 | 2 | 3 => Some(NavData::GNav(GNavBit::new())), // G1/G2/G3
+            1..=3 => Some(NavData::GNav(GNavBit::new())), // G1/G2/G3
             _ => None,
         }
     }
@@ -366,7 +366,7 @@ mod tests {
         assert!(matches!(bds_b1i, NavData::D1D2Nav(_)));
         
         let bds_b1c = NavData::new_beidou(11).unwrap();
-        assert!(matches!(bds_b1c, NavData::BCNav(_)));
+        assert!(matches!(bds_b1c, NavData::BCNav1(_)));
     }
     
     #[test]

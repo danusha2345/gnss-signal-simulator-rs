@@ -19,7 +19,7 @@
 //----------------------------------------------------------------------
 
 use std::ptr;
-use crate::{GpsEphemeris, GpsAlmanac, GlonassAlmanac, GlonassEphemeris, UtcParam, IonoParam};
+use crate::{GpsEphemeris, BeiDouEphemeris, GpsAlmanac, GlonassAlmanac, GlonassEphemeris, UtcParam, IonoParam};
 
 // Placeholder types for BDS and Galileo almanac (to be defined later)
 pub type BdsAlmanac = GpsAlmanac;
@@ -70,7 +70,7 @@ pub struct CNavData {
     glonass_ephemeris_number: usize,
     
     gps_ephemeris_pool: Vec<GpsEphemeris>,
-    bds_ephemeris_pool: Vec<GpsEphemeris>,
+    bds_ephemeris_pool: Vec<BeiDouEphemeris>,
     galileo_ephemeris_pool: Vec<GpsEphemeris>,
     glonass_ephemeris_pool: Vec<GlonassEphemeris>,
     
@@ -159,17 +159,17 @@ impl CNavData {
                     let eph = unsafe { 
                         ptr::read(nav_data.as_ptr() as *const GpsEphemeris)
                     };
-                    self.add_gps_ephemeris(&eph)
+                    self.add_gps_ephemeris(eph)
                 } else {
                     false
                 }
             },
             NavDataType::NavDataBdsEph => {
-                if nav_data.len() >= std::mem::size_of::<GpsEphemeris>() {
+                if nav_data.len() >= std::mem::size_of::<BeiDouEphemeris>() {
                     let eph = unsafe { 
-                        ptr::read(nav_data.as_ptr() as *const GpsEphemeris)
+                        ptr::read(nav_data.as_ptr() as *const BeiDouEphemeris)
                     };
-                    self.add_bds_ephemeris(&eph)
+                    self.add_beidou_ephemeris(eph)
                 } else {
                     false
                 }
@@ -179,7 +179,7 @@ impl CNavData {
                     let eph = unsafe { 
                         ptr::read(nav_data.as_ptr() as *const GpsEphemeris)
                     };
-                    self.add_galileo_ephemeris(&eph)
+                    self.add_galileo_ephemeris(eph)
                 } else {
                     false
                 }
@@ -433,79 +433,133 @@ impl CNavData {
         }
     }
 
-    // Add GPS ephemeris
-    fn add_gps_ephemeris(&mut self, eph: &GpsEphemeris) -> bool {
-        // Check if ephemeris already exists
+    /// *** КРИТИЧЕСКАЯ ФУНКЦИЯ ДОБАВЛЕНИЯ GPS ЭФЕМЕРИД В МАССИВ ***
+    /// 
+    /// ЭТА ФУНКЦИЯ ОПРЕДЕЛЯЕТ КАКИЕ GPS ЭФЕМЕРИДЫ БУДУТ ДОСТУПНЫ ДЛЯ РАСЧЕТА ПОЗИЦИЙ СПУТНИКОВ!
+    /// Вызывается из read_nav_file_filtered после временной фильтрации и выбора единой эпохи.
+    /// 
+    /// # Критическая логика:
+    /// 1. Проверяет дублированные эфемериды по SVID + IODE
+    /// 2. Если дубликат найден - заменяет (update)
+    /// 3. Если нет дубликата - добавляет новую эфемериду
+    /// 4. При переполнении пула - замещает самую старую эфемериду
+    /// 
+    /// # Возможные проблемы:
+    /// - Размер пула ограничен EPH_NUMBER_INIT (100) эфемерид
+    /// - При замещении может потеряться важная эфемерида
+    /// - IODE проверка может не работать если RINEX данные некорректны
+    pub fn add_gps_ephemeris(&mut self, eph: GpsEphemeris) -> bool {
+        // ШАГ 1: Проверяем дублированные эфемериды по SVID (номер спутника) и IODE (Issue of Data Ephemeris)
+        // ВАЖНО: IODE используется для определения версии эфемериды, одинаковые SVID+IODE означают дубликат
         for existing_eph in &mut self.gps_ephemeris_pool {
             if existing_eph.svid == eph.svid && existing_eph.iode == eph.iode {
-                *existing_eph = *eph;
+                println!("[GPS-POOL] 🔄 Updating existing GPS{:02} ephemeris (IODE={})", eph.svid, eph.iode);
+                *existing_eph = eph; // Заменяем существующую эфемериду
                 return true;
             }
         }
         
-        // Add new ephemeris
+        // ШАГ 2: Добавляем новую эфемериду если есть место в пуле
         if self.gps_ephemeris_number < self.gps_ephemeris_pool_size {
-            self.gps_ephemeris_pool.push(*eph);
+            println!("[GPS-POOL] ➕ Adding new GPS{:02} ephemeris (toe={}, pool:{}/{})", 
+                eph.svid, eph.toe, self.gps_ephemeris_number + 1, self.gps_ephemeris_pool_size);
+            
+            self.gps_ephemeris_pool.push(eph);
             self.gps_ephemeris_number += 1;
             true
         } else {
-            // Pool is full, replace oldest
+            // ШАГ 3: Пул заполнен - заменяем самую старую эфемериду (индекс 0)
+            // ПРЕДУПРЕЖДЕНИЕ: Это может привести к потере важных эфемерид!
             if !self.gps_ephemeris_pool.is_empty() {
-                self.gps_ephemeris_pool[0] = *eph;
+                println!("[GPS-POOL] ⚠️  Pool full! Replacing oldest GPS ephemeris with GPS{:02} (toe={})", 
+                    eph.svid, eph.toe);
+                self.gps_ephemeris_pool[0] = eph;
                 true
             } else {
+                println!("[GPS-POOL] ❌ ERROR: Cannot add GPS{:02} - pool is empty and full simultaneously!", eph.svid);
                 false
             }
         }
     }
 
-    // Add BDS ephemeris
-    fn add_bds_ephemeris(&mut self, eph: &GpsEphemeris) -> bool {
-        // Check if ephemeris already exists
+    /// *** КРИТИЧЕСКАЯ ФУНКЦИЯ ДОБАВЛЕНИЯ BEIDOU ЭФЕМЕРИД В МАССИВ ***
+    /// 
+    /// Аналогично GPS, но для системы BeiDou (COMPASS). 
+    /// ВАЖНО: BeiDou использует структуру GpsEphemeris для совместимости!
+    /// 
+    /// # Особенности BeiDou:
+    /// - SVID диапазон: 1-63 (GEO: 1-5, IGSO: 6-17, MEO: 18-63)
+    /// - Время системы BDT смещено на 14 секунд относительно GPS времени
+    /// - В RINEX файле обозначается префиксом 'C' (C01, C02, ...)
+    pub fn add_beidou_ephemeris(&mut self, eph: BeiDouEphemeris) -> bool {
+        // ШАГ 1: Проверяем дублированные BeiDou эфемериды по SVID + IODE
         for existing_eph in &mut self.bds_ephemeris_pool {
             if existing_eph.svid == eph.svid && existing_eph.iode == eph.iode {
-                *existing_eph = *eph;
+                println!("[BDS-POOL] 🔄 Updating existing BDS{:02} ephemeris (IODE={})", eph.svid, eph.iode);
+                *existing_eph = eph;
                 return true;
             }
         }
         
-        // Add new ephemeris
+        // ШАГ 2: Добавляем новую BeiDou эфемериду если есть место в пуле
         if self.bds_ephemeris_number < self.bds_ephemeris_pool_size {
-            self.bds_ephemeris_pool.push(*eph);
+            println!("[BDS-POOL] ➕ Adding new BDS{:02} ephemeris (toe={}, pool:{}/{})", 
+                eph.svid, eph.toe, self.bds_ephemeris_number + 1, self.bds_ephemeris_pool_size);
+            
+            self.bds_ephemeris_pool.push(eph);
             self.bds_ephemeris_number += 1;
             true
         } else {
-            // Pool is full, replace oldest
+            // ШАГ 3: Пул заполнен - заменяем самую старую BeiDou эфемериду
             if !self.bds_ephemeris_pool.is_empty() {
-                self.bds_ephemeris_pool[0] = *eph;
+                println!("[BDS-POOL] ⚠️  Pool full! Replacing oldest BeiDou ephemeris with BDS{:02} (toe={})", 
+                    eph.svid, eph.toe);
+                self.bds_ephemeris_pool[0] = eph;
                 true
             } else {
+                println!("[BDS-POOL] ❌ ERROR: Cannot add BDS{:02} - pool is empty and full simultaneously!", eph.svid);
                 false
             }
         }
     }
 
-    // Add Galileo ephemeris
-    fn add_galileo_ephemeris(&mut self, eph: &GpsEphemeris) -> bool {
-        // Check if ephemeris already exists
+    /// *** КРИТИЧЕСКАЯ ФУНКЦИЯ ДОБАВЛЕНИЯ GALILEO ЭФЕМЕРИД В МАССИВ ***
+    /// 
+    /// Аналогично GPS/BeiDou, но для европейской системы Galileo.
+    /// ВАЖНО: Galileo также использует структуру GpsEphemeris для совместимости!
+    /// 
+    /// # Особенности Galileo:
+    /// - SVID диапазон: 1-36 (полная констелляция 30 спутников + резерв)
+    /// - Время системы GST (Galileo System Time) синхронизировано с GPS
+    /// - В RINEX файле обозначается префиксом 'E' (E01, E02, ...)
+    /// - ПРОБЛЕМА: Не использует группировку по эпохам как GPS/BeiDou!
+    pub fn add_galileo_ephemeris(&mut self, eph: GpsEphemeris) -> bool {
+        // ШАГ 1: Проверяем дублированные Galileo эфемериды по SVID + IODE
         for existing_eph in &mut self.galileo_ephemeris_pool {
             if existing_eph.svid == eph.svid && existing_eph.iode == eph.iode {
-                *existing_eph = *eph;
+                println!("[GAL-POOL] 🔄 Updating existing GAL{:02} ephemeris (IODE={})", eph.svid, eph.iode);
+                *existing_eph = eph;
                 return true;
             }
         }
         
-        // Add new ephemeris
+        // ШАГ 2: Добавляем новую Galileo эфемериду если есть место в пуле
         if self.galileo_ephemeris_number < self.galileo_ephemeris_pool_size {
-            self.galileo_ephemeris_pool.push(*eph);
+            println!("[GAL-POOL] ➕ Adding new GAL{:02} ephemeris (toe={}, pool:{}/{})", 
+                eph.svid, eph.toe, self.galileo_ephemeris_number + 1, self.galileo_ephemeris_pool_size);
+            
+            self.galileo_ephemeris_pool.push(eph);
             self.galileo_ephemeris_number += 1;
             true
         } else {
-            // Pool is full, replace oldest
+            // ШАГ 3: Пул заполнен - заменяем самую старую Galileo эфемериду
             if !self.galileo_ephemeris_pool.is_empty() {
-                self.galileo_ephemeris_pool[0] = *eph;
+                println!("[GAL-POOL] ⚠️  Pool full! Replacing oldest Galileo ephemeris with GAL{:02} (toe={})", 
+                    eph.svid, eph.toe);
+                self.galileo_ephemeris_pool[0] = eph;
                 true
             } else {
+                println!("[GAL-POOL] ❌ ERROR: Cannot add GAL{:02} - pool is empty and full simultaneously!", eph.svid);
                 false
             }
         }
@@ -542,7 +596,7 @@ impl CNavData {
         self.gps_ephemeris_pool.iter().find(|eph| i32::from(eph.svid) == svid && eph.valid != 0)
     }
 
-    pub fn get_bds_ephemeris(&self, svid: i32) -> Option<&GpsEphemeris> {
+    pub fn get_bds_ephemeris(&self, svid: i32) -> Option<&BeiDouEphemeris> {
         self.bds_ephemeris_pool.iter().find(|eph| i32::from(eph.svid) == svid && eph.valid != 0)
     }
 

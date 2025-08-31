@@ -28,8 +28,6 @@ use std::fs::File;
 use std::io::{Write, BufWriter};
 use std::time::Instant;
 
-use crate::coordinate::ecef_to_lla;
-use crate::constants::{EARTH_GM, WGS_OMEGDOTE};
 
 use crate::types::IonoNequick as INavIonoNequick;
 use std::env;
@@ -78,7 +76,7 @@ pub struct NavData {
     
     // Эфемериды для всех ГНСС систем
     pub gps_ephemeris: Vec<Option<GpsEphemeris>>,
-    pub bds_ephemeris: Vec<Option<GpsEphemeris>>, // BeiDou использует структуру GPS
+    pub bds_ephemeris: Vec<Option<BeiDouEphemeris>>, // BeiDou использует специализированную структуру
     pub gal_ephemeris: Vec<Option<GpsEphemeris>>, // Galileo использует структуру GPS
     pub glonass_ephemeris: Vec<Option<GlonassEphemeris>>,
     
@@ -133,30 +131,63 @@ impl NavData {
         let mut best_eph: Option<GpsEphemeris> = None;
         let mut best_time_diff = f64::INFINITY;
         
-        let ephemeris_pool = match system {
-            GnssSystem::GpsSystem => &self.gps_ephemeris,
-            GnssSystem::BdsSystem => &self.bds_ephemeris,
-            GnssSystem::GalileoSystem => &self.gal_ephemeris, // ИСПРАВЛЕНО: используем правильное поле
-            _ => return None,
-        };
-        
-        // Поиск наиболее подходящих эфемерид по SVID и времени (все системы используют Vec<Option<GpsEphemeris>>)
-        for eph_opt in ephemeris_pool.iter() {
-            if let Some(eph) = eph_opt {
-                if eph.svid as i32 == svid && (eph.valid & 1) != 0 && eph.health == 0 {
-                    // Вычисляем временную разность: diff = (Week - eph.week) * 604800 + (time.seconds - eph.toe)
-                    let diff = ((time.Week - eph.week) as f64) * 604800.0 + 
-                               ((time.MilliSeconds / 1000) as f64 - eph.toe as f64);
-                    
-                    let abs_diff = diff.abs();
-                    
-                    // Проверяем ограничение по времени: если diff > 7200 (2 часа), эфемерида устарела
-                    if abs_diff <= 7200.0 && abs_diff < best_time_diff {
-                        best_time_diff = abs_diff;
-                        best_eph = Some(*eph);
+        // Обработка разных систем отдельно из-за разных типов эфемерид
+        match system {
+            GnssSystem::GpsSystem => {
+                // Поиск GPS эфемерид
+                for eph_opt in self.gps_ephemeris.iter() {
+                    if let Some(eph) = eph_opt {
+                        if eph.svid as i32 == svid && (eph.valid & 1) != 0 && eph.health == 0 {
+                            let diff = ((time.Week - eph.week) as f64) * 604800.0 + 
+                                       ((time.MilliSeconds / 1000) as f64 - eph.toe as f64);
+                            
+                            let abs_diff = diff.abs();
+                            
+                            if abs_diff <= 7200.0 && abs_diff < best_time_diff {
+                                best_time_diff = abs_diff;
+                                best_eph = Some(*eph);
+                            }
+                        }
                     }
                 }
-            }
+            },
+            GnssSystem::BdsSystem => {
+                // Поиск BeiDou эфемерид с конвертацией в GPS формат
+                for eph_opt in self.bds_ephemeris.iter() {
+                    if let Some(eph) = eph_opt {
+                        if eph.svid as i32 == svid && (eph.valid & 1) != 0 && eph.health == 0 {
+                            let diff = ((time.Week - eph.week) as f64) * 604800.0 + 
+                                       ((time.MilliSeconds / 1000) as f64 - eph.toe as f64);
+                            
+                            let abs_diff = diff.abs();
+                            
+                            if abs_diff <= 7200.0 && abs_diff < best_time_diff {
+                                best_time_diff = abs_diff;
+                                best_eph = Some(eph.to_gps_ephemeris()); // Конвертируем BeiDou в GPS формат
+                            }
+                        }
+                    }
+                }
+            },
+            GnssSystem::GalileoSystem => {
+                // Поиск Galileo эфемерид
+                for eph_opt in self.gal_ephemeris.iter() {
+                    if let Some(eph) = eph_opt {
+                        if eph.svid as i32 == svid && (eph.valid & 1) != 0 && eph.health == 0 {
+                            let diff = ((time.Week - eph.week) as f64) * 604800.0 + 
+                                       ((time.MilliSeconds / 1000) as f64 - eph.toe as f64);
+                            
+                            let abs_diff = diff.abs();
+                            
+                            if abs_diff <= 7200.0 && abs_diff < best_time_diff {
+                                best_time_diff = abs_diff;
+                                best_eph = Some(*eph);
+                            }
+                        }
+                    }
+                }
+            },
+            _ => return None,
         }
         
         best_eph
@@ -968,6 +999,12 @@ impl IFDataGen {
             let mut sat_number = 0;
             let elevation_mask = self.output_param.ElevationMask;
             
+            let transmit_time = (self.cur_time.MilliSeconds as f64) / 1000.0;
+            
+            println!("[DEBUG] GPS Visibility Analysis:");
+            println!("[DEBUG] Current GPS time: Week={}, MS={}, Seconds={:.1}", 
+                     self.cur_time.Week, self.cur_time.MilliSeconds, transmit_time);
+            println!("[DEBUG] Receiver position: ({:.1}, {:.1}, {:.1})", cur_pos.x, cur_pos.y, cur_pos.z);
             println!("[DEBUG] GPS mask out value: 0x{:08x}, elevation mask: {}°", 
                      self.output_param.GpsMaskOut, elevation_mask.to_degrees());
             
@@ -998,12 +1035,18 @@ impl IFDataGen {
                     let delta_t_gps = transmit_time - eph.toe as f64;
                     println!("[DEBUG] GPS{:02} - toe={}, transmit_time={}, delta_t={:.1}h", i+1, eph.toe, transmit_time, delta_t_gps / 3600.0);
                     if crate::coordinate::gps_sat_pos_speed_eph(GnssSystem::GpsSystem, transmit_time, &mut eph_mut, &mut sat_pos, None) {
-                        println!("[DEBUG] Satellite {} position: ({:.1}, {:.1}, {:.1})", i, sat_pos.x, sat_pos.y, sat_pos.z);
+                        let range = ((sat_pos.x - cur_pos.x).powi(2) + 
+                                     (sat_pos.y - cur_pos.y).powi(2) + 
+                                     (sat_pos.z - cur_pos.z).powi(2)).sqrt();
+                        println!("[DEBUG] Satellite {} position: ({:.1}, {:.1}, {:.1}), range: {:.0}km", 
+                                 i, sat_pos.x, sat_pos.y, sat_pos.z, range/1000.0);
                         
-                        // Calculate elevation and azimuth
-                        let (elevation, azimuth) = self.sat_el_az(cur_pos, sat_pos);
+                        // Calculate elevation and azimuth using coordinate.rs function
+                        let mut elevation = 0.0;
+                        let mut azimuth = 0.0;
+                        crate::coordinate::sat_el_az_from_positions(&cur_pos, &sat_pos, &mut elevation, &mut azimuth);
                         println!("[DEBUG] Satellite {} elevation: {:.1}°, azimuth: {:.1}°, mask: {:.1}°", 
-                                 i, elevation.to_degrees(), azimuth.to_degrees(), elevation_mask);
+                                 i, elevation.to_degrees(), azimuth.to_degrees(), elevation_mask.to_degrees());
                         
                         if elevation >= elevation_mask {
                             if sat_number < TOTAL_GPS_SAT {
@@ -1018,10 +1061,8 @@ impl IFDataGen {
                     } else {
                         println!("[DEBUG] Satellite {} rejected: position calculation failed", i);
                     }
-                } else {
-                    if i < 10 { // Показать только первые 10 для краткости
-                        println!("[DEBUG] No ephemeris for GPS satellite {}", i);
-                    }
+                } else if i < 10 { // Показать только первые 10 для краткости
+                    println!("[DEBUG] No ephemeris for GPS satellite {}", i);
                 }
             }
             println!("[INFO]\tFound {} visible GPS satellites", sat_number);
@@ -1069,17 +1110,18 @@ impl IFDataGen {
                     let mut eph_mut = *eph; // Копируем эфемериды для мутабельности
                     if crate::coordinate::gps_sat_pos_speed_eph(GnssSystem::BdsSystem, transmit_time, &mut eph_mut, &mut sat_pos, None) {
                         println!("[DEBUG] BeiDou sat pos calculated: ({:.1}, {:.1}, {:.1})", sat_pos.x, sat_pos.y, sat_pos.z);
-                        let (elevation, _azimuth) = self.sat_el_az(cur_pos, sat_pos);
+                        let mut elevation = 0.0;
+                        let mut azimuth = 0.0;
+                        crate::coordinate::sat_el_az_from_positions(&cur_pos, &sat_pos, &mut elevation, &mut azimuth);
                         
-                        if elevation >= elevation_mask {
-                            if sat_number < TOTAL_BDS_SAT {
+                        if elevation >= elevation_mask
+                            && sat_number < TOTAL_BDS_SAT {
                                 self.bds_eph_visible[sat_number] = Some(*eph);
                                 sat_number += 1;
                                 if sat_number <= 5 { // Показываем первые 5 видимых
                                     println!("[DEBUG] BDS[{}]: VISIBLE, SVID={}, elevation={:.1}°", i, eph.svid, elevation.to_degrees());
                                 }
                             }
-                        }
                     }
                 }
             }
@@ -1126,7 +1168,9 @@ impl IFDataGen {
                     let pos_calc_success = crate::coordinate::gps_sat_pos_speed_eph(GnssSystem::GalileoSystem, transmit_time, &mut eph_mut, &mut sat_pos, None);
                     println!("[DEBUG] GAL{:02} - pos_calc_success={}, sat_pos=({:.1}, {:.1}, {:.1})", i+1, pos_calc_success, sat_pos.x, sat_pos.y, sat_pos.z);
                     if pos_calc_success {
-                        let (elevation, azimuth) = self.sat_el_az(cur_pos, sat_pos);
+                        let mut elevation = 0.0;
+                        let mut azimuth = 0.0;
+                        crate::coordinate::sat_el_az_from_positions(&cur_pos, &sat_pos, &mut elevation, &mut azimuth);
                         println!("[DEBUG] GAL{:02} - elevation={:.1}°, azimuth={:.1}°", i+1, elevation.to_degrees(), azimuth.to_degrees());
                         
                         if elevation >= elevation_mask {
@@ -1170,14 +1214,15 @@ impl IFDataGen {
                     
                     let transmit_time = (glonass_time.MilliSeconds as f64) / 1000.0;
                     if let Some(sat_pos) = self.glonass_sat_pos_speed_eph(transmit_time, eph) {
-                        let (elevation, _azimuth) = self.sat_el_az(cur_pos, sat_pos);
+                        let mut elevation = 0.0;
+                        let mut azimuth = 0.0;
+                        crate::coordinate::sat_el_az_from_positions(&cur_pos, &sat_pos, &mut elevation, &mut azimuth);
                         
-                        if elevation >= elevation_mask {
-                            if sat_number < TOTAL_GLO_SAT {
+                        if elevation >= elevation_mask
+                            && sat_number < TOTAL_GLO_SAT {
                                 self.glo_eph_visible[sat_number] = Some(*eph);
                                 sat_number += 1;
                             }
-                        }
                     }
                 }
             }
@@ -1270,7 +1315,7 @@ impl IFDataGen {
         if debug_mode {
             println!("[PERF]\tDEBUG MODE: Using fast test signals instead of full GNSS generation");
         }
-        println!("");
+        println!();
 
         let start_time = Instant::now();
         
@@ -1381,13 +1426,11 @@ impl IFDataGen {
                     .enumerate()
                     .for_each(|(j, sum)| {
                         // Accumulate all satellite signals efficiently
-                        for signal in sat_if_signals.iter().take(active_sats) {
-                            if let Some(ref sig) = signal {
-                                if j < sig.sample_array.len() {
-                                    let sample = sig.sample_array[j];
-                                    sum.real += sample.real;
-                                    sum.imag += sample.imag;
-                                }
+                        for sig in sat_if_signals.iter().take(active_sats).flatten() {
+                            if j < sig.sample_array.len() {
+                                let sample = sig.sample_array[j];
+                                sum.real += sample.real;
+                                sum.imag += sample.imag;
                             }
                         }
                         
@@ -2087,12 +2130,11 @@ impl IFDataGen {
                 let elevation = (dz / distance).asin().to_degrees();
                 
                 // Проверяем маску угла места
-                if elevation >= elevation_mask {
-                    if sat_number < eph_visible.len() {
+                if elevation >= elevation_mask
+                    && sat_number < eph_visible.len() {
                         eph_visible[sat_number] = Some(*ephemeris);
                         sat_number += 1;
                     }
-                }
                 
                 // Ограничиваем количество для простоты
                 if sat_number >= 12 {
@@ -2479,7 +2521,7 @@ impl IFDataGen {
                     // Парсим системы спутников  
                     if let Some(system_select) = output.get("systemSelect").and_then(|v| v.as_array()) {
                         use crate::types::*;
-                        use crate::constants::*;
+                        
                         
                         // Сброс конфигурации
                         self.output_param.CompactConfig = CompactConfig::new();
@@ -2561,7 +2603,7 @@ impl IFDataGen {
                 // Парсим длительность траектории
                 if let Some(traj) = json.get("trajectory") {
                     if let Some(traj_list) = traj.get("trajectoryList").and_then(|v| v.as_array()) {
-                        if let Some(first_traj) = traj_list.get(0) {
+                        if let Some(first_traj) = traj_list.first() {
                             if let Some(time) = first_traj.get("time").and_then(|v| v.as_f64()) {
                                 self.output_param.Interval = (time * 1000.0) as i32; // секунды -> мс
                             }
@@ -2703,49 +2745,73 @@ impl IFDataGen {
         Ok(())
     }
     
-    // Копирует эфемериды из json_interpreter::CNavData в наш NavData 
+    /// Функция интеллектуального выбора GPS эфемерид по временной близости к целевому моменту генерации
+    /// 
+    /// Реализует критически важный алгоритм выбора оптимальных эфемерид для каждого GPS спутника.
+    /// Алгоритм обеспечивает максимальную точность навигационных вычислений путем выбора эфемерид
+    /// с минимальным временным расстоянием до момента генерации сигнала.
+    /// 
+    /// # Параметры
+    /// * `c_nav_data` - Источник навигационных данных, содержащий массив GPS эфемерид из RINEX
+    /// * `utc_time` - Целевое UTC время генерации сигнала из пресета конфигурации
+    /// 
+    /// # Алгоритм временного выбора
+    /// 1. Преобразование UTC времени в GPS время для корректного сравнения с toe
+    /// 2. Для каждого SVID (1-32) поиск эфемериды с минимальной разностью |target_time - toe|
+    /// 3. Выбор единственной "лучшей" эфемериды на спутник для обеспечения консистентности
     fn copy_ephemeris_from_json_nav_data(&mut self, c_nav_data: &crate::json_interpreter::CNavData, utc_time: UtcTime) {
         println!("[INFO]\tCopying ephemeris from JSON CNavData");
         println!("[DEBUG] Source has {} GPS ephemeris records", c_nav_data.gps_ephemeris.len());
         
-        // Преобразуем UTC время из пресета в GPS время для выбора ближайших эфемерид
+        // Критическое преобразование: UTC время из пресета -> GPS время для сравнения с toe (time of ephemeris)
+        // GPS время необходимо, так как все эфемериды содержат toe в GPS временной шкале
         let target_gps_time = utc_to_gps_time(utc_time, false);
-        let target_time = (target_gps_time.MilliSeconds as f64) / 1000.0;
+        let target_time = (target_gps_time.MilliSeconds as f64) / 1000.0; // Конвертация в секунды GPS времени
         
-        // Выбираем лучшие эфемериды по времени для каждого SVID
+        // Алгоритм выбора оптимальных эфемерид: для каждого SVID найти эфемериду с минимальным |Δt|
         for svid in 1..=TOTAL_GPS_SAT {
-            let mut best_eph: Option<GpsEphemeris> = None;
-            let mut best_time_diff = f64::INFINITY;
+            let mut best_eph: Option<GpsEphemeris> = None;     // Лучшая найденная эфемерида для текущего SVID
+            let mut best_time_diff = f64::INFINITY;            // Минимальная временная разность в секундах
+            let mut available_count = 0;  // Количество доступных эфемерид для данного SVID
             
+            // Перебор всех доступных эфемерид для поиска оптимальной по времени
             for eph in &c_nav_data.gps_ephemeris {
                 if eph.svid == svid as u8 {
+                    available_count += 1;
+                    // Вычисление абсолютной временной разности между целевым временем и toe эфемериды
                     let time_diff = (target_time - eph.toe as f64).abs();
                     if time_diff < best_time_diff {
                         best_time_diff = time_diff;
-                        best_eph = Some(*eph);
+                        best_eph = Some(*eph);                // Сохранение лучшей эфемериды
                     }
                 }
             }
             
+            // Применение выбранной эфемериды к соответствующему слоту массива
             if let Some(eph) = best_eph {
-                let index = (svid as usize) - 1;
+                let index = svid - 1;              // Преобразование SVID (1-32) в индекс массива (0-31)
                 self.gps_eph[index] = Some(eph);
-                println!("[DEBUG] GPS{:02} - Selected ephemeris with toe={}, time_diff={:.1}h", svid, eph.toe, best_time_diff / 3600.0);
+                println!("[DEBUG] GPS{:02} - Selected ephemeris: toe={}, time_diff={:.1}h, valid={}, health={}", 
+                         svid, eph.toe, best_time_diff / 3600.0, eph.valid, eph.health);
+            } else if available_count == 0 {
+                println!("[DEBUG] GPS{:02} - No ephemeris data available", svid);
             }
         }
         
-        // Подсчитываем количество скопированных эфемерид
+        // Верификация результатов выбора: подсчет количества успешно размещенных эфемерид
         let mut verified_count = 0;
         for i in 0..TOTAL_GPS_SAT {
             if self.gps_eph[i].is_some() {
-                verified_count += 1;
+                verified_count += 1;                          // Подсчет слотов с выбранными эфемеридами
             }
         }
         
-        // Копируем также в nav_data для совместимости
+        // Дублирование в nav_data структуру для обеспечения обратной совместимости с legacy кодом
+        // Критично: legacy части системы могут обращаться к nav_data.gps_ephemeris массиву
         if self.nav_data.gps_ephemeris.len() < 32 {
-            self.nav_data.gps_ephemeris.resize(32, None);
+            self.nav_data.gps_ephemeris.resize(32, None);     // Гарантированное выделение для 32 GPS спутников
         }
+        // Копирование всех исходных эфемерид в nav_data (без временной фильтрации)
         for eph in &c_nav_data.gps_ephemeris {
             if (eph.svid as usize) <= 32 && eph.svid > 0 {
                 self.nav_data.gps_ephemeris[eph.svid as usize - 1] = Some(*eph);
@@ -2755,49 +2821,68 @@ impl IFDataGen {
         println!("[INFO]\tSelected {} GPS ephemeris records using time-based algorithm", verified_count);
     }
 
-    // Копирует BeiDou эфемериды из json_interpreter::CNavData в наш NavData 
+    /// Функция интеллектуального выбора BeiDou эфемерид с унифицированным алгоритмом временного отбора
+    /// 
+    /// Реализует идентичную GPS функции логику выбора оптимальных эфемерид для BeiDou спутников.
+    /// Критически важно: использует GPS время для сравнения с toe, обеспечивая единообразие
+    /// алгоритма выбора эфемерид для всех GNSS систем.
+    /// 
+    /// # Параметры
+    /// * `c_nav_data` - Источник навигационных данных с BeiDou эфемеридами из RINEX файлов
+    /// * `utc_time` - Целевое UTC время генерации из конфигурационного пресета
+    /// 
+    /// # Особенности BeiDou обработки
+    /// - BeiDou использует BDT (BeiDou Time), но для единообразия алгоритма применяется GPS время
+    /// - Поддерживается до TOTAL_BDS_SAT спутников (расширенная констелляция)
+    /// - Применяется та же логика минимизации временной разности как для GPS
     fn copy_beidou_ephemeris_from_json_nav_data(&mut self, c_nav_data: &crate::json_interpreter::CNavData, utc_time: UtcTime) {
         println!("[INFO]\tCopying BeiDou ephemeris from JSON CNavData");
         println!("[DEBUG] Source has {} BeiDou ephemeris records", c_nav_data.beidou_ephemeris.len());
         
-        // Преобразуем UTC время из пресета в GPS время для выбора ближайших эфемерид
+        // Унифицированное преобразование времени: UTC -> GPS время для консистентности с GPS алгоритмом
+        // Важно: несмотря на то, что BeiDou использует BDT, для выбора эфемерид применяется GPS время
         let target_gps_time = utc_to_gps_time(utc_time, false);
-        let target_time = (target_gps_time.MilliSeconds as f64) / 1000.0;
+        let target_time = (target_gps_time.MilliSeconds as f64) / 1000.0; // Целевое время в секундах GPS
         
-        // Выбираем лучшие эфемериды по времени для каждого SVID
+        // Идентичный GPS алгоритм выбора: поиск эфемериды с минимальной временной разностью
         for svid in 1..=TOTAL_BDS_SAT {
-            let mut best_eph: Option<GpsEphemeris> = None;
-            let mut best_time_diff = f64::INFINITY;
+            let mut best_eph: Option<GpsEphemeris> = None;     // Оптимальная эфемерида для текущего BeiDou SVID
+            let mut best_time_diff = f64::INFINITY;            // Минимальная найденная временная разность
             
+            // Поиск среди всех доступных BeiDou эфемерид для данного SVID
             for eph in &c_nav_data.beidou_ephemeris {
                 if eph.svid == svid as u8 {
+                    // Критерий выбора: минимальная абсолютная разность времен
                     let time_diff = (target_time - eph.toe as f64).abs();
                     if time_diff < best_time_diff {
                         best_time_diff = time_diff;
-                        best_eph = Some(*eph);
+                        best_eph = Some(eph.to_gps_ephemeris());                // Обновление лучшего кандидата (конвертируем BeiDou в GPS)
                     }
                 }
             }
             
+            // Размещение выбранной эфемериды в соответствующем слоте BeiDou массива
             if let Some(eph) = best_eph {
-                let index = (svid as usize) - 1;
+                let index = svid - 1;              // SVID (1-N) -> array index (0-(N-1))
                 self.bds_eph[index] = Some(eph);
                 println!("[DEBUG] BDS{:02} - Selected ephemeris with toe={}, time_diff={:.1}h", svid, eph.toe, best_time_diff / 3600.0);
             }
         }
         
-        // Подсчитываем количество скопированных эфемерид
+        // Статистическая верификация: подсчет эфемерид, успешно прошедших временной отбор
         let mut verified_count = 0;
         for i in 0..TOTAL_BDS_SAT {
             if self.bds_eph[i].is_some() {
-                verified_count += 1;
+                verified_count += 1;                          // Инкремент счетчика заполненных слотов
             }
         }
         
-        // Копируем также в nav_data для совместимости
-        if self.nav_data.bds_ephemeris.len() < 65 { // BeiDou has up to 65 satellites
-            self.nav_data.bds_ephemeris.resize(65, None);
+        // Параллельное заполнение nav_data для поддержки совместимости с существующим кодом
+        // BeiDou констелляция: поддерживается до 65 спутников (включая резервные орбиты)
+        if self.nav_data.bds_ephemeris.len() < 65 {
+            self.nav_data.bds_ephemeris.resize(65, None);     // Выделение памяти для полной BeiDou констелляции
         }
+        // Заполнение nav_data всеми исходными эфемеридами (без применения временной фильтрации)
         for eph in &c_nav_data.beidou_ephemeris {
             if (eph.svid as usize) <= 65 && eph.svid > 0 {
                 self.nav_data.bds_ephemeris[eph.svid as usize - 1] = Some(*eph);
@@ -2807,62 +2892,84 @@ impl IFDataGen {
         println!("[INFO]\tSelected {} BeiDou ephemeris records using time-based algorithm", verified_count);
     }
 
+    /// Функция выбора Galileo эфемерид с расширенной диагностикой и унифицированным алгоритмом
+    /// 
+    /// Третья реализация унифицированного алгоритма выбора эфемерид по временной близости.
+    /// Содержит расширенные диагностические возможности для отладки процесса выбора эфемерид.
+    /// Обеспечивает полную совместимость алгоритма выбора между GPS, BeiDou и Galileo системами.
+    /// 
+    /// # Параметры
+    /// * `c_nav_data` - Контейнер навигационных данных с Galileo эфемеридами из RINEX
+    /// * `utc_time` - Эталонное UTC время для выбора оптимальных эфемерид
+    /// 
+    /// # Особенности Galileo обработки
+    /// - Galileo использует GST (Galileo System Time), но алгоритм унифицирован через GPS время
+    /// - Расширенная диагностика включает проверку valid/health статусов эфемерид
+    /// - Ограниченный вывод отладочной информации для предотвращения спама в логах
+    /// - Поддержка полной Galileo констелляции до TOTAL_GAL_SAT спутников
     fn copy_galileo_ephemeris_from_json_nav_data(&mut self, c_nav_data: &crate::json_interpreter::CNavData, utc_time: UtcTime) {
         println!("[INFO]\tCopying Galileo ephemeris from JSON CNavData");
         println!("[DEBUG] Source has {} Galileo ephemeris records", c_nav_data.galileo_ephemeris.len());
         
-        // Преобразуем UTC время из пресета в GPS время для выбора ближайших эфемерид
+        // Стандартизированное преобразование времени для обеспечения единообразия алгоритма выбора
+        // Критически важно: все GNSS системы используют одинаковую временную базу для сравнения
         let target_gps_time = utc_to_gps_time(utc_time, false);
-        let target_time = (target_gps_time.MilliSeconds as f64) / 1000.0;
+        let target_time = (target_gps_time.MilliSeconds as f64) / 1000.0; // Эталонное время в секундах GPS
         println!("[DEBUG] Target time from preset UTC {}-{:02}-{:02} {:02}:{:02}:{:02} -> GPS time: {}", 
             utc_time.Year, utc_time.Month, utc_time.Day, utc_time.Hour, utc_time.Minute, utc_time.Second, target_time);
         
-        // Выбираем лучшие эфемериды по времени для каждого SVID
-        let mut gal_count = 0;
+        // Реализация унифицированного алгоритма выбора с расширенной статистикой
+        let mut gal_count = 0;                                // Счетчик успешно выбранных эфемерид
         for svid in 1..=TOTAL_GAL_SAT {
-            let mut best_eph: Option<GpsEphemeris> = None;
-            let mut best_time_diff = f64::INFINITY;
+            let mut best_eph: Option<GpsEphemeris> = None;     // Лучшая эфемерида для текущего Galileo SVID
+            let mut best_time_diff = f64::INFINITY;            // Минимальная временная разность
             
-            // Ищем эфемериды с минимальным временным расстоянием
+            // Алгоритм поиска оптимальной эфемериды: минимизация |target_time - toe|
             for eph in &c_nav_data.galileo_ephemeris {
                 if eph.svid == svid as u8 {
+                    // Основной критерий: абсолютная временная разность между целевым временем и toe
                     let time_diff = (target_time - eph.toe as f64).abs();
                     if time_diff < best_time_diff {
                         best_time_diff = time_diff;
-                        best_eph = Some(*eph);
+                        best_eph = Some(*eph);                // Сохранение оптимального кандидата
                     }
                 }
             }
             
+            // Применение выбранной эфемериды с расширенной диагностикой
             if let Some(eph) = best_eph {
-                let index = (svid as usize) - 1;
+                let index = svid - 1;              // Конвертация SVID в индекс массива
                 self.gal_eph[index] = Some(eph);
                 gal_count += 1;
-                if gal_count <= 5 { // Show only first 5 to reduce spam
+                // Ограниченный вывод диагностики для первых 5 спутников (предотвращение спама)
+                if gal_count <= 5 {
                     println!("[DEBUG] Selected best Galileo ephemeris for SVID {} - toe={}, time_diff={:.1}h (valid:{}, health:{})", 
                         svid, eph.toe, best_time_diff / 3600.0, eph.valid, eph.health);
                 }
             }
         }
         
-        // Verify the copy worked
+        // Финальная верификация корректности алгоритма выбора эфемерид
         let mut verified_count = 0;
         for i in 0..TOTAL_GAL_SAT {
             if self.gal_eph[i].is_some() {
-                verified_count += 1;
+                verified_count += 1;                          // Подтверждение успешного размещения эфемериды
             }
         }
         
-        // Копируем также в nav_data для совместимости
+        // Синхронизация с nav_data структурой для обеспечения совместимости архитектуры
+        // Galileo: динамическое масштабирование под актуальный размер констелляции
         if self.nav_data.gal_ephemeris.len() < TOTAL_GAL_SAT {
-            self.nav_data.gal_ephemeris.resize(TOTAL_GAL_SAT, None);
+            self.nav_data.gal_ephemeris.resize(TOTAL_GAL_SAT, None);  // Выделение под полную Galileo констелляцию
         }
+        // Полное копирование исходных данных в nav_data (дублирование без временного отбора)
         for eph in &c_nav_data.galileo_ephemeris {
             if (eph.svid as usize) <= TOTAL_GAL_SAT && eph.svid > 0 {
                 self.nav_data.gal_ephemeris[eph.svid as usize - 1] = Some(*eph);
             }
         }
         
+        // Расширенная отчетность: сравнение количества обработанных и верифицированных эфемерид
         println!("[INFO]\tCopied {} Galileo ephemeris records, verified {} in gal_eph array", gal_count, verified_count);
     }
 
@@ -2960,50 +3067,15 @@ impl IFDataGen {
         // For now, use a simplified approach based on the orbital elements
         
         Some(KinematicInfo {
-            x: eph.x as f64 * 1000.0,  // Convert from km to m
-            y: eph.y as f64 * 1000.0,
-            z: eph.z as f64 * 1000.0,
-            vx: eph.vx as f64 * 1000.0,
-            vy: eph.vy as f64 * 1000.0,
-            vz: eph.vz as f64 * 1000.0,
+            x: eph.x * 1000.0,  // Convert from km to m
+            y: eph.y * 1000.0,
+            z: eph.z * 1000.0,
+            vx: eph.vx * 1000.0,
+            vy: eph.vy * 1000.0,
+            vz: eph.vz * 1000.0,
         })
     }
 
-    fn sat_el_az(&self, receiver_pos: KinematicInfo, sat_pos: KinematicInfo) -> (f64, f64) {
-        use std::f64::consts::PI;
-        
-        // Convert receiver position to LLA
-        let receiver_lla = ecef_to_lla(&receiver_pos);
-        
-        // Calculate line-of-sight vector
-        let dx = sat_pos.x - receiver_pos.x;
-        let dy = sat_pos.y - receiver_pos.y;
-        let dz = sat_pos.z - receiver_pos.z;
-        let range = (dx*dx + dy*dy + dz*dz).sqrt();
-        
-        if range < 1.0 {
-            return (0.0, 0.0);
-        }
-        
-        // Unit line-of-sight vector
-        let los_x = dx / range;
-        let los_y = dy / range;
-        let los_z = dz / range;
-        
-        // Convert to local ENU coordinates
-        let conv_matrix = calc_conv_matrix_lla(&receiver_lla);
-        
-        let local_e = los_x * conv_matrix.x2e + los_y * conv_matrix.y2e;
-        let local_n = los_x * conv_matrix.x2n + los_y * conv_matrix.y2n + los_z * conv_matrix.z2n;
-        let local_u = los_x * conv_matrix.x2u + los_y * conv_matrix.y2u + los_z * conv_matrix.z2u;
-        
-        // Calculate azimuth and elevation
-        let azimuth = local_e.atan2(local_n);
-        let azimuth = if azimuth < 0.0 { azimuth + 2.0 * PI } else { azimuth };
-        let elevation = local_u.asin();
-        
-        (elevation, azimuth)
-    }
 
     // Простой парсер для извлечения времени траектории из JSON
     fn parse_utc_time_from_json(&self, config_file: &str) -> Option<UtcTime> {

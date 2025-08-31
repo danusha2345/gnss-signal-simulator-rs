@@ -174,6 +174,75 @@ pub struct GpsEphemeris {
     pub Ek_dot: f64,
 }
 
+// BeiDou ephemeris - специальная структура для BeiDou (COMPASS) системы
+// Основана на RINEX 3.04 спецификации для BeiDou навигационных сообщений
+#[derive(Debug, Clone, Copy, Default)]
+pub struct BeiDouEphemeris {
+    // управляющие поля
+    pub ura: i16,       // User Range Accuracy - точность пользовательского диапазона
+    pub iodc: u16,      // Issue of Data Clock - проблема данных часов
+    pub iode: u8,       // Issue of Data Ephemeris - проблема данных эфемерид 
+    pub svid: u8,       // Satellite Vehicle ID - идентификатор спутника (1-63)
+    pub source: u8,     // источник данных (D1/D2, B-CNAV1, B-CNAV2, B-CNAV3)
+    pub valid: u8,      // флаг валидности
+    pub flag: u16,      // дополнительные флаги
+    pub health: u16,    // статус здоровья спутника
+    pub aode: u8,       // Age of Data Ephemeris - возраст данных эфемерид (специфично для BeiDou)
+    pub aodc: u8,       // Age of Data Clock - возраст данных часов (специфично для BeiDou)
+    
+    // временные параметры
+    pub toe: i32,       // Time of Ephemeris (секунды BDT недели)
+    pub toc: i32,       // Time of Clock (секунды BDT недели) 
+    pub top: i32,       // Time of Prediction (не используется в BeiDou)
+    pub week: i32,      // BeiDou неделя (отличается от GPS на 1356 недель)
+    pub weekh: i32,     // Week number в header (старшие биты)
+    
+    // орбитальные параметры Кеплера 
+    pub M0: f64,        // Mean Anomaly at Reference Time (рад)
+    pub delta_n: f64,   // Mean Motion Difference from Computed Value (рад/сек)
+    pub delta_n_dot: f64, // Rate of Mean Motion Difference (только для B-CNAV2/3)
+    pub ecc: f64,       // Eccentricity (безразмерная)
+    pub sqrtA: f64,     // Square Root of Semi-Major Axis (м^1/2)
+    pub axis_dot: f64,  // Rate of Semi-Major Axis (только для B-CNAV2/3)
+    pub omega0: f64,    // Longitude of Ascending Node at Weekly Epoch (рад)
+    pub i0: f64,        // Inclination Angle at Reference Time (рад)
+    pub w: f64,         // Argument of Perigee (рад)
+    pub omega_dot: f64, // Rate of Right Ascension (рад/сек)
+    pub idot: f64,      // Rate of Inclination Angle (рад/сек)
+    
+    // гармонические коррекции орбиты
+    pub cuc: f64,       // Cosine Harmonic Correction Term to Argument of Latitude (рад)
+    pub cus: f64,       // Sine Harmonic Correction Term to Argument of Latitude (рад)
+    pub crc: f64,       // Cosine Harmonic Correction Term to Orbital Radius (м)
+    pub crs: f64,       // Sine Harmonic Correction Term to Orbital Radius (м)
+    pub cic: f64,       // Cosine Harmonic Correction Term to Inclination (рад)
+    pub cis: f64,       // Sine Harmonic Correction Term to Inclination (рад)
+    
+    // параметры часов и задержки
+    pub af0: f64,       // SV Clock Bias Coefficient (сек)
+    pub af1: f64,       // SV Clock Drift Coefficient (сек/сек)
+    pub af2: f64,       // SV Clock Drift Rate Coefficient (сек/сек^2)
+    pub tgd1: f64,      // Equipment Group Delay для B1I сигнала (сек)
+    pub tgd2: f64,      // Equipment Group Delay для B2I сигнала (сек)
+    pub tgd_b1cp: f64,  // Differential Code Bias для B1C/P (только для B-CNAV1)
+    pub tgd_b2ap: f64,  // Differential Code Bias для B2a/P (только для B-CNAV2)
+    pub tgd_b2bp: f64,  // Differential Code Bias для B2b/P (только для B-CNAV3)
+    
+    // BeiDou специфические параметры
+    pub sat_type: u8,   // Тип спутника: GEO(0), IGSO(1), MEO(2)
+    pub urai: u8,       // User Range Accuracy Index (0-15)
+    pub integrity_flag: u8, // Integrity flag (специфично для BeiDou)
+    
+    // производные переменные (вычисляемые)
+    pub axis: f64,      // большая полуось (м)
+    pub n: f64,         // скорректированное среднее движение (рад/сек)
+    pub root_ecc: f64,  // sqrt(1 - ecc^2)
+    pub omega_t: f64,   // долгота восходящего узла в момент t
+    pub omega_delta: f64, // изменение долготы узла
+    pub Ek: f64,        // эксцентрическая аномалия
+    pub Ek_dot: f64,    // скорость изменения эксцентрической аномалии
+}
+
 // Definitions for source field
 pub const EPH_SOURCE_LNAV: u8 = 0;
 pub const EPH_SOURCE_D1D2: u8 = 0;
@@ -183,6 +252,68 @@ pub const EPH_SOURCE_CNV1: u8 = 1;
 pub const EPH_SOURCE_FNAV: u8 = 1;
 pub const EPH_SOURCE_CNV2: u8 = 2;
 pub const EPH_SOURCE_CNV3: u8 = 3;
+
+// BeiDou specific source field definitions
+pub const BDS_SOURCE_D1D2: u8 = 0;     // D1/D2 navigation messages (legacy)
+pub const BDS_SOURCE_BCNAV1: u8 = 1;   // B-CNAV1 для B1C сигнала
+pub const BDS_SOURCE_BCNAV2: u8 = 2;   // B-CNAV2 для B2a сигнала  
+pub const BDS_SOURCE_BCNAV3: u8 = 3;   // B-CNAV3 для B2b сигнала
+
+impl BeiDouEphemeris {
+    /// Конвертирует BeiDouEphemeris в GpsEphemeris для обратной совместимости
+    /// Используется в старых частях кода, которые ожидают GpsEphemeris
+    pub fn to_gps_ephemeris(&self) -> GpsEphemeris {
+        GpsEphemeris {
+            ura: self.ura,
+            iodc: self.iodc,
+            iode: self.iode,
+            svid: self.svid,
+            source: self.source,
+            valid: self.valid,
+            flag: self.flag,
+            health: self.health,
+            toe: self.toe,
+            toc: self.toc,
+            top: self.top,
+            week: self.week,
+            M0: self.M0,
+            delta_n: self.delta_n,
+            delta_n_dot: self.delta_n_dot,
+            ecc: self.ecc,
+            sqrtA: self.sqrtA,
+            axis_dot: self.axis_dot,
+            omega0: self.omega0,
+            i0: self.i0,
+            w: self.w,
+            omega_dot: self.omega_dot,
+            idot: self.idot,
+            cuc: self.cuc,
+            cus: self.cus,
+            crc: self.crc,
+            crs: self.crs,
+            cic: self.cic,
+            cis: self.cis,
+            af0: self.af0,
+            af1: self.af1,
+            af2: self.af2,
+            tgd: self.tgd1,      // BeiDou TGD1 -> GPS TGD
+            tgd2: self.tgd2,     // BeiDou TGD2 сохраняется
+            tgd_ext: [self.tgd_b1cp, self.tgd_b2ap, self.tgd_b2bp, 0.0, 0.0], // Упаковываем дополнительные TGD
+            axis: self.axis,
+            n: self.n,
+            root_ecc: self.root_ecc,
+            omega_t: self.omega_t,
+            omega_delta: self.omega_delta,
+            Ek: self.Ek,
+            Ek_dot: self.Ek_dot,
+        }
+    }
+}
+
+// BeiDou satellite type definitions 
+pub const BDS_SAT_GEO: u8 = 0;   // Geostationary satellites (C01-C05)
+pub const BDS_SAT_IGSO: u8 = 1;  // Inclined Geosynchronous Orbit satellites (C06-C17) 
+pub const BDS_SAT_MEO: u8 = 2;   // Medium Earth Orbit satellites (C18-C63)
 
 // GPS almanac
 #[derive(Debug, Clone, Copy, Default)]
