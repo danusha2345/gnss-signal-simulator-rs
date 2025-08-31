@@ -2433,6 +2433,7 @@ impl IFDataGen {
                                         ("GPS", "L1C") => self.output_param.FreqSelect[0] = 0x2,
                                         ("GPS", "L2C") => self.output_param.FreqSelect[1] = 0x1,
                                         ("GPS", "L5") => self.output_param.FreqSelect[2] = 0x1,
+                                        ("Galileo", "E1") => self.output_param.FreqSelect[crate::types::GnssSystem::GalileoSystem as usize] |= 1 << crate::constants::SIGNAL_INDEX_E1,
                                         _ => {}
                                     }
                                 }
