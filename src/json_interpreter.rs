@@ -2462,21 +2462,73 @@ fn parse_galileo_ephemeris<I>(line: &str, lines: &mut I) -> Option<GalileoEpheme
 where
     I: Iterator<Item = Result<String, std::io::Error>>
 {
-    // Galileo uses GPS-compatible ephemeris format with system-specific adjustments
-    let eph = parse_gps_ephemeris(line, lines)?;
+    let mut eph = GpsEphemeris::default();
+    let mut data = [0.0f64; 28]; // Массив для Galileo данных (меньше чем GPS)
+    
+    // Парсим первую строку используя точную логику C++
+    let svid = read_contents_time(line, &mut data[0..3])?;
+    eph.svid = svid;
+    eph.af0 = data[0];
+    eph.af1 = data[1]; 
+    eph.af2 = data[2];
+    
+    // Читаем 6 строк данных для Galileo (в отличие от 7 для GPS)
+    for i in 0..6 {
+        if let Some(Ok(data_line)) = lines.next() {
+            if i*4+3 + 4 <= data.len() {
+                read_contents_data(&data_line, &mut data[i*4+3..i*4+7]);
+            }
+        } else {
+            println!("[WARN] Failed to read Galileo ephemeris data line {} for SVID {} - incomplete record, skipping", i+1, eph.svid);
+            return None;
+        }
+    }
+    
+    // Заполняем структуру эфемерид для Galileo (аналогично GPS но с учетом разных индексов)
+    eph.toc = 0;
+    eph.sqrtA = data[10];    // √a
+    eph.ecc = data[8];       // e
+    eph.i0 = data[15];       // i0
+    eph.omega0 = data[13];   // Ω0
+    eph.w = data[17];        // ω
+    eph.M0 = data[6];        // M0
+    eph.delta_n = data[5];   // Δn
+    eph.omega_dot = data[18]; // ΩDOT
+    eph.idot = data[19];     // IDOT
+    eph.crc = data[16];      // Crc
+    eph.crs = data[4];       // Crs
+    eph.cuc = data[7];       // Cuc
+    eph.cus = data[9];       // Cus
+    eph.cic = data[12];      // Cic
+    eph.cis = data[14];      // Cis
+    eph.toe = (data[11] + 0.5) as i32; // toe
+    
+    // Galileo-специфические параметры
+    eph.iode = data[3] as u8;           // IODnav
+    eph.week = data[21] as i32;         // Week
+    eph.ura = get_ura_index(data[22]) as i16; // SISA → URA mapping
+    eph.health = data[23] as u16;       // Health
+    
+    // BGD параметры Galileo (в отличие от TGD в GPS)
+    // data[24] = BGD_E5a_E1
+    // data[25] = BGD_E5b_E1
+    eph.tgd = data[24]; // Используем BGD_E5a_E1 как основной TGD
+    
+    // Вычисляем производные значения
+    eph.axis = eph.sqrtA * eph.sqrtA;
+    eph.n = (EARTH_GM / (eph.axis * eph.axis * eph.axis)).sqrt() + eph.delta_n;
+    eph.root_ecc = (1.0 - eph.ecc * eph.ecc).sqrt();
+    
+    // КРИТИЧЕСКИЙ ФИКС: Устанавливаем omega_t = omega0 (RAAN на эпохе toe)
+    eph.omega_t = eph.omega0;
+    eph.omega_delta = eph.omega_dot;
+    
+    eph.valid = 1;
+    eph.flag = 1;
     
     // RINEX данные уже приведены к единому времени GPS
-    // НЕ нужно делать дополнительные конвертации времени (как в C версии)
-    // eph.toe и eph.week остаются как есть
-    
-    // Convert to Galileo-specific parameters
-    // Galileo System Time (GST) синхронизирована с GPS временем в RINEX
-    
-    // Galileo uses essentially the same coordinate system as GPS (WGS84)
-    // Signal-in-space accuracy (SISA) mapping may differ from GPS URA
-    
-    // Galileo-specific health flags and data validity flags
-    // would need to be handled differently in full implementation
+    // GST (Galileo System Time) синхронизирована с GPS временем в RINEX
+    // НЕ нужно делать дополнительные конвертации времени
     
     Some(eph)
 }

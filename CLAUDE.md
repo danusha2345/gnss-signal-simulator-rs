@@ -142,6 +142,11 @@ A critical feature ensuring navigational correctness by forcing all satellites t
    - **Fix**: Use `sat_pos_vel.vx/vy/vz` from `gps_sat_pos_speed_eph()` function
    - **Impact**: Realistic Doppler values (±5000 Hz range) instead of incorrect small values
 
+5. **Galileo RINEX Parsing Bug** in `src/json_interpreter.rs:parse_galileo_ephemeris()`:
+   - **Issue**: Used GPS parser (`parse_gps_ephemeris`) which reads 7 data lines, but Galileo has only 6 lines in RINEX 3.04
+   - **Fix**: Created dedicated Galileo parser reading correct 6 data lines with Galileo-specific parameters
+   - **Impact**: Fixed Galileo ephemeris parsing, proper BGD/SISA/IODnav parameter handling
+
 ### Detailed Satellite Output Tables
 
 Added comprehensive satellite visibility tables matching C version format:
