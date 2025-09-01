@@ -1068,6 +1068,46 @@ impl IFDataGen {
                 }
             }
             println!("[INFO]\tFound {} visible GPS satellites", sat_number);
+            
+            // Подробная таблица видимых GPS спутников как в C-версии
+            if sat_number > 0 {
+                println!("┌─────┬─────┬──────────┬──────────┬─────────────┬──────────┐");
+                println!("│ PRN │ SV  │ Elev(°)  │ Azim(°)  │ Doppler(Hz) │ Range(m) │");
+                println!("├─────┼─────┼──────────┼──────────┼─────────────┼──────────┤");
+                
+                for j in 0..sat_number {
+                    if let Some(eph) = &self.gps_eph_visible[j] {
+                        let transmit_time = (self.cur_time.MilliSeconds as f64) / 1000.0;
+                        let mut sat_pos_vel = KinematicInfo::default();
+                        let mut eph_mut = *eph;
+                        
+                        if crate::coordinate::gps_sat_pos_speed_eph(GnssSystem::GpsSystem, transmit_time, &mut eph_mut, &mut sat_pos_vel, None) {
+                            let mut elevation = 0.0;
+                            let mut azimuth = 0.0;
+                            crate::coordinate::sat_el_az_from_positions(&cur_pos, &sat_pos_vel, &mut elevation, &mut azimuth);
+                            
+                            let range = ((sat_pos_vel.x - cur_pos.x).powi(2) + 
+                                        (sat_pos_vel.y - cur_pos.y).powi(2) + 
+                                        (sat_pos_vel.z - cur_pos.z).powi(2)).sqrt();
+                            
+                            // Вычисление Doppler частоты
+                            let los_x = (sat_pos_vel.x - cur_pos.x) / range;
+                            let los_y = (sat_pos_vel.y - cur_pos.y) / range;
+                            let los_z = (sat_pos_vel.z - cur_pos.z) / range;
+                            let radial_velocity = los_x * sat_pos_vel.vx + los_y * sat_pos_vel.vy + los_z * sat_pos_vel.vz;
+                            let doppler_hz = -radial_velocity * 1575.42e6 / crate::constants::LIGHT_SPEED;
+                            
+                            println!("│ {:3} │ {:3} │ {:8.1} │ {:8.1} │ {:11.1} │ {:8.0} │", 
+                                    eph.svid, eph.svid, 
+                                    elevation.to_degrees(), azimuth.to_degrees(), 
+                                    doppler_hz, range);
+                        }
+                    }
+                }
+                println!("└─────┴─────┴──────────┴──────────┴─────────────┴──────────┘");
+                println!();
+            }
+            
             sat_number
         } else {
             0
@@ -1128,6 +1168,46 @@ impl IFDataGen {
                 }
             }
             println!("[INFO]\tFound {} visible BeiDou satellites", sat_number);
+            
+            // Подробная таблица видимых BeiDou спутников как в C-версии
+            if sat_number > 0 {
+                println!("┌─────┬─────┬──────────┬──────────┬─────────────┬──────────┐");
+                println!("│ PRN │ SV  │ Elev(°)  │ Azim(°)  │ Doppler(Hz) │ Range(m) │");
+                println!("├─────┼─────┼──────────┼──────────┼─────────────┼──────────┤");
+                
+                for j in 0..sat_number {
+                    if let Some(eph) = &self.bds_eph_visible[j] {
+                        let transmit_time = (self.cur_time.MilliSeconds as f64) / 1000.0;
+                        let mut sat_pos_vel = KinematicInfo::default();
+                        let mut eph_mut = *eph;
+                        
+                        if crate::coordinate::gps_sat_pos_speed_eph(GnssSystem::BdsSystem, transmit_time, &mut eph_mut, &mut sat_pos_vel, None) {
+                            let mut elevation = 0.0;
+                            let mut azimuth = 0.0;
+                            crate::coordinate::sat_el_az_from_positions(&cur_pos, &sat_pos_vel, &mut elevation, &mut azimuth);
+                            
+                            let range = ((sat_pos_vel.x - cur_pos.x).powi(2) + 
+                                        (sat_pos_vel.y - cur_pos.y).powi(2) + 
+                                        (sat_pos_vel.z - cur_pos.z).powi(2)).sqrt();
+                            
+                            // Вычисление Doppler частоты для BeiDou B1C
+                            let los_x = (sat_pos_vel.x - cur_pos.x) / range;
+                            let los_y = (sat_pos_vel.y - cur_pos.y) / range;
+                            let los_z = (sat_pos_vel.z - cur_pos.z) / range;
+                            let radial_velocity = los_x * sat_pos_vel.vx + los_y * sat_pos_vel.vy + los_z * sat_pos_vel.vz;
+                            let doppler_hz = -radial_velocity * 1575.42e6 / crate::constants::LIGHT_SPEED;
+                            
+                            println!("│ C{:2} │ {:3} │ {:8.1} │ {:8.1} │ {:11.1} │ {:8.0} │", 
+                                    eph.svid, eph.svid, 
+                                    elevation.to_degrees(), azimuth.to_degrees(), 
+                                    doppler_hz, range);
+                        }
+                    }
+                }
+                println!("└─────┴─────┴──────────┴──────────┴─────────────┴──────────┘");
+                println!();
+            }
+            
             sat_number
         } else {
             0
@@ -1194,6 +1274,46 @@ impl IFDataGen {
             println!("[DEBUG] Galileo summary: checked={}, valid_failed={}, mask_failed={}, pos_failed={}, elev_failed={}, visible={}", 
                      total_checked, valid_failed, mask_failed, pos_failed, elev_failed, sat_number);
             println!("[INFO]\tFound {} visible Galileo satellites", sat_number);
+            
+            // Подробная таблица видимых Galileo спутников как в C-версии
+            if sat_number > 0 {
+                println!("┌─────┬─────┬──────────┬──────────┬─────────────┬──────────┐");
+                println!("│ PRN │ SV  │ Elev(°)  │ Azim(°)  │ Doppler(Hz) │ Range(m) │");
+                println!("├─────┼─────┼──────────┼──────────┼─────────────┼──────────┤");
+                
+                for j in 0..sat_number {
+                    if let Some(eph) = &self.gal_eph_visible[j] {
+                        let transmit_time = (self.cur_time.MilliSeconds as f64) / 1000.0;
+                        let mut sat_pos_vel = KinematicInfo::default();
+                        let mut eph_mut = *eph;
+                        
+                        if crate::coordinate::gps_sat_pos_speed_eph(GnssSystem::GalileoSystem, transmit_time, &mut eph_mut, &mut sat_pos_vel, None) {
+                            let mut elevation = 0.0;
+                            let mut azimuth = 0.0;
+                            crate::coordinate::sat_el_az_from_positions(&cur_pos, &sat_pos_vel, &mut elevation, &mut azimuth);
+                            
+                            let range = ((sat_pos_vel.x - cur_pos.x).powi(2) + 
+                                        (sat_pos_vel.y - cur_pos.y).powi(2) + 
+                                        (sat_pos_vel.z - cur_pos.z).powi(2)).sqrt();
+                            
+                            // Вычисление Doppler частоты для Galileo E1
+                            let los_x = (sat_pos_vel.x - cur_pos.x) / range;
+                            let los_y = (sat_pos_vel.y - cur_pos.y) / range;
+                            let los_z = (sat_pos_vel.z - cur_pos.z) / range;
+                            let radial_velocity = los_x * sat_pos_vel.vx + los_y * sat_pos_vel.vy + los_z * sat_pos_vel.vz;
+                            let doppler_hz = -radial_velocity * 1575.42e6 / crate::constants::LIGHT_SPEED;
+                            
+                            println!("│ E{:2} │ {:3} │ {:8.1} │ {:8.1} │ {:11.1} │ {:8.0} │", 
+                                    eph.svid, eph.svid, 
+                                    elevation.to_degrees(), azimuth.to_degrees(), 
+                                    doppler_hz, range);
+                        }
+                    }
+                }
+                println!("└─────┴─────┴──────────┴──────────┴─────────────┴──────────┘");
+                println!();
+            }
+            
             sat_number
         } else {
             0

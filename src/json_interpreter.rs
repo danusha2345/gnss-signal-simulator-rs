@@ -675,9 +675,9 @@ pub fn read_nav_file_filtered(
         return;
     }
     
-    // Временные рамки для фильтрации (±3 часа от целевого времени)
-    // GPS эфемериды обновляются каждые 2 часа, поэтому 3.0h - оптимальное окно
-    let time_window_hours = 3.0;
+    // Временные рамки для фильтрации (±1 час от целевого времени)
+    // Оптимальное окно для эфемерид GNSS
+    let time_window_hours = 2.0;
     
     // Счетчики для статистики фильтрации
     let mut gps_parsed = 0;
@@ -936,7 +936,7 @@ pub fn read_nav_file_filtered(
             let mut best_epoch = 0i32;
             let mut best_epoch_diff = f64::INFINITY;
             
-            // ШАГ 3: Ищем эпоху с минимальной разницей по времени
+            // ШАГ 3: Ищем эпоху с минимальной разницей по времени (ближайшую)
             for &epoch in &all_available_epochs {
                 // ВАЖНО: toe уже в секундах GPS недели, добавляем текущую неделю
                 let epoch_seconds = (target_gps.Week as f64) * 604800.0 + (epoch as f64);
@@ -948,6 +948,7 @@ pub fn read_nav_file_filtered(
                 if time_diff < best_epoch_diff {
                     best_epoch_diff = time_diff;
                     best_epoch = epoch;
+                    println!("[EPOCH-SELECT] → New closest epoch {} (diff={:.1}h)", epoch, time_diff / 3600.0);
                 }
             }
             
@@ -960,6 +961,7 @@ pub fn read_nav_file_filtered(
             for &epoch in &gps_available_epochs {
                 let epoch_seconds = (target_gps.Week as f64) * 604800.0 + (epoch as f64);
                 let time_diff = (epoch_seconds - target_seconds).abs();
+                
                 if time_diff < best_gps_diff {
                     best_gps_diff = time_diff;
                     best_gps_epoch = epoch;
@@ -976,28 +978,83 @@ pub fn read_nav_file_filtered(
                 }
             }
             
-            // ШАГ 5: Добавляем все BeiDou эфемериды с выбранной эпохи в nav_data
-            if let Some(epoch_ephemeris) = beidou_ephemeris_by_epoch.get(&best_epoch) {
-                // Adding BeiDou satellites from selected epoch
-                for (svid, eph) in epoch_ephemeris {
-                    nav_data.add_beidou_ephemeris(*eph);
-                    beidou_accepted += 1;
-                    // Added BeiDou ephemeris
+            // ШАГ 5: Находим лучшую BeiDou эпоху отдельно от общей
+            let mut best_beidou_epoch = 0i32;
+            let mut best_beidou_diff = f64::INFINITY;
+            
+            println!("[BEIDOU-DEBUG] Available BeiDou epochs: {:?}", beidou_available_epochs);
+            for &epoch in &beidou_available_epochs {
+                let epoch_seconds = (target_gps.Week as f64) * 604800.0 + (epoch as f64);
+                let time_diff = (epoch_seconds - target_seconds).abs();
+                let epoch_time_of_day = epoch % 86400;
+                let hours = epoch_time_of_day / 3600;
+                let minutes = (epoch_time_of_day % 3600) / 60;
+                println!("[BEIDOU-DEBUG] Epoch toe={} ({:02}:{:02}:00) diff={:.1}min", 
+                         epoch, hours, minutes, time_diff / 60.0);
+                
+                if time_diff < best_beidou_diff {
+                    best_beidou_diff = time_diff;
+                    best_beidou_epoch = epoch;
                 }
-            } else {
-                // No BeiDou ephemerides found for selected epoch
             }
             
-            // ШАГ 6: Добавляем все Galileo эфемериды с выбранной эпохи в nav_data
-            if let Some(epoch_ephemeris) = galileo_ephemeris_by_epoch.get(&best_epoch) {
-                // Adding Galileo satellites from selected epoch
-                for (svid, eph) in epoch_ephemeris {
-                    nav_data.add_galileo_ephemeris(*eph);
-                    galileo_accepted += 1;
-                    // Added Galileo ephemeris
+            // Добавляем все BeiDou эфемериды с выбранной эпохи в nav_data
+            if !beidou_available_epochs.is_empty() {
+                if let Some(epoch_ephemeris) = beidou_ephemeris_by_epoch.get(&best_beidou_epoch) {
+                    println!("[EPOCH-SELECT] Selected BeiDou epoch: toe={} (diff={:.1}h)", 
+                             best_beidou_epoch, best_beidou_diff / 3600.0);
+                    println!("[BEIDOU-DEBUG] BeiDou satellites in selected epoch: {} satellites", epoch_ephemeris.len());
+                    println!("[BEIDOU-DEBUG] SVIDs: {:?}", epoch_ephemeris.keys().collect::<Vec<_>>());
+                    // Check toe values in this epoch
+                    let mut toe_values = std::collections::HashMap::new();
+                    for (svid, eph) in epoch_ephemeris {
+                        *toe_values.entry(eph.toe).or_insert(0) += 1;
+                    }
+                    println!("[BEIDOU-DEBUG] TOE values in this 'epoch': {:?}", toe_values);
+                    
+                    // Adding BeiDou satellites from selected epoch
+                    for (svid, eph) in epoch_ephemeris {
+                        nav_data.add_beidou_ephemeris(*eph);
+                        beidou_accepted += 1;
+                        // Added BeiDou ephemeris
+                    }
                 }
-            } else {
-                // No Galileo ephemerides found for selected epoch
+            }
+            
+            // ШАГ 6: Находим лучшую Galileo эпоху отдельно от общей
+            let mut best_galileo_epoch = 0i32;
+            let mut best_galileo_diff = f64::INFINITY;
+            
+            println!("[GALILEO-DEBUG] Available Galileo epochs: {:?}", galileo_available_epochs);
+            for &epoch in &galileo_available_epochs {
+                let epoch_seconds = (target_gps.Week as f64) * 604800.0 + (epoch as f64);
+                let time_diff = (epoch_seconds - target_seconds).abs();
+                let epoch_time_of_day = epoch % 86400;
+                let hours = epoch_time_of_day / 3600;
+                let minutes = (epoch_time_of_day % 3600) / 60;
+                println!("[GALILEO-DEBUG] Epoch toe={} ({:02}:{:02}:00) diff={:.1}min", 
+                         epoch, hours, minutes, time_diff / 60.0);
+                
+                if time_diff < best_galileo_diff {
+                    best_galileo_diff = time_diff;
+                    best_galileo_epoch = epoch;
+                }
+            }
+            
+            // Добавляем все Galileo эфемериды с выбранной эпохи в nav_data
+            if !galileo_available_epochs.is_empty() {
+                if let Some(epoch_ephemeris) = galileo_ephemeris_by_epoch.get(&best_galileo_epoch) {
+                    println!("[EPOCH-SELECT] Selected Galileo epoch: toe={} (diff={:.1}h)", 
+                             best_galileo_epoch, best_galileo_diff / 3600.0);
+                    // Adding Galileo satellites from selected epoch
+                    for (svid, eph) in epoch_ephemeris {
+                        nav_data.add_galileo_ephemeris(*eph);
+                        galileo_accepted += 1;
+                        // Added Galileo ephemeris
+                    }
+                } else {
+                    // No Galileo ephemerides found for selected epoch
+                }
             }
         } else {
             println!("[ERROR] ❌ No epochs available for selection - GPS or BeiDou parsing failed!");
@@ -2082,6 +2139,12 @@ where
     eph.axis = eph.sqrtA * eph.sqrtA;
     eph.n = (EARTH_GM / (eph.axis * eph.axis * eph.axis)).sqrt() + eph.delta_n;
     eph.root_ecc = (1.0 - eph.ecc * eph.ecc).sqrt();
+    
+    // КРИТИЧЕСКИЙ ФИКС: Устанавливаем omega_t = omega0 (RAAN на эпохе toe)
+    // В GPS системе omega_t это Right Ascension of Ascending Node на момент toe
+    eph.omega_t = eph.omega0;
+    // omega_delta это уже omega_dot из данных
+    eph.omega_delta = eph.omega_dot;
     
     eph.valid = 1;
     eph.flag = 1;

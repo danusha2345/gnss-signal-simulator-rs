@@ -73,6 +73,7 @@ pub fn gps_sat_pos_speed_eph(
     pos_vel: &mut KinematicInfo,
     mut acc: Option<&mut [f64; 3]>,
 ) -> bool {
+    
     // calculate time difference
     let mut delta_t = transmit_time - eph.toe as f64;
     
@@ -230,6 +231,7 @@ pub fn gps_sat_pos_speed_eph(
         }
     }
     
+    
     // if ephemeris expire, return false
     if delta_t.abs() > 7200.0 {
         false
@@ -348,7 +350,6 @@ pub fn ecef_to_lla(ecef_pos: &KinematicInfo) -> LlaPosition {
 
 /// Convert LLA to ECEF coordinates
 pub fn lla_to_ecef(lla_pos: &LlaPosition) -> KinematicInfo {
-    // Removed debug coordinates output
     let n = WGS_AXIS_A / (1.0 - WGS_E1_SQR * lla_pos.lat.sin() * lla_pos.lat.sin()).sqrt();
     
     let result = KinematicInfo {
@@ -359,7 +360,7 @@ pub fn lla_to_ecef(lla_pos: &LlaPosition) -> KinematicInfo {
         vy: 0.0,
         vz: 0.0,
     };
-    // Removed debug ECEF result output
+    
     result
 }
 
@@ -472,6 +473,8 @@ pub fn sat_el_az_from_positions(
     
     let receiver_pos = [receiver.pos_vel()[0], receiver.pos_vel()[1], receiver.pos_vel()[2]];
     let satellite_pos = [satellite.pos_vel()[0], satellite.pos_vel()[1], satellite.pos_vel()[2]];
+    
+    
     geometry_distance_array(&receiver_pos, &satellite_pos, Some(&mut los_vector));
     sat_el_az_from_lla(&position, &los_vector, elevation, azimuth);
 }
@@ -485,16 +488,17 @@ pub fn geometry_distance_array(
     let dx = satellite[0] - receiver[0];
     let dy = satellite[1] - receiver[1];
     let dz = satellite[2] - receiver[2];
-    let mut r = (dx * dx + dy * dy + dz * dz).sqrt();
+    let r_geometric = (dx * dx + dy * dy + dz * dz).sqrt();
     
-    // add earth rotate compensation
-    r += (satellite[0] * receiver[1] - satellite[1] * receiver[0]) * (WGS_OMEGDOTE / LIGHT_SPEED);
-    
+    // Calculate LOS vector using geometric distance (before Earth rotation compensation)
     if let Some(los) = los_vector {
-        los[0] = dx / r;
-        los[1] = dy / r;
-        los[2] = dz / r;
+        los[0] = dx / r_geometric;
+        los[1] = dy / r_geometric;
+        los[2] = dz / r_geometric;
     }
+    
+    // add earth rotate compensation to final distance
+    let r = r_geometric + (satellite[0] * receiver[1] - satellite[1] * receiver[0]) * (WGS_OMEGDOTE / LIGHT_SPEED);
     
     r
 }

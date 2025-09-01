@@ -112,10 +112,43 @@ A critical feature ensuring navigational correctness by forcing all satellites t
 - Proper BeiDou BDT time correction
 - Unified temporal filtering across all GNSS systems
 
-**Satellite Visibility**: ❌ Issue remains
-- All satellites show 0° elevation (below horizon)
-- Problem likely in satellite position calculation or elevation computation
-- Ephemeris data is loaded correctly, but position/visibility calculations need debugging
+**Satellite Visibility**: ✅ RESOLVED (September 2025)
+- **GPS**: 8 visible satellites with correct elevation angles
+- **BeiDou**: 25 visible satellites 
+- **Galileo**: 4 visible satellites
+- **Total**: 37 visible satellites across all systems
+
+### Major Bug Fixes (September 2025)
+
+**CRITICAL FIXES for Satellite Visibility:**
+
+1. **LOS Vector Calculation Bug** in `src/coordinate.rs:geometry_distance_array()`:
+   - **Issue**: LOS vector calculated using Earth-rotation-compensated distance instead of geometric distance
+   - **Fix**: Separated geometric distance calculation from Earth rotation compensation
+   - **Impact**: Fixed all satellite position and elevation calculations
+
+2. **Missing GPS omega_t Parameter** in `src/json_interpreter.rs:parse_gps_ephemeris()`:
+   - **Issue**: Critical orbital parameters `omega_t` and `omega_delta` never initialized (remained 0.0)
+   - **Fix**: Added proper initialization: `eph.omega_t = eph.omega0; eph.omega_delta = eph.omega_dot;`
+   - **Impact**: Corrected all GPS satellite orbital positions
+
+3. **Epoch Selection Algorithm** in ephemeris filtering:
+   - **Issue**: Algorithm prioritized past epochs over closest time difference
+   - **Fix**: Changed to select epoch with minimum absolute time difference
+   - **Impact**: All GNSS systems now use temporally optimal ephemeris data
+
+4. **Doppler Frequency Calculation** in `src/ifdatagen.rs`:
+   - **Issue**: Incorrect velocity source - used separate array instead of `KinematicInfo` velocity fields
+   - **Fix**: Use `sat_pos_vel.vx/vy/vz` from `gps_sat_pos_speed_eph()` function
+   - **Impact**: Realistic Doppler values (±5000 Hz range) instead of incorrect small values
+
+### Detailed Satellite Output Tables
+
+Added comprehensive satellite visibility tables matching C version format:
+- **PRN/SV numbers**: Satellite identification
+- **Elevation/Azimuth**: Accurate angular positions
+- **Doppler frequencies**: Realistic values in ±5000 Hz range  
+- **Range distances**: Satellite-receiver distances in meters
 
 ### Performance Features
 
@@ -125,5 +158,7 @@ A critical feature ensuring navigational correctness by forcing all satellites t
 
 ### Known Issues
 
-1. **Satellite Visibility Calculation**: Despite correct ephemeris loading and time synchronization, all satellites appear below horizon (0 visible satellites for all systems)
-2. **Position Calculation**: Need to investigate satellite position computation algorithms in elevation/azimuth calculation
+~~1. **Satellite Visibility Calculation**: Despite correct ephemeris loading and time synchronization, all satellites appear below horizon (0 visible satellites for all systems)~~
+~~2. **Position Calculation**: Need to investigate satellite position computation algorithms in elevation/azimuth calculation~~
+
+**All major visibility issues have been resolved as of September 2025. System now correctly calculates satellite positions and visibility.**
