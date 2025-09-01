@@ -462,6 +462,9 @@ pub fn sat_el_az_from_lla(
         los_vector[0] * convert_matrix.x2u + los_vector[1] * convert_matrix.y2u + los_vector[2] * convert_matrix.z2u,
     ];
     
+    // ОТЛАДКА: Проверка расчёта азимута
+    // local_los[0] = восток, local_los[1] = север
+    // Стандартная формула: azimuth = atan2(восток, север)
     *azimuth = local_los[0].atan2(local_los[1]);
     if *azimuth < 0.0 {
         *azimuth += PI2;
