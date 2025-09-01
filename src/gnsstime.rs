@@ -94,9 +94,32 @@ impl GnssTimeConverter {
     }
 
     pub fn utc_to_gps_time(utc_time: UtcTime, use_leap_second: bool) -> GnssTime {
-        let glonass_time = Self::utc_to_glonass_time(utc_time);
-        let total_days = (glonass_time.LeapYear + 3) * (366 + 365 * 3) + glonass_time.Day - 6;
-        let mut total_seconds = (total_days * 86400 + glonass_time.MilliSeconds / 1000 - 10800) as u32;
+        // ПРЯМОЙ РАСЧЕТ ДЛЯ ИСПРАВЛЕНИЯ ОШИБКИ В 4 ДНЯ
+        // Вместо использования промежуточного GLONASS времени, 
+        // рассчитываем GPS время напрямую от GPS эпохи (6 января 1980)
+        
+        // Количество дней от 6 января 1980 до целевой даты
+        let mut days_since_gps_epoch = 0i32;
+        
+        // Добавляем полные годы от 1980 до года-1 целевой даты
+        for year in 1980..utc_time.Year {
+            if Self::is_leap_year(year) {
+                days_since_gps_epoch += 366;
+            } else {
+                days_since_gps_epoch += 365;
+            }
+        }
+        
+        // Добавляем дни от начала целевого года до целевой даты (включительно)
+        let days_in_target_year = Self::day_of_year(utc_time.Year, utc_time.Month, utc_time.Day);
+        days_since_gps_epoch += days_in_target_year;
+        
+        // Вычитаем дни от 1 января до 6 января 1980 (GPS эпоха начинается с 6 января)
+        days_since_gps_epoch -= 6;
+        
+        // Вычисляем GPS время
+        let total_seconds_in_day = utc_time.Hour * 3600 + utc_time.Minute * 60 + utc_time.Second as i32;
+        let mut total_seconds = (days_since_gps_epoch * 86400 + total_seconds_in_day) as u32;
         let temp_seconds = total_seconds;
         let next_day = utc_time.Hour == 0 && utc_time.Minute == 0 && (utc_time.Second as i32) == 0;
 
@@ -113,12 +136,38 @@ impl GnssTimeConverter {
         }
 
         let week = (total_seconds / 604800) as i32;
-        let milli_seconds = ((total_seconds - (week as u32) * 604800) * 1000 + (glonass_time.MilliSeconds % 1000) as u32) as i32;
+        let seconds_in_week = total_seconds - (week as u32) * 604800;
+        let milli_seconds = (seconds_in_week * 1000 + ((utc_time.Second % 1.0) * 1000.0) as u32) as i32;
 
         GnssTime {
             Week: week,
             MilliSeconds: milli_seconds,
-            SubMilliSeconds: glonass_time.SubMilliSeconds,
+            SubMilliSeconds: utc_time.Second % 1.0,
+        }
+    }
+    
+    // Вспомогательные функции
+    fn is_leap_year(year: i32) -> bool {
+        (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)
+    }
+    
+    fn day_of_year(year: i32, month: i32, day: i32) -> i32 {
+        let mut days = day;
+        
+        // Добавляем дни от предыдущих месяцев
+        for m in 1..month {
+            days += Self::days_in_month(year, m);
+        }
+        
+        days
+    }
+    
+    fn days_in_month(year: i32, month: i32) -> i32 {
+        match month {
+            1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+            4 | 6 | 9 | 11 => 30,
+            2 => if Self::is_leap_year(year) { 29 } else { 28 },
+            _ => 0,
         }
     }
 

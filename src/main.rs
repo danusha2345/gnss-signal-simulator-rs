@@ -22,10 +22,121 @@ use std::env;
 use std::time::Instant;
 use std::path::Path;
 use gnss_rust::*;
+use gnss_rust::types::*;
+use gnss_rust::gnsstime::*;
 
 const DEFAULT_CONFIG: &str = "config.json";
 
+// Тест конвертации времени
+fn test_utc_to_gps_conversion() {
+    println!("=== ТЕСТ КОНВЕРТАЦИИ UTC → GPS ВРЕМЯ ===");
+    
+    let utc_time = UtcTime {
+        Year: 2025,
+        Month: 6,
+        Day: 5,
+        Hour: 10,
+        Minute: 5,
+        Second: 30.0,
+    };
+
+    println!("Тестируемое UTC время: 2025-06-05 10:05:30");
+    
+    // Тестируем текущую функцию
+    let gps_time = utc_to_gps_time(utc_time, false);
+    println!("Результат utc_to_gps_time: Week {}, MilliSeconds {}", 
+             gps_time.Week, gps_time.MilliSeconds);
+    
+    // Ожидаемый результат
+    let expected_week = 2369;
+    let expected_ms = 36330000; // четверг 10:05:30
+    println!("Ожидается: Week {}, MilliSeconds {}", expected_week, expected_ms);
+    
+    // Проверим промежуточное GLONASS время (базовый год 1992)
+    let glonass_time = utc_to_glonass_time(utc_time);
+    println!("Промежуточное GLONASS время (1992): LeapYear {}, Day {}, MilliSeconds {}", 
+             glonass_time.LeapYear, glonass_time.Day, glonass_time.MilliSeconds);
+    
+    // Проверим исправленную функцию (базовый год 1996) 
+    let glonass_time_corrected = utc_to_glonass_time_corrected(utc_time);
+    println!("Исправленное GLONASS время (1996): LeapYear {}, Day {}, MilliSeconds {}", 
+             glonass_time_corrected.LeapYear, glonass_time_corrected.Day, glonass_time_corrected.MilliSeconds);
+    
+    // Анализ дней от GPS эпохи
+    println!("\n=== АНАЛИЗ РАСЧЁТА ДНЕЙ ===");
+    
+    // Дни от GPS эпохи (6 января 1980) до промежуточной эпохи (1992)
+    let days_1980_to_1992 = (1992 - 1980) * 365 + 3; // 3 високосных года (1980, 1984, 1988)
+    println!("Дни от GPS эпохи (1980) до промежуточной (1992): {}", days_1980_to_1992);
+    
+    // Дни от промежуточной эпохи до целевой даты
+    let days_1992_to_2025 = glonass_time.LeapYear * (366 + 365 * 3) + glonass_time.Day;
+    println!("Дни от промежуточной эпохи (1992) до 2025-06-05: {}", days_1992_to_2025);
+    
+    // Общие дни от GPS эпохи
+    let total_days = days_1980_to_1992 + days_1992_to_2025 - 6; // -6 дней от 1 января до 6 января 1980
+    println!("Общее количество дней от GPS эпохи: {}", total_days);
+    println!("GPS недель: {}", total_days / 7);
+    println!("Остаток дней (день недели): {}", total_days % 7);
+    
+    // Проверим какой день недели
+    let day_names = ["воскресенье", "понедельник", "вторник", "среда", "четверг", "пятница", "суббота"];
+    println!("День недели: {}", day_names[(total_days % 7) as usize]);
+    
+    // Разница в результатах
+    let week_diff = gps_time.Week - expected_week;
+    let ms_diff = gps_time.MilliSeconds - expected_ms;
+    println!("\n=== ОШИБКИ ===");
+    println!("Ошибка в неделях: {} (должно быть 0)", week_diff);
+    println!("Ошибка в миллисекундах: {} (должно быть 0)", ms_diff);
+    println!("Ошибка в днях: {:.2}", ms_diff as f64 / 86400000.0);
+    
+    // Анализ дня недели
+    println!("\n=== АНАЛИЗ ДНЯ НЕДЕЛИ ===");
+    println!("GPS миллисекунды: {} мс", gps_time.MilliSeconds);
+    println!("Это соответствует дню недели: {}", gps_time.MilliSeconds / 86400000);
+    println!("Часы в этом дне: {}", (gps_time.MilliSeconds % 86400000) / 3600000);
+    println!("Минуты в этом часе: {}", ((gps_time.MilliSeconds % 86400000) % 3600000) / 60000);
+    println!("Секунды в этой минуте: {}", (((gps_time.MilliSeconds % 86400000) % 3600000) % 60000) / 1000);
+    
+    println!("Ожидаемые GPS миллисекунды: {} мс", expected_ms);
+    println!("Это соответствует дню недели: {}", expected_ms / 86400000);
+    println!("Часы в этом дне: {}", (expected_ms % 86400000) / 3600000);
+    
+    let day_names = ["воскресенье", "понедельник", "вторник", "среда", "четверг", "пятница", "суббота"];
+    println!("Получили день: {}", day_names[(gps_time.MilliSeconds / 86400000) as usize]);
+    println!("Ожидаем день: {}", day_names[(expected_ms / 86400000) as usize]);
+    
+    // Дополнительная проверка: правильный расчёт вручную
+    println!("\n=== РУЧНОЙ РАСЧЁТ ДЛЯ ПРОВЕРКИ ===");
+    
+    // Дни от 6 января 1980 до 5 июня 2025
+    let years = 2025 - 1980; // 45 лет
+    let leap_years = (1980..=2024).filter(|&y| is_leap_year(y)).count(); // високосные годы
+    let normal_years = years - leap_years;
+    let total_days_manual = normal_years * 365 + leap_years * 366;
+    
+    // Дни с 1 января до 5 июня 2025 = 31+28+31+30+31+5 = 156 дней (2025 не високосный)
+    let days_in_2025 = 31 + 28 + 31 + 30 + 31 + 5;
+    
+    // Дни с 6 января до конца 1980 года = 366 - 6 = 360 дней (1980 високосный)
+    let days_in_1980 = 366 - 6;
+    
+    let manual_total = days_in_1980 + (years - 1) * 365 + (leap_years - 1) * 1 + days_in_2025;
+    println!("Ручной расчёт общих дней: {}", manual_total);
+    println!("Ручной расчёт GPS недель: {}", manual_total / 7);
+    println!("Ручной день недели: {}", day_names[(manual_total % 7) as usize]);
+}
+
+fn is_leap_year(year: i32) -> bool {
+    (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Запускаем тест конвертации времени перед основной программой
+    test_utc_to_gps_conversion();
+    println!("\n");
+    
     println!("================================================================================");
     println!("                          IF SIGNAL GENERATION");
     println!("================================================================================");

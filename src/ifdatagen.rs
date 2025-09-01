@@ -1001,7 +1001,8 @@ impl IFDataGen {
             let mut sat_number = 0;
             let elevation_mask = self.output_param.ElevationMask;
             
-            let transmit_time = (self.cur_time.MilliSeconds as f64) / 1000.0;
+            // transmit_time в полных секундах от начала GPS эпохи для функции gps_sat_pos_speed_eph
+            let transmit_time = (self.cur_time.Week as f64) * 604800.0 + (self.cur_time.MilliSeconds as f64) / 1000.0;
             
             println!("[DEBUG] GPS Visibility Analysis:");
             println!("[DEBUG] Current GPS time: Week={}, MS={}, Seconds={:.1}", 
@@ -1031,11 +1032,14 @@ impl IFDataGen {
                     }
                     
                     // Calculate satellite position
-                    let transmit_time = (self.cur_time.MilliSeconds as f64) / 1000.0;
+                    // transmit_time в полных секундах от начала GPS эпохи для функции gps_sat_pos_speed_eph
+            let transmit_time = (self.cur_time.Week as f64) * 604800.0 + (self.cur_time.MilliSeconds as f64) / 1000.0;
                     let mut sat_pos = KinematicInfo::default();
                     let mut eph_mut = *eph; // Копируем эфемериды для мутабельности
-                    let delta_t_gps = transmit_time - eph.toe as f64;
-                    println!("[DEBUG] GPS{:02} - toe={}, transmit_time={}, delta_t={:.1}h", i+1, eph.toe, transmit_time, delta_t_gps / 3600.0);
+                    // Для отладочного вывода используем секунды недели
+                    let transmit_time_week_seconds = (self.cur_time.MilliSeconds as f64) / 1000.0;
+                    let delta_t_gps = transmit_time_week_seconds - eph.toe as f64;
+                    println!("[DEBUG] GPS{:02} - toe={}, transmit_time_week={}, delta_t={:.1}h", i+1, eph.toe, transmit_time_week_seconds, delta_t_gps / 3600.0);
                     if crate::coordinate::gps_sat_pos_speed_eph(GnssSystem::GpsSystem, transmit_time, &mut eph_mut, &mut sat_pos, None) {
                         let range = ((sat_pos.x - cur_pos.x).powi(2) + 
                                      (sat_pos.y - cur_pos.y).powi(2) + 
@@ -1077,7 +1081,8 @@ impl IFDataGen {
                 
                 for j in 0..sat_number {
                     if let Some(eph) = &self.gps_eph_visible[j] {
-                        let transmit_time = (self.cur_time.MilliSeconds as f64) / 1000.0;
+                        // transmit_time в полных секундах от начала GPS эпохи для функции gps_sat_pos_speed_eph
+            let transmit_time = (self.cur_time.Week as f64) * 604800.0 + (self.cur_time.MilliSeconds as f64) / 1000.0;
                         let mut sat_pos_vel = KinematicInfo::default();
                         let mut eph_mut = *eph;
                         
@@ -1152,7 +1157,10 @@ impl IFDataGen {
                     let mut eph_mut = *eph; // Копируем эфемериды для мутабельности
                     let pos_calc_success = crate::coordinate::gps_sat_pos_speed_eph(GnssSystem::BdsSystem, transmit_time, &mut eph_mut, &mut sat_pos, None);
                     if i < 5 { // Логируем только первые 5 для отладки
-                        println!("[DEBUG] BDS{:02} toe={}, transmit_time={}, delta_t={:.1}h", eph.svid, eph.toe, transmit_time, (transmit_time - eph.toe as f64) / 3600.0);
+                        // Для отладочного вывода используем секунды недели
+                    let transmit_time_week_seconds = (self.cur_time.MilliSeconds as f64) / 1000.0;
+                    let delta_t_bds = transmit_time_week_seconds - eph.toe as f64;
+                    println!("[DEBUG] BDS{:02} toe={}, transmit_time_week={}, delta_t={:.1}h", eph.svid, eph.toe, transmit_time_week_seconds, delta_t_bds / 3600.0);
                     }
                     if pos_calc_success {
                         println!("[DEBUG] BeiDou sat pos calculated: ({:.1}, {:.1}, {:.1})", sat_pos.x, sat_pos.y, sat_pos.z);
@@ -1251,8 +1259,10 @@ impl IFDataGen {
                     let transmit_time = (self.cur_time.Week as f64) * 604800.0 + (self.cur_time.MilliSeconds as f64) / 1000.0;
                     let mut sat_pos = KinematicInfo::default();
                     let mut eph_mut = *eph; // Копируем эфемериды для мутабельности
-                    let delta_t = transmit_time - eph.toe as f64;
-                    println!("[DEBUG] GAL{:02} - toe={}, transmit_time={}, delta_t={:.1}h", i+1, eph.toe, transmit_time, delta_t / 3600.0);
+                    // Для отладочного вывода используем секунды недели
+                    let transmit_time_week_seconds = (self.cur_time.MilliSeconds as f64) / 1000.0;
+                    let delta_t = transmit_time_week_seconds - eph.toe as f64;
+                    println!("[DEBUG] GAL{:02} - toe={}, transmit_time_week={}, delta_t={:.1}h", i+1, eph.toe, transmit_time_week_seconds, delta_t / 3600.0);
                     let pos_calc_success = crate::coordinate::gps_sat_pos_speed_eph(GnssSystem::GalileoSystem, transmit_time, &mut eph_mut, &mut sat_pos, None);
                     println!("[DEBUG] GAL{:02} - pos_calc_success={}, sat_pos=({:.1}, {:.1}, {:.1})", i+1, pos_calc_success, sat_pos.x, sat_pos.y, sat_pos.z);
                     if pos_calc_success {

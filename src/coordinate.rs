@@ -75,31 +75,17 @@ pub fn gps_sat_pos_speed_eph(
 ) -> bool {
     
     // calculate time difference
-    // КРИТИЧЕСКИЙ ФИКС: Для BeiDou и Galileo нужно скорректировать toe из их временных систем в GPS время
-    let effective_toe = match system {
-        GnssSystem::BdsSystem => {
-            // BeiDou время (BDT) началось 1 января 2006, GPS - 6 января 1980
-            // Разница: 26 лет ≈ 1356 недель. Добавляем коррекцию к BeiDou эпохе.
-            const BDT_TO_GPS_WEEK_OFFSET: i32 = 1356;
-            let corrected_bds_week = eph.week + BDT_TO_GPS_WEEK_OFFSET;
-            (corrected_bds_week as f64) * 604800.0 + (eph.toe as f64)
-        },
-        GnssSystem::GalileoSystem => {
-            // Galileo RINEX уже использует GPS время (не GST), поэтому коррекция не нужна
-            // Используем toe напрямую как GPS время в секундах недели  
-            eph.toe as f64
-        },
-        _ => {
-            // GPS и другие системы используют стандартное время
-            eph.toe as f64
-        }
-    };
-    let mut delta_t = transmit_time - effective_toe;
+    // КРИТИЧЕСКИЙ ФИКС: toe - это всегда секунды недели, transmit_time тоже должно быть в секундах недели!
+    // Для всех систем используем секунды недели, а не полное время
+    let transmit_time_week_seconds = transmit_time % 604800.0;  // Получаем секунды текущей недели
+    let mut delta_t = transmit_time_week_seconds - (eph.toe as f64);
     
-    // protection for time ring back at week end
+    // КРИТИЧЕСКИЙ ФИКС: правильная обработка перехода недели
+    // Если эфемериды из прошлой недели (большая положительная разница)
     if delta_t > 302400.0 {
         delta_t -= 604800.0;
     }
+    // Если эфемериды из следующей недели (большая отрицательная разница)
     if delta_t < -302400.0 {
         delta_t += 604800.0;
     }
