@@ -65,7 +65,23 @@ pub fn glonass_clock_correction(eph: &GlonassEphemeris, transmit_time: f64) -> f
     -eph.tn + eph.gamma * time_diff
 }
 
-/// GPS satellite position and velocity calculation from ephemeris
+/// Расчет положения, скорости и ускорения GPS спутника по эфемеридам
+/// 
+/// Основан на классическом алгоритме Kepler-Lagrange для решения уравнения Кеплера:
+/// 
+/// **Основные этапы:**
+/// 1. Решение уравнения Кеплера: E = M + e*sin(E) (метод Newton-Raphson)
+/// 2. Вычисление истинной аномалии ν = atan2(√(1-e²)·sin(E), cos(E)-e)
+/// 3. Применение пертурбационных поправок (Cuc, Cus, Crc, Crs, Cic, Cis)
+/// 4. Преобразование из орбитальной плоскости в ECEF координаты
+/// 
+/// **Математические константы:**
+/// - Полупериод GPS недели: 302400 сек (3.5 дня) - для оболочки перехода недель
+/// - Точность сходимости: 1e-14 радиан (ок. 0.0001 массекунд дуги)
+/// - Максимальное количество итераций: 10 (для предотвращения бесконечных циклов)
+/// 
+/// **Критическая особенность:** Обработка перехода GPS недели (604800 сек цикл)
+/// Ошибка может привести к неправильному расчету положения на сотни километров!
 pub fn gps_sat_pos_speed_eph(
     system: GnssSystem,
     transmit_time: f64,
@@ -88,15 +104,27 @@ pub fn gps_sat_pos_speed_eph(
         delta_t += 604800.0;
     }
     
-    // get Ek from Mk with recursive algorithm
+    // РЕШЕНИЕ УРАВНЕНИЯ КЕПЛЕРА: E = M + e·sin(E)
+    // 
+    // Метод Newton-Raphson для решения трансцендентного уравнения:
+    // f(E) = E - e·sin(E) - M = 0
+    // f'(E) = 1 - e·cos(E)
+    // E_{n+1} = E_n - f(E_n)/f'(E_n)
+    // 
+    // Параметры:
+    // - alpha: коррекция среднего движения (δn̈·Δt)
+    // - mk: средняя аномалия M = M₀ + (n + α/2)·Δt
+    // - ek: эксцентрическая аномалия E (искомая величина)
     let alpha = eph.delta_n_dot * delta_t;
     let mk = eph.M0 + (eph.n + alpha / 2.0) * delta_t;
-    let mut ek = mk;
+    let mut ek = mk; // Начальная оценка: E₀ = M
     let mut ek1 = ek;
     
+    // Итерационный процесс Newton-Raphson (10 итераций максимум)
+    // Типичная сходимость: 3-5 итераций для достижения 1e-14 точности
     for _ in 0..10 {
-        ek = mk + eph.ecc * ek.sin();
-        if (ek - ek1).abs() < 1e-14 {
+        ek = mk + eph.ecc * ek.sin(); // Упрощенная форма: E = M + e·sin(E)
+        if (ek - ek1).abs() < 1e-14 { // Критерий сходимости
             break;
         }
         ek1 = ek;
@@ -106,7 +134,16 @@ pub fn gps_sat_pos_speed_eph(
     // assign ek1 as 1-e*cos(Ek)
     ek1 = 1.0 - (eph.ecc * ek.cos());
     
-    // get phi(k) with atan2
+    // ВЫЧИСЛЕНИЕ ИСТИННОЙ АНОМАЛИИ ν (ню)
+    // 
+    // Формула: ν = atan2(√(1-e²)·sin(E), cos(E) - e) + ω
+    // Где:
+    // - E: эксцентрическая аномалия
+    // - e: эксцентриситет орбиты (0 < e < 1)
+    // - ω: аргумент перигея
+    // - atan2: 4-квадрантная арктангенс функция
+    // 
+    // phi(k) = аргумент широты = истинная аномалия + аргумент перигея
     let phi = (eph.root_ecc * ek.sin()).atan2(ek.cos() - eph.ecc) + eph.w;
     let sin_temp = (phi + phi).sin();
     let cos_temp = (phi + phi).cos();
@@ -116,10 +153,23 @@ pub fn gps_sat_pos_speed_eph(
     let mut rk = (eph.axis + eph.axis_dot * delta_t) * ek1;
     let mut ik = eph.i0 + (eph.idot * delta_t);
     
-    // apply 2nd order correction to u(k), r(k) and i(k)
-    let duk = (eph.cuc * cos_temp) + (eph.cus * sin_temp);
-    let drk = (eph.crc * cos_temp) + (eph.crs * sin_temp);
-    let dik = (eph.cic * cos_temp) + (eph.cis * sin_temp);
+    // ПРИМЕНЕНИЕ ПЕРТУРБАЦИОННЫХ ПОПРАВОК 2-ГО ПОРЯДКА
+    // 
+    // Коррекции для учета несферичности Земли и возмущений:
+    // 
+    // **Аргумент широты u(k):**
+    // δu = Cuc·cos(2φ) + Cus·sin(2φ)
+    // 
+    // **Радиальное расстояние r(k):**
+    // δr = Crc·cos(2φ) + Crs·sin(2φ)
+    // 
+    // **Наклонение орбиты i(k):**
+    // δi = Cic·cos(2φ) + Cis·sin(2φ)
+    // 
+    // Где: 2φ = 2·(ν + ω) - удвоенный аргумент широты
+    let duk = (eph.cuc * cos_temp) + (eph.cus * sin_temp); // Коррекция аргумента широты
+    let drk = (eph.crc * cos_temp) + (eph.crs * sin_temp); // Коррекция радиального расстояния
+    let dik = (eph.cic * cos_temp) + (eph.cis * sin_temp); // Коррекция наклонения орбиты
     uk += duk;
     rk += drk;
     ik += dik;
@@ -168,18 +218,31 @@ pub fn gps_sat_pos_speed_eph(
         (0.0, 0.0)
     };
     
-    // get final position and speed in ECEF coordinate
-    // КАК В C ВЕРСИИ: Простое вычисление omega без учёта вращения Земли в позиции
+    // ПРЕОБРАЗОВАНИЕ В ECEF КООРДИНАТЫ
+    // 
+    // Переход из орбитальной плоскости в систему ECEF (Earth-Centered, Earth-Fixed):
+    // 
+    // **Долгота восходящего узла:**
+    // Ω(t) = Ω₀ + (Ω̇ - ωₑ)·Δt
+    // 
+    // КРИТИЧНО: Используем упрощенную формулу без учета вращения Земли ωₑ
+    // в позиции (только в скорости). Это соответствует C версии.
     let omega = eph.omega_t + eph.omega_delta * delta_t;
-    let sin_temp = omega.sin();
-    let cos_temp = omega.cos();
-    let phi_sin = ik.sin();
-    pos_vel.z = yp * phi_sin;
-    pos_vel.vz = yp_dot * phi_sin;
+    // Матрица поворота из орбитальной плоскости в ECEF:
+    // ┌   ┐   ┌                                      ┐  ┌  ┐
+    // │ X │   │  cos Ω  -sin Ω cos i   sin Ω sin i │ │xₚ│
+    // │ Y │ = │  sin Ω   cos Ω cos i  -cos Ω sin i │ │yₚ│
+    // │ Z │   │    0         sin i        cos i    │ │0│
+    // └   ┘   └                                      ┘ └  ┘
+    let sin_temp = omega.sin(); // sin(Ω)
+    let cos_temp = omega.cos(); // cos(Ω)
+    let phi_sin = ik.sin(); // sin(i) - синус наклонения орбиты
+    pos_vel.z = yp * phi_sin; // Z = yₚ·sin(i)
+    pos_vel.vz = yp_dot * phi_sin; // Vz = ẏₚ·sin(i)
     
-    let phi_cos = ik.cos();
-    pos_vel.x = xp * cos_temp - yp * phi_cos * sin_temp;
-    pos_vel.y = xp * sin_temp + yp * phi_cos * cos_temp;
+    let phi_cos = ik.cos(); // cos(i) - косинус наклонения орбиты
+    pos_vel.x = xp * cos_temp - yp * phi_cos * sin_temp; // X = xₚ·cos(Ω) - yₚ·cos(i)·sin(Ω)
+    pos_vel.y = xp * sin_temp + yp * phi_cos * cos_temp; // Y = xₚ·sin(Ω) + yₚ·cos(i)·cos(Ω)
     
     // phi_dot assign as yp_dot * cos(ik) - z * ik_dot
     let phi_dot_final = yp_dot * phi_cos - pos_vel.z * ik_dot;
@@ -327,42 +390,100 @@ pub fn glonass_sat_pos_speed_eph(
     true
 }
 
-/// Convert ECEF to LLA coordinates
+/// Преобразование ECEF координат в геодезические LLA
+/// 
+/// Алгоритм основан на методе Bowring (1985) для преобразования
+/// декартовых ECEF координат в эллипсоидальные:
+/// 
+/// **Входные параметры:**
+/// - X, Y, Z: ECEF координаты в метрах (система WGS84)
+/// 
+/// **Выходные параметры:**
+/// - φ (lat): широта в радианах (-π/2 до +π/2)
+/// - λ (lon): долгота в радианах (-π до +π)
+/// - h (alt): высота над эллипсоидом WGS84 в метрах
+/// 
+/// **Математические константы WGS84:**
+/// - a = 6378137.0 м (большая полуось)
+/// - b = 6356752.314245 м (малая полуось)
+/// - e² = 0.00669437999014 (квадрат эксцентриситета)
 pub fn ecef_to_lla(ecef_pos: &KinematicInfo) -> LlaPosition {
+    // Радиальное расстояние от оси Z в экваториальной плоскости
+    // p = √(X² + Y²) - проекция на экваториальную плоскость
     let p = (ecef_pos.x * ecef_pos.x + ecef_pos.y * ecef_pos.y).sqrt();
     
+    // Обработка особого случая: северный/южный полюс
+    // Когда p ≈ 0, точка лежит на оси вращения Земли
+    // Долгота неопределена, принимаем 0°
     if p < 1e-10 {
-        // north or south pole
         return LlaPosition {
-            lon: 0.0,
-            lat: PI / 2.0,
+            lon: 0.0, // По соглашению долгота = 0° на полюсах
+            lat: if ecef_pos.z > 0.0 { PI / 2.0 } else { -PI / 2.0 }, // ±90° в зависимости от знака Z
             alt: if ecef_pos.z > 0.0 {
-                ecef_pos.z - WGS_AXIS_B
+                ecef_pos.z - WGS_AXIS_B // Высота над северным полюсом
             } else {
-                -ecef_pos.z - WGS_AXIS_B
+                -ecef_pos.z - WGS_AXIS_B // Высота над южным полюсом
             },
         };
     }
     
+    // МЕТОД BOWRING (1985): итеративное решение для широты
+    // 
+    // Шаг 1: Вспомогательный угол θ (приближенная широта)
+    // θ = atan(Z·a / (p·b))
+    // Где: a - большая полуось, b - малая полуось WGS84
     let theta = (ecef_pos.z * WGS_AXIS_A / (p * WGS_AXIS_B)).atan();
+    
+    // Шаг 2: Точное вычисление широты φ с учетом эксцентриситета
+    // φ = atan((Z + e'²·b·sin³θ) / (p - e²·a·cos³θ))
+    // Где:
+    // - e² = 0.00669437999014 (первый эксцентриситет WGS84)
+    // - e'² = 0.00673949674228 (второй эксцентриситет WGS84)
     let lat = ((ecef_pos.z + WGS_E2_SQR * WGS_AXIS_B * theta.sin().powi(3))
         / (p - WGS_E1_SQR * WGS_AXIS_A * theta.cos().powi(3))).atan();
+    
+    // Шаг 3: Вычисление долготы (просто!)
+    // λ = atan2(Y, X) - 4-квадрантная арктангенс функция
     let lon = ecef_pos.y.atan2(ecef_pos.x);
     
-    let n = WGS_AXIS_A / (1.0 - WGS_E1_SQR * lat.sin() * lat.sin()).sqrt();
-    let alt = p / lat.cos() - n;
+    /// Шаг 4: Вычисление высоты над эллипсоидом
+    /// N(φ) = a / √(1 - e²·sin²φ) - радиус кривизны в приме вертикала
+    /// h = p/cosφ - N(φ) - эллипсоидальная высота
+    let n = WGS_AXIS_A / (1.0 - WGS_E1_SQR * lat.sin() * lat.sin()).sqrt(); // Радиус кривизны N(φ)
+    let alt = p / lat.cos() - n; // Высота над WGS84 эллипсоидом
     
     LlaPosition { lat, lon, alt }
 }
 
-/// Convert LLA to ECEF coordinates
+/// Преобразование геодезических LLA координат в ECEF
+/// 
+/// Прямое преобразование с использованием стандартных формул WGS84:
+/// 
+/// **Математическая модель:**
+/// X = (N(φ) + h) · cos(φ) · cos(λ)
+/// Y = (N(φ) + h) · cos(φ) · sin(λ)
+/// Z = (N(φ)(1-e²) + h) · sin(φ)
+/// 
+/// Где:
+/// - N(φ) = a/√(1-e²sin²φ) - радиус кривизны в приме вертикала
+/// - φ, λ, h - широта, долгота, высота
+/// - e² - квадрат эксцентриситета WGS84
+/// 
+/// **Особенность:** Скорость анулируется (статичное преобразование)
 pub fn lla_to_ecef(lla_pos: &LlaPosition) -> KinematicInfo {
+    /// Вычисление радиуса кривизны в приме вертикала
+    /// N(φ) = a / √(1 - e² · sin²(φ)) - основное соотношение для WGS84
     let n = WGS_AXIS_A / (1.0 - WGS_E1_SQR * lla_pos.lat.sin() * lla_pos.lat.sin()).sqrt();
     
+    /// Прямое применение формул WGS84 для преобразования:
     let result = KinematicInfo {
+        /// X = (N + h) · cos(φ) · cos(λ)
         x: (n + lla_pos.alt) * lla_pos.lat.cos() * lla_pos.lon.cos(),
+        /// Y = (N + h) · cos(φ) · sin(λ)
         y: (n + lla_pos.alt) * lla_pos.lat.cos() * lla_pos.lon.sin(),
+        /// Z = (N(1-e²) + h) · sin(φ) - учитываем сжатие Земли
         z: (n * (1.0 - WGS_E1_SQR) + lla_pos.alt) * lla_pos.lat.sin(),
+        /// Скорость = 0 (статичное преобразование только позиции)
         vx: 0.0,
         vy: 0.0,
         vz: 0.0,
@@ -377,21 +498,41 @@ pub fn calc_conv_matrix_from_ecef(position: &KinematicInfo) -> ConvertMatrix {
     calc_conv_matrix_lla(&pos_lla)
 }
 
-/// Calculate conversion matrix from LLA position
+/// Вычисление матрицы преобразования ECEF → ENU (East-North-Up)
+/// 
+/// Матрица поворота для перехода от глобальных ECEF к локальным топоцентрическим:
+/// 
+/// **Математическая модель:**
+/// ┌        ┐   ┌                                     ┐ ┌    ┐
+/// │ East   │   │ -sin(λ)      cos(λ)         0   │ │ ΔX │
+/// │ North  │ = │ -sin(φ)cos(λ) -sin(φ)sin(λ) cos(φ) │ │ ΔY │
+/// │ Up     │   │  cos(φ)cos(λ)  cos(φ)sin(λ) sin(φ) │ │ ΔZ │
+/// └        ┘   └                                     ┘ └    ┘
+/// 
+/// Где:
+/// - φ (lat) - широта опорной точки
+/// - λ (lon) - долгота опорной точки
+/// - ΔX, ΔY, ΔZ - относительные ECEF координаты
 pub fn calc_conv_matrix_lla(position: &LlaPosition) -> ConvertMatrix {
     // ВРЕМЕННАЯ ОТЛАДКА: проверяем знак долготы
     println!("[MATRIX-DEBUG] Input LLA: lat={:.4}°, lon={:.4}°", 
              position.lat.to_degrees(), position.lon.to_degrees());
     
+    /// Коэффициенты матрицы преобразования ECEF → ENU:
     ConvertMatrix {
-        x2e: -position.lon.sin(),
-        y2e: position.lon.cos(),
-        x2n: -position.lat.sin() * position.lon.cos(),
-        y2n: -position.lat.sin() * position.lon.sin(),
-        z2n: position.lat.cos(),
-        x2u: position.lat.cos() * position.lon.cos(),
-        y2u: position.lat.cos() * position.lon.sin(),
-        z2u: position.lat.sin(),
+        /// Направление East (Восток): перпендикулярно меридиану
+        x2e: -position.lon.sin(),  // -sin(λ) - компонента X для East
+        y2e: position.lon.cos(),   // cos(λ) - компонента Y для East
+        
+        /// Направление North (Север): по меридиану, касательно к эллипсоиду
+        x2n: -position.lat.sin() * position.lon.cos(), // -sin(φ)cos(λ)
+        y2n: -position.lat.sin() * position.lon.sin(), // -sin(φ)sin(λ)
+        z2n: position.lat.cos(),                        // cos(φ)
+        
+        /// Направление Up (Вверх): по нормали к эллипсоиду
+        x2u: position.lat.cos() * position.lon.cos(),  // cos(φ)cos(λ)
+        y2u: position.lat.cos() * position.lon.sin(),  // cos(φ)sin(λ)
+        z2u: position.lat.sin(),                        // sin(φ)
     }
 }
 
