@@ -3141,8 +3141,8 @@ impl IFDataGen {
                 let index = svid - 1;              // Конвертация SVID в индекс массива
                 self.gal_eph[index] = Some(eph);
                 gal_count += 1;
-                // Ограниченный вывод диагностики для первых 5 спутников (предотвращение спама)
-                if gal_count <= 5 {
+                // Расширенная отладка для эталонных спутников
+                if [14, 15, 29, 30, 34].contains(&(svid as u8)) || gal_count <= 5 {
                     println!("[DEBUG] Selected best Galileo ephemeris for SVID {} - toe={}, time_diff={:.1}h (valid:{}, health:{})", 
                         svid, eph.toe, best_time_diff / 3600.0, eph.valid, eph.health);
                 }

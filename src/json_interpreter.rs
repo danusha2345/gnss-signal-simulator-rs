@@ -844,6 +844,9 @@ pub fn read_nav_file_filtered(
                     if let Some(target) = target_time {
                         // ПРОВЕРКА: Проверяем, попадает ли эфемерида в временное окно вокруг target_time
                         if is_ephemeris_within_time_window(&eph, &target, time_window_hours) {
+                            if [14, 15, 29, 30, 34].contains(&eph.svid) {
+                                println!("[GAL-SPECIAL] Found target SVID {} with toe={}", eph.svid, eph.toe);
+                            }
                             println!("[GAL-FILTER] GAL{:02} passed time filter: toe={}", eph.svid, eph.toe);
                             // Добавляем эпоху (toe) в список доступных времен
                             galileo_available_epochs.insert(eph.toe);
@@ -851,6 +854,10 @@ pub fn read_nav_file_filtered(
                             // *** КРИТИЧНО: Группируем эфемериды по эпоху времени (toe) ***
                             galileo_ephemeris_by_epoch.entry(eph.toe).or_insert_with(HashMap::new).insert(eph.svid, eph);
                             galileo_accepted += 1;
+                        } else {
+                            if [14, 15, 29, 30, 34].contains(&eph.svid) {
+                                println!("[GAL-SPECIAL] Target SVID {} REJECTED by time filter: toe={}", eph.svid, eph.toe);
+                            }
                         }
                     } else {
                         // Без временной фильтрации - принимаем все эфемериды Galileo
@@ -1051,6 +1058,9 @@ pub fn read_nav_file_filtered(
                     for (svid, eph) in epoch_ephemeris {
                         nav_data.add_galileo_ephemeris(*eph);
                         galileo_accepted += 1;
+                        if [14, 15, 29, 30, 34].contains(svid) {
+                            println!("[EPOCH-DEBUG] Added target SVID {} from toe={}", svid, eph.toe);
+                        }
                         // Added Galileo ephemeris
                     }
                 } else {
