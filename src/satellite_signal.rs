@@ -283,15 +283,17 @@ impl SatelliteSignal {
                     };
                     
                     if should_debug { // показываем для диагностики проблемы
-                        println!("[NAV] {} SV{:02} кадр {}: {} битов/4096 ({:.1}%)", 
-                                system_name, self.svid, self.current_frame, non_zero_count, 
-                                (non_zero_count as f32 / 4096.0) * 100.0);
+                        // DEBUG: NAV кадр отладка отключена для уменьшения вывода
+                        // println!("[NAV] {} SV{:02} кадр {}: {} битов/4096 ({:.1}%)", 
+                        //         system_name, self.svid, self.current_frame, non_zero_count, 
+                        //         (non_zero_count as f32 / 4096.0) * 100.0);
                         if non_zero_count > 0 {
                             let first_10 = (0..10).map(|i| if data_bits_i32[i] != 0 { "1" } else { "0" }).collect::<String>();
                             // IODC младшие биты должны быть в word 5 subframe 1 (~150 биты)
                             let iodc_bits = (120..130).map(|i| if data_bits_i32.get(i).copied().unwrap_or(0) != 0 { "1" } else { "0" }).collect::<String>();
                             let late_bits = (200..210).map(|i| if data_bits_i32.get(i).copied().unwrap_or(0) != 0 { "1" } else { "0" }).collect::<String>();
-                            println!("      Первые биты: {} | IODC область(120-130): {} | Поздние биты(200-210): {}", first_10, iodc_bits, late_bits);
+                            // DEBUG: Детализация битов отключена для уменьшения вывода
+                            // println!("      Первые биты: {} | IODC область(120-130): {} | Поздние биты(200-210): {}", first_10, iodc_bits, late_bits);
                         } else {
                             println!("      ⚠️ НЕТ НАВИГАЦИОННЫХ ДАННЫХ!");
                         }

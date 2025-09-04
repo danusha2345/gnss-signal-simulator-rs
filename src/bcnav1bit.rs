@@ -162,10 +162,11 @@ impl BCNav1Bit {
             frame3_density += word.count_ones();
         }
         
-        println!("[BDS-STREAM-DEBUG] SV{:02} frame2: {} битов из {} ({:.1}%)", 
-                svid, frame2_density, 25*24, (frame2_density as f32 / (25.0*24.0)) * 100.0);
-        println!("[BDS-STREAM-DEBUG] SV{:02} frame3: {} битов из {} ({:.1}%)", 
-                svid, frame3_density, 11*24, (frame3_density as f32 / (11.0*24.0)) * 100.0);
+        // DEBUG: BDS stream отключен для уменьшения вывода
+        // println!("[BDS-STREAM-DEBUG] SV{:02} frame2: {} битов из {} ({:.1}%)", 
+        //         svid, frame2_density, 25*24, (frame2_density as f32 / (25.0*24.0)) * 100.0);
+        // println!("[BDS-STREAM-DEBUG] SV{:02} frame3: {} битов из {} ({:.1}%)", 
+        //         svid, frame3_density, 11*24, (frame3_density as f32 / (11.0*24.0)) * 100.0);
         for i in 0..88 {
             self.assign_bits(symbol3[i], 6, &mut bits3[i * 6..]);
         }
@@ -239,9 +240,46 @@ impl BCNav1Bit {
         self.base.append_word(&mut frame2_data[10..], 2, &self.base.ephemeris2[svid_idx], 222);
         self.base.append_word(&mut frame2_data[19..], 8, &self.base.clock_param[svid_idx], 69);
         
+        // РАСШИРЕННЫЕ TGD ПАРАМЕТРЫ: Максимально заполняем frame2 доступными данными
+        // TODO: Интегрировать с реальными эфемеридами BeiDou когда будет доступна правильная архитектура
+        
+        // TGD1 и TGD2 данные из базового массива
         frame2_data[22] |= self.base.compose_bits(self.base.tgs_isc_param[svid_idx][1], 7, 12);
         frame2_data[22] |= self.base.compose_bits(self.base.tgs_isc_param[svid_idx][0] >> 17, 0, 7);
         frame2_data[23] |= self.base.compose_bits(self.base.tgs_isc_param[svid_idx][0], 7, 17);
+        
+        // Дополнительные TGD параметры для B2a/B2b (из других источников)
+        let tgd_b2a = if svid_idx < self.base.tgs_isc_param.len() && self.base.tgs_isc_param[svid_idx].len() > 2 {
+            self.base.tgs_isc_param[svid_idx][2]
+        } else { 0 }; 
+        frame2_data[23] |= self.base.compose_bits(tgd_b2a, 17, 7);
+        
+        let tgd_b2b = if svid_idx < self.base.tgs_isc_param.len() && self.base.tgs_isc_param[svid_idx].len() > 3 {
+            // Массив имеет только 3 элемента (индексы 0,1,2), используем запасное значение
+            0  // Пока используем 0, так как индекс 3 не существует
+        } else { 0 };
+        frame2_data[23] |= self.base.compose_bits(tgd_b2b, 10, 7);
+        
+        // Satellite type determination (based on SVID ranges)
+        let sat_type = if svid <= 5 { 0 }     // GEO: C01-C05
+            else if svid <= 17 { 1 }          // IGSO: C06-C17  
+            else { 2 };                       // MEO: C18-C63
+        frame2_data[23] |= self.base.compose_bits(sat_type, 7, 3);
+        
+        // URAI и integrity flags из доступных источников
+        let urai = if svid_idx < self.base.integrity_flags.len() { 
+            (self.base.integrity_flags[svid_idx] & 0xF) as u32 
+        } else { 8 };  // default URA = 8
+        frame2_data[24] |= self.base.compose_bits(urai, 20, 4);
+        
+        let integrity_flag = if svid_idx < self.base.integrity_flags.len() { 
+            (self.base.integrity_flags[svid_idx] >> 4) as u32 
+        } else { 0 };
+        frame2_data[24] |= self.base.compose_bits(integrity_flag, 16, 4);
+    }
+
+    fn unscale_int(value: f64, scale_factor: i32) -> i32 {
+        (value * 2.0_f64.powi(-scale_factor)).round() as i32
     }
 
     pub fn set_iono_utc(&mut self, iono_param: Option<&IonoParam>, utc_param: Option<&UtcParam>) -> i32 {
@@ -328,7 +366,33 @@ impl BCNav1Bit {
             self.bds_subframe3[2][i] = 0xAAAAAA; // ~50% заполнение битов для стабильной модуляции
         }
         
-        self.bds_subframe3[2][0] = 3 << 17; // Message Type ID in bits 22-17
+        self.bds_subframe3[2][0] |= 3 << 17; // Message Type ID in bits 22-17
+        
+        // РЕАЛЬНЫЕ EOP ПАРАМЕТРЫ: Заполняем Earth Orientation Parameters
+        if self.base.eop_param[0] != 0 || self.base.eop_param[1] != 0 {
+            // X-pole position (масштаб: 2^-20 arcsec)
+            self.bds_subframe3[2][0] |= (self.base.eop_param[0] >> 7) & 0x1FFFF;
+            self.bds_subframe3[2][1] |= ((self.base.eop_param[0] & 0x7F) << 17) | ((self.base.eop_param[1] >> 15) & 0x1FFFF);
+            
+            // Y-pole position (масштаб: 2^-20 arcsec)  
+            self.bds_subframe3[2][2] |= ((self.base.eop_param[1] & 0x7FFF) << 9) | ((self.base.eop_param[2] >> 23) & 0x1FF);
+            self.bds_subframe3[2][3] |= (self.base.eop_param[2] & 0x7FFFFF) << 1;
+            
+            // UT1-UTC (масштаб: 2^-24 seconds)
+            self.bds_subframe3[2][3] |= (self.base.eop_param[3] >> 23) & 0x1;
+            self.bds_subframe3[2][4] |= (self.base.eop_param[3] & 0x7FFFFF) << 1;
+        }
+        
+        // РЕАЛЬНЫЕ BGTO ПАРАМЕТРЫ: BDS-GPS Time Offset параметры  
+        for i in 0..7 {
+            if i < 3 && self.base.bgto_param[i][0] != 0 {
+                // BGTO A0, A1, A2 параметры для разных GNSS систем
+                let bgto_word = ((i + 5) as u32) << 21; // Word positions 5-7
+                self.bds_subframe3[2][i + 5] |= bgto_word;
+                self.bds_subframe3[2][i + 5] |= (self.base.bgto_param[i][0] >> 3) & 0x1FFFFF;
+                self.bds_subframe3[2][i + 5 + 1] |= ((self.base.bgto_param[i][0] & 0x7) << 21) | ((self.base.bgto_param[i][1] >> 11) & 0x1FFFFF);
+            }
+        }
     }
 
     fn update_subframe3_page4_internal(&mut self) {
@@ -338,7 +402,61 @@ impl BCNav1Bit {
             self.bds_subframe3[3][i] = 0xAAAAAA; // ~50% заполнение битов для стабильной модуляции
         }
         
-        self.bds_subframe3[3][0] = 4 << 17; // Message Type ID in bits 22-17
+        self.bds_subframe3[3][0] |= 4 << 17; // Message Type ID in bits 22-17
+        
+        // РЕАЛЬНЫЙ REDUCED ALMANAC: Заполняем сокращенным альманахом для всех видимых спутников
+        // Reduced almanac содержит только самые важные орбитальные параметры
+        
+        // Almanac week number (WN_alm)
+        self.bds_subframe3[3][0] |= (self.base.almanac_week & 0x1FFF) << 4; // 13 bits
+        
+        // Time of Almanac (TOA)  
+        self.bds_subframe3[3][0] |= (self.base.almanac_toa >> 4) & 0xF;
+        self.bds_subframe3[3][1] |= (self.base.almanac_toa & 0xF) << 20;
+        
+        // Заполняем данные reduced almanac для первых 8-10 спутников
+        let mut word_idx = 1;
+        let mut bit_offset = 0;
+        
+        for sat_idx in 0..10.min(self.base.reduced_almanac.len()) {
+            if word_idx >= 11 { break; } // Защита от переполнения массива
+            
+            if self.base.reduced_almanac[sat_idx][0] != 0 {
+                // SVID (6 bits) + Health (1 bit) + sqrt(A) reduced (11 bits) 
+                let svid = (sat_idx + 1) as u32;
+                let health = (self.base.reduced_almanac[sat_idx][0] >> 31) & 0x1;
+                let sqrt_a_reduced = (self.base.reduced_almanac[sat_idx][0] >> 20) & 0x7FF;
+                
+                let almanac_data = (svid << 12) | (health << 11) | sqrt_a_reduced;
+                
+                if bit_offset + 18 <= 24 {
+                    // Поместится в текущее слово
+                    self.bds_subframe3[3][word_idx] |= almanac_data << (24 - bit_offset - 18);
+                    bit_offset += 18;
+                } else {
+                    // Разделить между текущим и следующим словом
+                    let bits_in_current = 24 - bit_offset;
+                    self.bds_subframe3[3][word_idx] |= almanac_data >> (18 - bits_in_current);
+                    word_idx += 1;
+                    if word_idx < 11 {
+                        self.bds_subframe3[3][word_idx] |= (almanac_data & ((1 << (18 - bits_in_current)) - 1)) << (24 - (18 - bits_in_current));
+                        bit_offset = 18 - bits_in_current;
+                    }
+                }
+            }
+            
+            if bit_offset >= 24 {
+                word_idx += 1;
+                bit_offset = 0;
+            }
+        }
+        
+        // Заполняем оставшиеся биты дополнительными параметрами
+        if word_idx < 11 {
+            // Добавляем reference week и reference TOA для синхронизации
+            self.bds_subframe3[3][word_idx] |= ((self.base.almanac_week & 0xFF) << 16) | 
+                                               ((self.base.almanac_toa & 0xFFFF));
+        }
     }
 
     fn assign_bits(&self, value: i32, bits: usize, output: &mut [i32]) {

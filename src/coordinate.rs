@@ -89,11 +89,11 @@ pub fn gps_sat_pos_speed_eph(
     pos_vel: &mut KinematicInfo,
     mut acc: Option<&mut [f64; 3]>,
 ) -> bool {
-    // Отладка входных параметров
-    if eph.svid == 1 {  // Только для первого спутника для уменьшения вывода
-        println!("[GPS_POS_DEBUG] Input: transmit_time={}, toe={}, svid={}", 
-                 transmit_time, eph.toe, eph.svid);
-    }
+    // Отладка входных параметров отключена для уменьшения вывода
+    // if eph.svid == 1 {  // Только для первого спутника для уменьшения вывода
+    //     println!("[GPS_POS_DEBUG] Input: transmit_time={}, toe={}, svid={}", 
+    //              transmit_time, eph.toe, eph.svid);
+    // }
     
     // calculate time difference
     // КАК В C ВЕРСИИ: transmit_time уже в секундах недели, не применяем модульное деление
@@ -415,7 +415,7 @@ pub fn gps_sat_pos_speed_eph(
     
     // if ephemeris expire, return false
     if delta_t.abs() > 7200.0 {
-        println!("[GPS_POS_DEBUG] Ephemeris expired: delta_t = {} > 7200", delta_t);
+        // println!("[GPS_POS_DEBUG] Ephemeris expired: delta_t = {} > 7200", delta_t);
         false
     } else { 
         true // Упрощаем логику - просто возвращаем true если delta_t в пределах нормы
@@ -634,9 +634,9 @@ pub fn calc_conv_matrix_from_ecef(position: &KinematicInfo) -> ConvertMatrix {
 /// - λ (lon) - долгота опорной точки
 /// - ΔX, ΔY, ΔZ - относительные ECEF координаты
 pub fn calc_conv_matrix_lla(position: &LlaPosition) -> ConvertMatrix {
-    // ВРЕМЕННАЯ ОТЛАДКА: проверяем знак долготы
-    println!("[MATRIX-DEBUG] Input LLA: lat={:.4}°, lon={:.4}°", 
-             position.lat.to_degrees(), position.lon.to_degrees());
+    // DEBUG: Матрица отключена для уменьшения вывода
+    // println!("[MATRIX-DEBUG] Input LLA: lat={:.4}°, lon={:.4}°", 
+    //          position.lat.to_degrees(), position.lon.to_degrees());
     
     // Коэффициенты матрицы преобразования ECEF → ENU:
     ConvertMatrix {

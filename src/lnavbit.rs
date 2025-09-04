@@ -84,9 +84,9 @@ impl LNavBit {
         start_time.Week += start_time.MilliSeconds / 604800000;
         start_time.MilliSeconds %= 604800000;
         let tow = start_time.MilliSeconds / 6000;
-        // ТЕСТ: Принудительно использовать subframe 1 для уникальных эфемеридных данных
-        let subframe = 1;
-        println!("[GPS-SUBFRAME] SV{:02}: tow={}, subframe={}", svid, tow, subframe);
+        let subframe = (tow % 5) + 1;  // Циклическое переключение subframes 1-5
+        // DEBUG: GPS subframe отладка отключена для уменьшения вывода
+        // println!("[GPS-SUBFRAME] SV{:02}: tow={}, subframe={}", svid, tow, subframe);
         
         let stream = if subframe > 3 {
             // subframe 4/5, further determine page number
@@ -262,23 +262,31 @@ impl LNavBit {
         // Дозаполняем слово 1 остальными битами
         stream[0][1] |= Self::compose_bits(0x3F, 0, 1); // заполнитель
         
-        // Слово 2: заполняем полностью все 24 бита
-        stream[0][2] = Self::compose_bits(0xFFFFFF, 0, 24); // полное заполнение
+        // Слово 2: IODC (младшие 8 бит) + TGD
+        stream[0][2] = Self::compose_bits((ephemeris.iodc & 0xFF) as i32, 16, 8);
+        stream[0][2] |= Self::compose_bits(Self::unscale_int(ephemeris.tgd, -31), 8, 8);
+        // Добавляем дополнительные параметры из tgd_ext
+        stream[0][2] |= Self::compose_bits(Self::unscale_int(ephemeris.tgd_ext[0], -31), 0, 8); // L2P TGD
         
-        // Слово 3: заполняем полностью все 24 бита
-        stream[0][3] = Self::compose_bits(0xFFFFFF, 0, 24); // полное заполнение
+        // Слово 3: Time of Clock (toc) + дополнительные параметры часов
+        stream[0][3] = Self::compose_bits((ephemeris.toc as i32) >> 4, 8, 16); // Time of Clock
+        stream[0][3] |= Self::compose_bits(Self::unscale_int(ephemeris.af2, -55), 0, 8); // Clock drift rate
         
-        // Слово 4: ПОЛНОЕ заполнение 24 бита
-        stream[0][4] = Self::compose_bits(0xFFFFFF, 0, 24);
+        // Слово 4: Clock parameters
+        stream[0][4] = Self::compose_bits(Self::unscale_int(ephemeris.af1, -43), 6, 16); // Clock drift
+        stream[0][4] |= Self::compose_bits(Self::unscale_int(ephemeris.af0, -31) >> 16, 0, 6); // Clock bias (high)
         
-        // Слово 5: ПОЛНОЕ заполнение 24 бита
-        stream[0][5] = Self::compose_bits(0xFFFFFF, 0, 24);
+        // Слово 5: Продолжение af0 + дополнительные TGD параметры
+        stream[0][5] = Self::compose_bits(Self::unscale_int(ephemeris.af0, -31) & 0xFFFF, 8, 16);
+        stream[0][5] |= Self::compose_bits(Self::unscale_int(ephemeris.tgd_ext[1], -31), 0, 8); // L2C TGD
         
-        // Слово 6: ПОЛНОЕ заполнение 24 бита
-        stream[0][6] = Self::compose_bits(0xFFFFFF, 0, 24);
+        // Слово 6: Time of Prediction + производные параметры
+        stream[0][6] = Self::compose_bits(ephemeris.top, 8, 16); // Time of Prediction
+        stream[0][6] |= Self::compose_bits(Self::unscale_int(ephemeris.tgd_ext[2], -31), 0, 8); // L5 TGD
         
-        // Слово 7: ПОЛНОЕ заполнение 24 бита
-        stream[0][7] = Self::compose_bits(0xFFFFFF, 0, 24);
+        // Слово 7: Производные орбитальных параметров
+        stream[0][7] = Self::compose_bits(Self::unscale_int(ephemeris.axis_dot, -21), 8, 16); // Rate of Semi-Major Axis
+        stream[0][7] |= Self::compose_bits(Self::unscale_int(ephemeris.delta_n_dot / PI, -51) >> 16, 0, 8); // Rate of Mean Motion (high)
 
         // subframe 2, Stream[8]~Stream[15]
         stream[1][0] = Self::compose_bits(ephemeris.iode as i32, 16, 8);
@@ -331,8 +339,9 @@ impl LNavBit {
                 let word_bits = stream[sf][word].count_ones();
                 total_bits += word_bits;
             }
-            println!("[GPS-STREAM-DEBUG] SV{:02} subframe {}: {} битов из 192 ({:.1}%)", 
-                    ephemeris.svid, sf+1, total_bits, (total_bits as f32 / 192.0) * 100.0);
+            // DEBUG: GPS stream отключен для уменьшения вывода
+            // println!("[GPS-STREAM-DEBUG] SV{:02} subframe {}: {} битов из 192 ({:.1}%)", 
+            //         ephemeris.svid, sf+1, total_bits, (total_bits as f32 / 192.0) * 100.0);
         }
         
         0
@@ -407,6 +416,18 @@ impl LNavBit {
         stream4[7] = Self::compose_bits(if (almanac[29].valid & 1) != 0 { 0 } else { 0x3f }, 18, 6);
         stream4[7] |= Self::compose_bits(if (almanac[30].valid & 1) != 0 { 0 } else { 0x3f }, 12, 6);
         stream4[7] |= Self::compose_bits(if (almanac[31].valid & 1) != 0 { 0 } else { 0x3f }, 6, 6);
+
+        // Подсчет плотности для subframes 4-5
+        let mut sf4_density = 0;
+        let mut sf5_density = 0;
+        for word in 0..8 {
+            sf4_density += stream4[word].count_ones();
+            sf5_density += stream5[word].count_ones();
+        }
+        println!("[GPS-STREAM-DEBUG] Almanac subframe 4: {} битов из 192 ({:.1}%)", 
+                sf4_density, (sf4_density as f32 / 192.0) * 100.0);
+        println!("[GPS-STREAM-DEBUG] Almanac subframe 5: {} битов из 192 ({:.1}%)", 
+                sf5_density, (sf5_density as f32 / 192.0) * 100.0);
 
         0
     }

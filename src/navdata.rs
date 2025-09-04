@@ -791,4 +791,5 @@ impl CNavData {
         self.galileo_iono_param.a2 = a2;
         self.galileo_iono_param.flag = 1;
     }
+
 }

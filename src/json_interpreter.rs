@@ -748,7 +748,8 @@ pub fn read_nav_file_filtered(
                     if let Some(target) = target_time {
                         // ПРОВЕРКА: Проверяем, попадает ли эфемерида в временное окно вокруг target_time
                         if is_ephemeris_within_time_window(&eph, &target, time_window_hours) {
-                            println!("[GPS-FILTER] GPS{:02} passed time filter: toe={}", eph.svid, eph.toe);
+                            // DEBUG: GPS фильтр отключен для уменьшения вывода
+                            // println!("[GPS-FILTER] GPS{:02} passed time filter: toe={}", eph.svid, eph.toe);
                             // Добавляем эпоху (toe) в список доступных времен
                             gps_available_epochs.insert(eph.toe);
                             
@@ -795,7 +796,8 @@ pub fn read_nav_file_filtered(
                     if let Some(target) = target_time {
                         // ПРОВЕРКА: Проверяем, попадает ли BeiDou эфемерида в временное окно вокруг target_time
                         if is_beidou_ephemeris_within_time_window(&eph, &target, time_window_hours) {
-                            println!("[BDS-FILTER] BDS{:02} passed time filter: toe={}", eph.svid, eph.toe);
+                            // DEBUG: BDS фильтр отключен для уменьшения вывода
+                            // println!("[BDS-FILTER] BDS{:02} passed time filter: toe={}", eph.svid, eph.toe);
                             // Добавляем эпоху (toe) в список доступных времен BeiDou
                             beidou_available_epochs.insert(eph.toe);
                             
@@ -835,10 +837,11 @@ pub fn read_nav_file_filtered(
                     if let Some(target) = target_time {
                         // ПРОВЕРКА: Проверяем, попадает ли эфемерида в временное окно вокруг target_time
                         if is_ephemeris_within_time_window(&eph, &target, time_window_hours) {
-                            if [14, 15, 29, 30, 34].contains(&eph.svid) {
-                                println!("[GAL-SPECIAL] Found target SVID {} with toe={}", eph.svid, eph.toe);
-                            }
-                            println!("[GAL-FILTER] GAL{:02} passed time filter: toe={}", eph.svid, eph.toe);
+                            // Отладка специальных SVID отключена для уменьшения вывода
+                            // if [14, 15, 29, 30, 34].contains(&eph.svid) {
+                            //     println!("[GAL-SPECIAL] Found target SVID {} with toe={}", eph.svid, eph.toe);
+                            // }
+                            // println!("[GAL-FILTER] GAL{:02} passed time filter: toe={}", eph.svid, eph.toe);
                             // Добавляем эпоху (toe) в список доступных времен
                             galileo_available_epochs.insert(eph.toe);
                             
@@ -846,9 +849,9 @@ pub fn read_nav_file_filtered(
                             galileo_ephemeris_by_epoch.entry(eph.toe).or_insert_with(HashMap::new).insert(eph.svid, eph);
                             galileo_accepted += 1;
                         } else {
-                            if [14, 15, 29, 30, 34].contains(&eph.svid) {
-                                println!("[GAL-SPECIAL] Target SVID {} REJECTED by time filter: toe={}", eph.svid, eph.toe);
-                            }
+                            // if [14, 15, 29, 30, 34].contains(&eph.svid) {
+                            //     println!("[GAL-SPECIAL] Target SVID {} REJECTED by time filter: toe={}", eph.svid, eph.toe);
+                            // }
                         }
                     } else {
                         // Без временной фильтрации - принимаем все эфемериды Galileo
@@ -884,7 +887,8 @@ pub fn read_nav_file_filtered(
             },
             'S' => {
                 // SBAS спутники - пропускаем запись целиком (7 строк данных)
-                println!("[DEBUG] Skipping SBAS satellite at line {}", total_lines_processed);
+                // DEBUG: SBAS пропуск отключен для уменьшения вывода
+                // println!("[DEBUG] Skipping SBAS satellite at line {}", total_lines_processed);
                 skip_ephemeris_lines(&mut lines);
                 other_skipped += 1;
                 continue;
@@ -2121,7 +2125,8 @@ where
     } else {
         // GALILEO: используем IODnav (data[3]) или SVID если IODnav равен 0
         eph.iodc = if data[3] == 0.0 { eph.svid as u16 } else { data[3] as u16 };
-        println!("[GAL-IODC-FIX] SV{:02}: data[3]={:.0} (IODnav), data[26]={:.1} → iodc={}", eph.svid, data[3], if data.len() > 26 { data[26] } else { -1.0 }, eph.iodc);
+        // DEBUG: Galileo IODC фикс отключен для уменьшения вывода 
+        // println!("[GAL-IODC-FIX] SV{:02}: data[3]={:.0} (IODnav), data[26]={:.1} → iodc={}", eph.svid, data[3], if data.len() > 26 { data[26] } else { -1.0 }, eph.iodc);
     }
     eph.iode = data[3] as u8;
     if data.len() > 21 {

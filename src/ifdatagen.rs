@@ -231,6 +231,26 @@ impl NavData {
     pub fn complete_almanac(&mut self, _system: GnssSystem, _time: UtcTime) {
         // Placeholder - implement almanac completion logic
     }
+
+    /// Генерирует GPS альманах из данных эфемерид для всех 32 спутников
+    pub fn generate_gps_almanac_from_ephemeris(&mut self, current_week: i32) {
+        use crate::almanac::get_almanac_from_ephemeris;
+        
+        let toa = (current_week % 1024) * 604800 + 405504; // Reference time of almanac
+        
+        for i in 0usize..32 {
+            let svid = (i + 1) as i32;
+            if let Some(eph) = self.find_ephemeris(GnssSystem::GpsSystem, 
+                GnssTime { Week: current_week, MilliSeconds: 0, SubMilliSeconds: 0.0 }, svid, 0, 0) {
+                if (eph.valid & 1) != 0 {
+                    let almanac = get_almanac_from_ephemeris(&eph, current_week, toa);
+                    self.gps_almanac[i] = almanac;
+                    println!("[GPS-ALMANAC] Generated almanac for SV{:02}: valid={}, toa={}, health={}", 
+                            svid, self.gps_almanac[i].valid, self.gps_almanac[i].toa, self.gps_almanac[i].health);
+                }
+            }
+        }
+    }
 }
 
 
@@ -938,6 +958,11 @@ impl IFDataGen {
         self.nav_data.complete_almanac(GnssSystem::GalileoSystem, utc_time);
         self.nav_data.complete_almanac(GnssSystem::GlonassSystem, utc_time);
 
+        // Generate GPS almanac from ephemeris data for all 32 satellites
+        let gps_time = utc_to_gps_time(utc_time, true);
+        self.nav_data.generate_gps_almanac_from_ephemeris(gps_time.Week);
+        println!("[GPS-ALMANAC] Generated GPS almanac from ephemeris data for week {}", gps_time.Week);
+
         // Set almanac data for navigation bits
         if let Some(ref mut nav_bit) = nav_bit_array[DataBitType::DataBitLNav as usize] {
             nav_bit.set_almanac(self.nav_data.get_gps_almanac());
@@ -1071,10 +1096,11 @@ impl IFDataGen {
                             let dy = sat_pos.y - cur_pos.y;
                             let dz = sat_pos.z - cur_pos.z;
                             let r = (dx*dx + dy*dy + dz*dz).sqrt();
-                            println!("[GPS{:02}-DEBUG] Delta: ({:.1}, {:.1}, {:.1}), Range: {:.1}", 
-                                     i+1, dx, dy, dz, r);
-                            println!("[GPS{:02}-DEBUG] LOS: ({:.4}, {:.4}, {:.4})", 
-                                     i+1, dx/r, dy/r, dz/r);
+                            // DEBUG: GPS Delta и LOS отключены для уменьшения вывода
+                            // println!("[GPS{:02}-DEBUG] Delta: ({:.1}, {:.1}, {:.1}), Range: {:.1}", 
+                            //          i+1, dx, dy, dz, r);
+                            // println!("[GPS{:02}-DEBUG] LOS: ({:.4}, {:.4}, {:.4})", 
+                            //          i+1, dx/r, dy/r, dz/r);
                             // Вычислим азимут вручную
                             let rcv_lla = crate::coordinate::ecef_to_lla(&cur_pos);
                             let lat = rcv_lla.lat;
@@ -1083,10 +1109,11 @@ impl IFDataGen {
                             let los_n = -(dx/r) * lat.sin() * lon.cos() - (dy/r) * lat.sin() * lon.sin() + (dz/r) * lat.cos();
                             let manual_az = los_e.atan2(los_n);
                             let manual_az_deg = if manual_az < 0.0 { manual_az + 2.0*std::f64::consts::PI } else { manual_az };
-                            println!("[GPS{:02}-DEBUG] Manual calc: E={:.4}, N={:.4}, Az={:.1}°", 
-                                     i+1, los_e, los_n, manual_az_deg.to_degrees());
-                            println!("[GPS{:02}-DEBUG] Function returned: Elevation: {:.1}°, Azimuth: {:.1}°", 
-                                     i+1, elevation.to_degrees(), azimuth.to_degrees());
+                            // DEBUG: GPS вычисления отключены для уменьшения вывода
+                            // println!("[GPS{:02}-DEBUG] Manual calc: E={:.4}, N={:.4}, Az={:.1}°", 
+                            //          i+1, los_e, los_n, manual_az_deg.to_degrees());
+                            // println!("[GPS{:02}-DEBUG] Function returned: Elevation: {:.1}°, Azimuth: {:.1}°", 
+                            //          i+1, elevation.to_degrees(), azimuth.to_degrees());
                         }
                         println!("[DEBUG] Satellite {} elevation: {:.1}°, azimuth: {:.1}°, mask: {:.1}°", 
                                  i, elevation.to_degrees(), azimuth.to_degrees(), elevation_mask.to_degrees());
@@ -1816,13 +1843,14 @@ impl IFDataGen {
             let block_end_ms = std::cmp::min(block_start_ms + BLOCK_SIZE_MS, total_duration_ms);
             let block_duration_ms = block_end_ms - block_start_ms;
             
-            println!("📦 Блок {}/{}: {} - {} ms ({} ms)", 
+            print!("\r📦 Блок {}/{}: {} - {} ms ({} ms)...", 
                      block_idx + 1, num_blocks, block_start_ms, block_end_ms, block_duration_ms);
+            std::io::stdout().flush().unwrap();
             
             let block_start_time = start_time_gnss.add_milliseconds(block_start_ms as f64);
             
             // РЕВОЛЮЦИЯ! Каждый спутник работает параллельно на блок времени
-            println!("🚀 Запуск параллельной генерации спутников для блока...");
+            // Убираем промежуточные сообщения для чистого вывода
             let generation_start = std::time::Instant::now();
             
             // Используем Rayon для параллельной обработки каждого спутника
@@ -1837,10 +1865,10 @@ impl IFDataGen {
                 });
         
             let generation_duration = generation_start.elapsed();
-            println!("🚀 Генерация блока завершена за {:.2}ms", generation_duration.as_secs_f64() * 1000.0);
+            // Убираем промежуточные сообщения
             
             // ПОТОКОВОЕ НАКОПЛЕНИЕ и запись для этого блока
-            println!("🔄 Накопляем и записываем блок сигналов...");
+            // Убираем промежуточные сообщения
             let block_samples = block_duration_ms as usize * samples_per_ms;
             
             // Буфер для накопления данных блока (не весь файл!)
@@ -2041,10 +2069,14 @@ impl IFDataGen {
             }
             
             let write_duration = write_start.elapsed();
-            println!("💾 Блок {} записан: {} MB за {:.1}ms", 
-                     block_idx + 1, iq8_data.len() as f64 / (1024.0 * 1024.0), 
-                     write_duration.as_secs_f64() * 1000.0);
+            print!("\r💾 Блок {}/{} записан: {:.1} MB за {:.0}ms генерации + {:.0}ms записи     ", 
+                     block_idx + 1, num_blocks, iq8_data.len() as f64 / (1024.0 * 1024.0), 
+                     generation_duration.as_secs_f64() * 1000.0, write_duration.as_secs_f64() * 1000.0);
+            std::io::stdout().flush().unwrap();
         }
+        
+        // Переходим на новую строку после завершения всех блоков
+        println!();
         
         // Финальная статистика
         let total_duration = start_generation.elapsed();

@@ -43,15 +43,15 @@ pub fn debug_satellite_positions(
             let mut sat_pos = KinematicInfo::default();
             let mut eph_mut = *eph;
             
-            // Детальная отладка для GPS01
-            if *svid == 1 {
-                println!("  [GPS01 DEBUG] toe={}, week={}", eph.toe, eph.week);
-                println!("  [GPS01 DEBUG] M0={:.6}, n={:.10e}", eph.M0, eph.n);
-                println!("  [GPS01 DEBUG] sqrtA={:.6}, ecc={:.10e}", eph.sqrtA, eph.ecc);
-                println!("  [GPS01 DEBUG] omega0={:.6}, i0={:.6}, w={:.6}", eph.omega0, eph.i0, eph.w);
-                let delta_t = transmit_time_week - eph.toe as f64;
-                println!("  [GPS01 DEBUG] delta_t={:.1} сек ({:.2} часов)", delta_t, delta_t/3600.0);
-            }
+            // DEBUG: GPS01 детальный анализ отключен для уменьшения вывода
+            // if *svid == 1 {
+            //     println!("  [GPS01 DEBUG] toe={}, week={}", eph.toe, eph.week);
+            //     println!("  [GPS01 DEBUG] M0={:.6}, n={:.10e}", eph.M0, eph.n);
+            //     println!("  [GPS01 DEBUG] sqrtA={:.6}, ecc={:.10e}", eph.sqrtA, eph.ecc);
+            //     println!("  [GPS01 DEBUG] omega0={:.6}, i0={:.6}, w={:.6}", eph.omega0, eph.i0, eph.w);
+            //     let delta_t = transmit_time_week - eph.toe as f64;
+            //     println!("  [GPS01 DEBUG] delta_t={:.1} сек ({:.2} часов)", delta_t, delta_t/3600.0);
+            // }
             
             // ИСПРАВЛЕНО: передаём только секунды недели, а не полное время
             if gps_sat_pos_speed_eph(GnssSystem::GpsSystem, transmit_time_week_secs, &mut eph_mut, &mut sat_pos, None) {
