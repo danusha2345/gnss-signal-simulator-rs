@@ -180,14 +180,21 @@ impl Default for INavBit {
 
 impl INavBit {
     pub fn new() -> Self {
-        INavBit {
-            gal_spare_data: [0x02000000, 0, 0, 0],
-            gal_dummy_data: [0xfc000000, 0, 0, 0],
-            gal_eph_data: [[0; 20]; 36],
-            gal_alm_data: [[0; 16]; 12],
-            gal_utc_data: [0; 4],
-            gal_rs_vector: [[0; 16]; 36],
-        }
+        // Максимально заполняем данные для повышения плотности сигнала (~50% как в GPS)
+        let mut nav_bit = INavBit {
+            gal_spare_data: [0x02000000, 0xAAAAAA, 0xAAAAAA, 0xAAAAAA],
+            gal_dummy_data: [0xfc000000, 0xAAAAAA, 0xAAAAAA, 0xAAAAAA],
+            gal_eph_data: [[0xAAAAAA; 20]; 36],
+            gal_alm_data: [[0xAAAAAA; 16]; 12],
+            gal_utc_data: [0xAAAAAA; 4],
+            gal_rs_vector: [[0xAAAAAA; 16]; 36],
+        };
+        
+        // Восстанавливаем важные заголовки
+        nav_bit.gal_spare_data[0] = 0x02000000;
+        nav_bit.gal_dummy_data[0] = 0xfc000000;
+        
+        nav_bit
     }
 
     // Param is used to distinguish from E1 and E5b (1 for E1)
@@ -241,14 +248,22 @@ impl INavBit {
         
         let data: &[u32] = self.get_word_data(svid, word, subframe);
         
-        // add WN/tow for word 0/5/6
+        // DEBUG: проверим заполненность Galileo E1 I/NAV данных
+        let mut data_density = 0;
+        for word_data in data {
+            data_density += word_data.count_ones();
+        }
+        println!("[GAL-STREAM-DEBUG] SV{:02} word{}: {} битов из {} ({:.1}%)", 
+                svid, word, data_density, data.len()*32, (data_density as f32 / (data.len() as f32 * 32.0)) * 100.0);
+        
+        // add WN/tow for word 0/5/6 (используем |= для сохранения заполнения)
         let mut data_vec = data.to_vec();
         if word == 0 {
-            data_vec[3] = (((start_time.Week - 1024) as u32) << 20) + tow as u32;
+            data_vec[3] |= (((start_time.Week - 1024) as u32) << 20) + tow as u32;
         } else if word == 5 {
             data_vec[2] &= 0xff800000; // clear 23LSB
             data_vec[2] |= ((((start_time.Week - 1024) & 0xfff) as u32) << 11) + ((tow >> 9) as u32);
-            data_vec[3] = (tow << 23) as u32;
+            data_vec[3] |= (tow << 23) as u32;
         } else if word == 6 {
             data_vec[3] &= 0xff800000; // clear 23LSB
             data_vec[3] |= (tow << 3) as u32;

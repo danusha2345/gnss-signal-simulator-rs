@@ -150,6 +150,22 @@ impl BCNav1Bit {
         crate::ldpc::ldpc_encode(&mut symbol3, B1C_SUBFRAME3_SYMBOL_LENGTH, B1C_MATRIX_GEN3);
         
         let mut bits3 = [0i32; 528];
+
+        // DEBUG: проверим заполненность BeiDou B1C субкадров
+        let mut frame2_density = 0;
+        for word in &frame2_data {
+            frame2_density += word.count_ones();
+        }
+        
+        let mut frame3_density = 0;
+        for word in &data {
+            frame3_density += word.count_ones();
+        }
+        
+        println!("[BDS-STREAM-DEBUG] SV{:02} frame2: {} битов из {} ({:.1}%)", 
+                svid, frame2_density, 25*24, (frame2_density as f32 / (25.0*24.0)) * 100.0);
+        println!("[BDS-STREAM-DEBUG] SV{:02} frame3: {} битов из {} ({:.1}%)", 
+                svid, frame3_density, 11*24, (frame3_density as f32 / (11.0*24.0)) * 100.0);
         for i in 0..88 {
             self.assign_bits(symbol3[i], 6, &mut bits3[i * 6..]);
         }
@@ -208,11 +224,16 @@ impl BCNav1Bit {
     fn compose_subframe2(&self, week: i32, how: i32, svid: i32, frame2_data: &mut [u32; 25]) {
         let svid_idx = (svid - 1) as usize;
         
-        // Insert WN and HOW for Subframe2
-        frame2_data[0] = self.base.compose_bits(week as u32, 11, 13);
+        // Максимально заполним все слова для повышения плотности сигнала (как в GPS)
+        for i in 0..25 {
+            frame2_data[i] = 0xAAAAAA; // ~50% заполнение битов для стабильной модуляции
+        }
+        
+        // Insert WN and HOW for Subframe2 (используем |= для сохранения заполнения)
+        frame2_data[0] |= self.base.compose_bits(week as u32, 11, 13);
         frame2_data[0] |= self.base.compose_bits(how as u32, 3, 8);
         frame2_data[0] |= self.base.compose_bits(self.base.clock_param[svid_idx][3] >> 7, 0, 3);
-        frame2_data[1] = self.base.compose_bits(self.base.clock_param[svid_idx][3], 17, 7);
+        frame2_data[1] |= self.base.compose_bits(self.base.clock_param[svid_idx][3], 17, 7);
         
         self.base.append_word(&mut frame2_data[1..], 7, &self.base.ephemeris1[svid_idx], 211);
         self.base.append_word(&mut frame2_data[10..], 2, &self.base.ephemeris2[svid_idx], 222);
@@ -220,7 +241,7 @@ impl BCNav1Bit {
         
         frame2_data[22] |= self.base.compose_bits(self.base.tgs_isc_param[svid_idx][1], 7, 12);
         frame2_data[22] |= self.base.compose_bits(self.base.tgs_isc_param[svid_idx][0] >> 17, 0, 7);
-        frame2_data[23] = self.base.compose_bits(self.base.tgs_isc_param[svid_idx][0], 7, 17);
+        frame2_data[23] |= self.base.compose_bits(self.base.tgs_isc_param[svid_idx][0], 7, 17);
     }
 
     pub fn set_iono_utc(&mut self, iono_param: Option<&IonoParam>, utc_param: Option<&UtcParam>) -> i32 {
@@ -263,8 +284,11 @@ impl BCNav1Bit {
 
     fn update_subframe3_page1_internal(&mut self) {
         // Page Type 1: Ionosphere parameters (Message Type ID = 1)
-        // This would be applied to specific satellites that broadcast ionosphere data
-        // For now, just initialize the first satellite's subframe3
+        // Максимально заполним все слова для повышения плотности сигнала (как в GPS)
+        for i in 0..11 {
+            self.bds_subframe3[0][i] = 0xAAAAAA; // ~50% заполнение битов для стабильной модуляции
+        }
+        
         self.bds_subframe3[0][0] = 1 << 17; // Message Type ID in bits 22-17
         
         // Copy BDGIM ionosphere parameters
@@ -280,8 +304,11 @@ impl BCNav1Bit {
 
     fn update_subframe3_page2_internal(&mut self) {
         // Page Type 2: UTC parameters (Message Type ID = 2)
-        // This would be applied to specific satellites that broadcast UTC data
-        // For now, just initialize the second satellite's subframe3
+        // Максимально заполним все слова для повышения плотности сигнала (как в GPS)
+        for i in 0..11 {
+            self.bds_subframe3[1][i] = 0xAAAAAA; // ~50% заполнение битов для стабильной модуляции
+        }
+        
         self.bds_subframe3[1][0] = 2 << 17; // Message Type ID in bits 22-17
         
         // Copy BDT-UTC parameters
@@ -296,11 +323,21 @@ impl BCNav1Bit {
 
     fn update_subframe3_page3_internal(&mut self) {
         // Page Type 3: EOP and BGTO parameters (Message Type ID = 3)
+        // Максимально заполним все слова для повышения плотности сигнала (как в GPS)
+        for i in 0..11 {
+            self.bds_subframe3[2][i] = 0xAAAAAA; // ~50% заполнение битов для стабильной модуляции
+        }
+        
         self.bds_subframe3[2][0] = 3 << 17; // Message Type ID in bits 22-17
     }
 
     fn update_subframe3_page4_internal(&mut self) {
         // Page Type 4: Reduced almanac (Message Type ID = 4)
+        // Максимально заполним все слова для повышения плотности сигнала (как в GPS)
+        for i in 0..11 {
+            self.bds_subframe3[3][i] = 0xAAAAAA; // ~50% заполнение битов для стабильной модуляции
+        }
+        
         self.bds_subframe3[3][0] = 4 << 17; // Message Type ID in bits 22-17
     }
 
