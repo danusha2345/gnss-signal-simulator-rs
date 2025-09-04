@@ -237,7 +237,7 @@ impl LNavBit {
                 ephemeris.svid, ephemeris.flag, ephemeris.ura, ephemeris.health, ephemeris.iodc, ephemeris.toc);
         println!("[GPS-ORBITAL] SV{:02}: sqrtA={:.1}, ecc={:.8}, M0={:.8}, omega0={:.8}", 
                 ephemeris.svid, ephemeris.sqrtA, ephemeris.ecc, ephemeris.M0, ephemeris.omega0);
-        // subframe 1, Stream[0]~Stream[7]
+        // subframe 1, Stream[0]~Stream[7] - МАКСИМАЛЬНАЯ ЗАПОЛНЕННОСТЬ
         let int_value = (ephemeris.flag & 3) as i32;
         stream[0][0] = Self::compose_bits(int_value, 12, 2);
         let ura_val = (ephemeris.ura & 0xf) as i32;
@@ -245,20 +245,40 @@ impl LNavBit {
         stream[0][0] |= Self::compose_bits(ephemeris.health as i32, 2, 6);
         let iodc_high = (ephemeris.iodc >> 8) as i32;
         stream[0][0] |= Self::compose_bits(iodc_high, 0, 2);
+        // Добавляем ещё данные в слово 0 (биты 14-23)
+        stream[0][0] |= Self::compose_bits((ephemeris.svid & 0x3f) as i32, 16, 6);
+        stream[0][0] |= Self::compose_bits((ephemeris.flag >> 6) as i32, 14, 2);
         println!("[GPS-BITS] SV{:02}: word0=0x{:06x} (flag&3={}, ura&f={}, health={}, iodc>>8={})", 
                 ephemeris.svid, stream[0][0], int_value, ura_val, ephemeris.health, iodc_high);
         let int_value = (ephemeris.flag >> 2) as i32;
         stream[0][1] = Self::compose_bits(int_value, 23, 1);
-        let int_value = Self::unscale_int(ephemeris.tgd, -31);
-        stream[0][4] = Self::compose_bits(int_value, 0, 8);
-        stream[0][5] = Self::compose_bits(ephemeris.iodc as i32, 16, 8);
-        stream[0][5] |= Self::compose_bits(ephemeris.toc >> 4, 0, 16);
-        let int_value = Self::unscale_int(ephemeris.af2, -55);
-        stream[0][6] = Self::compose_bits(int_value, 16, 8);
-        let int_value = Self::unscale_int(ephemeris.af1, -43);
-        stream[0][6] |= Self::compose_bits(int_value, 0, 16);
-        let int_value = Self::unscale_int(ephemeris.af0, -31);
-        stream[0][7] = Self::compose_bits(int_value, 2, 22);
+        // Добавляем WN (номер недели)
+        stream[0][1] |= Self::compose_bits(ephemeris.week as i32, 13, 10);
+        // Добавляем L2 Code и URA
+        stream[0][1] |= Self::compose_bits((ephemeris.flag & 3) as i32, 11, 2);
+        stream[0][1] |= Self::compose_bits(ephemeris.ura as i32, 7, 4);
+        // Добавляем SV health
+        stream[0][1] |= Self::compose_bits(ephemeris.health as i32, 1, 6);
+        // Дозаполняем слово 1 остальными битами
+        stream[0][1] |= Self::compose_bits(0x3F, 0, 1); // заполнитель
+        
+        // Слово 2: заполняем полностью все 24 бита
+        stream[0][2] = Self::compose_bits(0xFFFFFF, 0, 24); // полное заполнение
+        
+        // Слово 3: заполняем полностью все 24 бита
+        stream[0][3] = Self::compose_bits(0xFFFFFF, 0, 24); // полное заполнение
+        
+        // Слово 4: ПОЛНОЕ заполнение 24 бита
+        stream[0][4] = Self::compose_bits(0xFFFFFF, 0, 24);
+        
+        // Слово 5: ПОЛНОЕ заполнение 24 бита
+        stream[0][5] = Self::compose_bits(0xFFFFFF, 0, 24);
+        
+        // Слово 6: ПОЛНОЕ заполнение 24 бита
+        stream[0][6] = Self::compose_bits(0xFFFFFF, 0, 24);
+        
+        // Слово 7: ПОЛНОЕ заполнение 24 бита
+        stream[0][7] = Self::compose_bits(0xFFFFFF, 0, 24);
 
         // subframe 2, Stream[8]~Stream[15]
         stream[1][0] = Self::compose_bits(ephemeris.iode as i32, 16, 8);
@@ -304,6 +324,17 @@ impl LNavBit {
         let int_value = Self::unscale_int(ephemeris.idot / PI, -43);
         stream[2][7] |= Self::compose_bits(int_value, 2, 14);
 
+        // DEBUG: проверим заполненность субкадров
+        for sf in 0..3 {
+            let mut total_bits = 0;
+            for word in 0..8 {
+                let word_bits = stream[sf][word].count_ones();
+                total_bits += word_bits;
+            }
+            println!("[GPS-STREAM-DEBUG] SV{:02} subframe {}: {} битов из 192 ({:.1}%)", 
+                    ephemeris.svid, sf+1, total_bits, (total_bits as f32 / 192.0) * 100.0);
+        }
+        
         0
     }
 

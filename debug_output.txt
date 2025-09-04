@@ -1,0 +1,443 @@
+   Compiling gnss_rust v0.1.0 (/mnt/c/msys64/home/Daniil/gnss_rust)
+warning: value assigned to `page` is never read
+   --> src/d1d2navbit.rs:101:17
+    |
+101 |         let mut page = 0i32;
+    |                 ^^^^
+    |
+    = help: maybe it is overwritten before being read?
+    = note: `#[warn(unused_assignments)]` on by default
+
+warning: unused variable: `week`
+   --> src/d1d2navbit.rs:113:13
+    |
+113 |         let week = start_time.Week + start_time.MilliSeconds / 604800000;
+    |             ^^^^ help: if this is intentional, prefix it with an underscore: `_week`
+    |
+    = note: `#[warn(unused_variables)]` on by default
+
+warning: unused variable: `frame_idx`
+  --> src/gnavbit.rs:57:13
+   |
+57 |         let frame_idx = (glonass_time.MilliSeconds / 30000) % 5;
+   |             ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_frame_idx`
+
+warning: unused variable: `alm`
+   --> src/ifdatagen.rs:458:31
+    |
+458 |     fn set_almanac(&mut self, alm: &[GpsAlmanac]) { 
+    |                               ^^^ help: if this is intentional, prefix it with an underscore: `_alm`
+
+warning: unused variable: `alm`
+   --> src/ifdatagen.rs:478:31
+    |
+478 |     fn set_almanac(&mut self, alm: &[GpsAlmanac]) { 
+    |                               ^^^ help: if this is intentional, prefix it with an underscore: `_alm`
+
+warning: value assigned to `total_channel_number` is never read
+    --> src/ifdatagen.rs:1455:9
+     |
+1455 |         total_channel_number = self.create_glonass_signals(&mut sat_if_signals, total_channel_number, nav_bit_array)?;
+     |         ^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: maybe it is overwritten before being read?
+
+warning: unused variable: `sat_idx`
+    --> src/ifdatagen.rs:1831:29
+     |
+1831 |                 .for_each(|(sat_idx, sat_option)| {
+     |                             ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_sat_idx`
+
+warning: unused variable: `object`
+    --> src/ifdatagen.rs:2427:37
+     |
+2427 |     fn assign_parameters(&mut self, object: &JsonObject, utc_time: &mut UtcTime, start_pos: &mut LlaPosition, start_vel: &mut LocalSpeed)...
+     |                                     ^^^^^^ help: if this is intentional, prefix it with an underscore: `_object`
+
+warning: unused variable: `elevation_mask`
+    --> src/ifdatagen.rs:2534:13
+     |
+2534 |         let elevation_mask = self.output_param.ElevationMask;
+     |             ^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_elevation_mask`
+
+warning: unused variable: `cur_pos`
+    --> src/ifdatagen.rs:2532:45
+     |
+2532 |     fn get_glonass_visible_satellite(&self, cur_pos: KinematicInfo, glonass_time: GlonassTime, eph: &[Option<GlonassEphemeris>], eph_visi...
+     |                                             ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_cur_pos`
+
+warning: unused variable: `glonass_time`
+    --> src/ifdatagen.rs:2532:69
+     |
+2532 | ...ur_pos: KinematicInfo, glonass_time: GlonassTime, eph: &[Option<GlonassEphemeris>], eph_visible: &mut [Option<GlonassEphemeris>]) -> u...
+     |                           ^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_glonass_time`
+
+warning: unused variable: `glonass_time`
+    --> src/ifdatagen.rs:2592:21
+     |
+2592 |                 let glonass_time = GlonassTime {
+     |                     ^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_glonass_time`
+
+warning: unused variable: `power`
+    --> src/ifdatagen.rs:2608:21
+     |
+2608 |                 let power = &power_list[i];
+     |                     ^^^^^ help: if this is intentional, prefix it with an underscore: `_power`
+
+warning: unused variable: `cur_pos`
+    --> src/ifdatagen.rs:2566:61
+     |
+2566 | ...t self, cur_time: GnssTime, cur_pos: KinematicInfo, list_count: usize, power_list: &[SignalPower], iono_param: Option<&IonoParam>) {
+     |                                ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_cur_pos`
+
+warning: unused variable: `iono_param`
+    --> src/ifdatagen.rs:2566:132
+     |
+2566 | ...er_list: &[SignalPower], iono_param: Option<&IonoParam>) {
+     |                             ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_iono_param`
+
+warning: unused variable: `vel_x`
+    --> src/ifdatagen.rs:2647:13
+     |
+2647 |         let vel_x = glo_eph.vx * 1000.0;
+     |             ^^^^^ help: if this is intentional, prefix it with an underscore: `_vel_x`
+
+warning: unused variable: `vel_y`
+    --> src/ifdatagen.rs:2648:13
+     |
+2648 |         let vel_y = glo_eph.vy * 1000.0;
+     |             ^^^^^ help: if this is intentional, prefix it with an underscore: `_vel_y`
+
+warning: unused variable: `vel_z`
+    --> src/ifdatagen.rs:2649:13
+     |
+2649 |         let vel_z = glo_eph.vz * 1000.0;
+     |             ^^^^^ help: if this is intentional, prefix it with an underscore: `_vel_z`
+
+warning: unused variable: `start_vel`
+    --> src/ifdatagen.rs:3401:13
+     |
+3401 |         let start_vel = LocalSpeed::default();
+     |             ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_start_vel`
+
+warning: unused variable: `transmit_time`
+    --> src/ifdatagen.rs:3471:41
+     |
+3471 |     fn glonass_sat_pos_speed_eph(&self, transmit_time: f64, eph: &GlonassEphemeris) -> Option<KinematicInfo> {
+     |                                         ^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_transmit_time`
+
+warning: unused variable: `eph`
+   --> src/json_interpreter.rs:576:33
+    |
+576 |                     if let Some(eph) = parse_gps_ephemeris(&line, &mut lines) {
+    |                                 ^^^ help: if this is intentional, prefix it with an underscore: `_eph`
+
+warning: unused variable: `eph`
+   --> src/json_interpreter.rs:594:33
+    |
+594 |                     if let Some(eph) = parse_beidou_ephemeris(&line, &mut lines) {
+    |                                 ^^^ help: if this is intentional, prefix it with an underscore: `_eph`
+
+warning: variable `other_skipped` is assigned to, but never used
+   --> src/json_interpreter.rs:681:13
+    |
+681 |     let mut other_skipped = 0;
+    |             ^^^^^^^^^^^^^
+    |
+    = note: consider using `_other_skipped` instead
+
+warning: variable `best_epoch` is assigned to, but never used
+   --> src/json_interpreter.rs:935:21
+    |
+935 |             let mut best_epoch = 0i32;
+    |                     ^^^^^^^^^^
+    |
+    = note: consider using `_best_epoch` instead
+
+warning: value assigned to `best_epoch` is never read
+   --> src/json_interpreter.rs:949:21
+    |
+949 |                     best_epoch = epoch;
+    |                     ^^^^^^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+
+warning: unused variable: `svid`
+   --> src/json_interpreter.rs:973:26
+    |
+973 |                     for (svid, eph) in epoch_ephemeris {
+    |                          ^^^^ help: if this is intentional, prefix it with an underscore: `_svid`
+
+warning: unused variable: `svid`
+    --> src/json_interpreter.rs:1009:26
+     |
+1009 |                     for (svid, eph) in epoch_ephemeris {
+     |                          ^^^^ help: if this is intentional, prefix it with an underscore: `_svid`
+
+warning: unused variable: `svid`
+    --> src/json_interpreter.rs:1015:26
+     |
+1015 |                     for (svid, eph) in epoch_ephemeris {
+     |                          ^^^^ help: if this is intentional, prefix it with an underscore: `_svid`
+
+warning: value assigned to `convert_matrix` is never read
+    --> src/json_interpreter.rs:1278:13
+     |
+1278 |     let mut convert_matrix = ConvertMatrix::default();
+     |             ^^^^^^^^^^^^^^
+     |
+     = help: maybe it is overwritten before being read?
+
+warning: value assigned to `position` is never read
+    --> src/json_interpreter.rs:1279:13
+     |
+1279 |     let mut position = KinematicInfo {
+     |             ^^^^^^^^
+     |
+     = help: maybe it is overwritten before being read?
+
+warning: unnecessary `unsafe` block
+    --> src/json_interpreter.rs:1320:21
+     |
+1288 |     unsafe {
+     |     ------ because it's nested under this `unsafe` block
+...
+1320 |                     unsafe { assign_trajectory_list(json_stream_get_first_object(current_object), trajectory); }
+     |                     ^^^^^^ unnecessary `unsafe` block
+     |
+     = note: `#[warn(unused_unsafe)]` on by default
+
+warning: unnecessary `unsafe` block
+    --> src/json_interpreter.rs:1608:9
+     |
+1608 |         unsafe { speed_course_to_enu(start_vel); }
+     |         ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+    --> src/json_interpreter.rs:1610:9
+     |
+1610 |         unsafe { speed_enu_to_course(start_vel); }
+     |         ^^^^^^ unnecessary `unsafe` block
+
+warning: variable `signal_index` is assigned to, but never used
+    --> src/json_interpreter.rs:1727:33
+     |
+1727 |                         let mut signal_index = signal;
+     |                                 ^^^^^^^^^^^^
+     |
+     = note: consider using `_signal_index` instead
+
+warning: value assigned to `signal_index` is never read
+    --> src/json_interpreter.rs:1729:29
+     |
+1729 | ...                   signal_index = 0;
+     |                       ^^^^^^^^^^^^
+     |
+     = help: maybe it is overwritten before being read?
+
+warning: value assigned to `signal_index` is never read
+    --> src/json_interpreter.rs:1731:29
+     |
+1731 | ...                   signal_index %= 8;
+     |                       ^^^^^^^^^^^^
+     |
+     = help: maybe it is overwritten before being read?
+
+warning: unused variable: `output_param`
+    --> src/json_interpreter.rs:1703:51
+     |
+1703 | fn process_system_select(object: *mut JsonObject, output_param: &mut OutputParam) -> bool {
+     |                                                   ^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_output_param`
+
+warning: unused variable: `slot`
+    --> src/json_interpreter.rs:2298:9
+     |
+2298 |     let slot: i16 = parts[0].parse().ok()?;
+     |         ^^^^ help: if this is intentional, prefix it with an underscore: `_slot`
+
+error[E0004]: non-exhaustive patterns: `types::GnssSystem::SbasSystem`, `types::GnssSystem::QzssSystem` and `types::GnssSystem::NavICSystem` not covered
+   --> src/satellite_signal.rs:265:45
+    |
+265 |                     let system_name = match self.sat_system {
+    |                                             ^^^^^^^^^^^^^^^ patterns `types::GnssSystem::SbasSystem`, `types::GnssSystem::QzssSystem` and `types::GnssSystem::NavICSystem` not covered
+    |
+note: `types::GnssSystem` defined here
+   --> src/types.rs:42:10
+    |
+42  | pub enum GnssSystem {
+    |          ^^^^^^^^^^
+...
+53  |     SbasSystem,
+    |     ---------- not covered
+54  |     /// QZSS - Quasi-Zenith Satellite System (Япония, региональная система)
+55  |     QzssSystem,
+    |     ---------- not covered
+56  |     /// NavIC - Navigation with Indian Constellation (IRNSS, Индия)
+57  |     NavICSystem,
+    |     ----------- not covered
+    = note: the matched value is of type `types::GnssSystem`
+help: ensure that all possible cases are being handled by adding a match arm with a wildcard pattern, a match arm with multiple or-patterns as shown, or multiple match arms
+    |
+269 ~                         GnssSystem::GlonassSystem => "GLO",
+270 ~                         types::GnssSystem::SbasSystem | types::GnssSystem::QzssSystem | types::GnssSystem::NavICSystem => todo!(),
+    |
+
+warning: unused variable: `code_step_vec`
+   --> src/sat_if_signal.rs:514:13
+    |
+514 |         let code_step_vec = f64x4::splat(code_step);
+    |             ^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_code_step_vec`
+
+warning: unused variable: `phase_step_vec`
+   --> src/sat_if_signal.rs:515:13
+    |
+515 |         let phase_step_vec = f64x4::splat(phase_step);
+    |             ^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_phase_step_vec`
+
+warning: unused variable: `total_samples`
+   --> src/sat_if_signal.rs:771:13
+    |
+771 |         let total_samples = block_samples;
+    |             ^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_total_samples`
+
+warning: unused variable: `sample_freq`
+   --> src/sat_if_signal.rs:764:123
+    |
+764 | ... samples_per_ms: usize, sample_freq: f64) {
+    |                            ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_sample_freq`
+
+warning: unused variable: `p_sat_param`
+   --> src/sat_if_signal.rs:791:13
+    |
+791 |         let p_sat_param = if let Some(ref sat_param) = self.sat_param {
+    |             ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_p_sat_param`
+
+warning: unused variable: `cur_time`
+   --> src/sat_if_signal.rs:790:58
+    |
+790 |     fn generate_samples_for_block_millisecond(&mut self, cur_time: GnssTime, ms_offset: usize, samples_per_ms: usize) {
+    |                                                          ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_cur_time`
+
+warning: unused variable: `p_sat_param`
+   --> src/sat_if_signal.rs:844:17
+    |
+844 |             let p_sat_param = if let Some(ref sat_param) = self.sat_param {
+    |                 ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_p_sat_param`
+
+warning: unused variable: `phase_step`
+   --> src/sat_if_signal.rs:874:13
+    |
+874 |         let phase_step = computation_cache.cached_phase_step;
+    |             ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_phase_step`
+
+warning: unused variable: `code_step_x4`
+   --> src/sat_if_signal.rs:962:17
+    |
+962 |             let code_step_x4 = code_step * 4.0; // Предвычисляем шаг для группы
+    |                 ^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_code_step_x4`
+
+warning: unused variable: `pi2_phase_step`
+   --> src/sat_if_signal.rs:964:17
+    |
+964 |             let pi2_phase_step = pi2 * phase_step; // Предвычисляем константу
+    |                 ^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_pi2_phase_step`
+
+warning: variable `week` is assigned to, but never used
+   --> src/cnavbit.rs:117:17
+    |
+117 |         let mut week = start_time.Week;
+    |                 ^^^^
+    |
+    = note: consider using `_week` instead
+
+warning: value assigned to `week` is never read
+   --> src/cnavbit.rs:119:9
+    |
+119 |         week += milli_seconds / 604800000;
+    |         ^^^^
+    |
+    = help: maybe it is overwritten before being read?
+
+warning: value assigned to `uint_value` is never read
+   --> src/cnavbit.rs:387:9
+    |
+387 |         uint_value = Self::unscale_uint(almanac.sqrtA, -4) as u32;
+    |         ^^^^^^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+
+warning: unused variable: `eph`
+   --> src/cnavbit.rs:670:52
+    |
+670 |     pub fn set_ephemeris_alt(&mut self, svid: i32, eph: &GpsEphemeris) -> bool {
+    |                                                    ^^^ help: if this is intentional, prefix it with an underscore: `_eph`
+
+warning: variable `week` is assigned to, but never used
+  --> src/cnav2bit.rs:82:17
+   |
+82 |         let mut week = start_time.Week;
+   |                 ^^^^
+   |
+   = note: consider using `_week` instead
+
+warning: unused variable: `bit_index`
+  --> src/cnav2bit.rs:88:17
+   |
+88 |         let mut bit_index: i32;
+   |                 ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_bit_index`
+
+warning: value assigned to `week` is never read
+   --> src/cnav2bit.rs:103:9
+    |
+103 |         week += milli_seconds / 604800000;
+    |         ^^^^
+    |
+    = help: maybe it is overwritten before being read?
+
+warning: unused variable: `param`
+   --> src/cnav2bit.rs:261:71
+    |
+261 |     pub fn get_frame_data_alt(&self, start_time: GnssTime, svid: i32, param: i32, nav_bits: &mut [i32]) -> i32 {
+    |                                                                       ^^^^^ help: if this is intentional, prefix it with an underscore: `_param`
+
+warning: unused variable: `eph`
+   --> src/cnav2bit.rs:289:52
+    |
+289 |     pub fn set_ephemeris_alt(&mut self, svid: i32, eph: &GpsEphemeris) -> bool {
+    |                                                    ^^^ help: if this is intentional, prefix it with an underscore: `_eph`
+
+warning: unused variable: `iono`
+   --> src/cnav2bit.rs:319:40
+    |
+319 |     pub fn set_iono_utc_alt(&mut self, iono: &IonoParam, utc: &UtcParam) -> bool {
+    |                                        ^^^^ help: if this is intentional, prefix it with an underscore: `_iono`
+
+warning: unused variable: `utc`
+   --> src/cnav2bit.rs:319:58
+    |
+319 |     pub fn set_iono_utc_alt(&mut self, iono: &IonoParam, utc: &UtcParam) -> bool {
+    |                                                          ^^^ help: if this is intentional, prefix it with an underscore: `_utc`
+
+warning: unused variable: `parity_bits`
+   --> src/cnav2bit.rs:397:13
+    |
+397 |         let parity_bits = 1800 - 480; // 1320 parity bits for 480 info bits
+    |             ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_parity_bits`
+
+warning: value assigned to `conv_encode_bits` is never read
+   --> src/inavbit.rs:207:17
+    |
+207 |         let mut conv_encode_bits: u8 = 0; // each part contains 8x30 bits
+    |                 ^^^^^^^^^^^^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+
+warning: unused variable: `accelerator`
+  --> src/benchmarks.rs:74:9
+   |
+74 |     let accelerator = Avx512Accelerator::new();
+   |         ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_accelerator`
+
+For more information about this error, try `rustc --explain E0004`.
+warning: `gnss_rust` (lib) generated 62 warnings
+error: could not compile `gnss_rust` (lib) due to 1 previous error; 62 warnings emitted
