@@ -3039,9 +3039,11 @@ where
         "[GAL-PARSE] SV{:02}: data[3]={:.0} (IODnav), iodc={}, toe={}",
         eph.svid, data[3], eph.iodc, eph.toe
     );
-    eph.week = data[21] as i32; // Week (GST week count in RINEX 3.x)
-    eph.ura = get_ura_index(data[22]) as i16; // SISA → URA mapping
-    eph.health = data[23] as u16; // Health
+    eph.week = data[21] as i32; // Week (GST/GPS-aligned in RINEX 3.x)
+                                // Galileo SISA is reported; map to URA index similarly to GPS as an approximation
+    eph.ura = get_ura_index(data[23]) as i16; // SISA (data[23]) → URA index
+                                              // Health field for Galileo is data[24] in our C reference; use the same index here
+    eph.health = data[24] as u16; // Health
 
     // BGD параметры Galileo (в отличие от TGD в GPS)
     // data[24] = BGD_E5a_E1

@@ -1003,7 +1003,7 @@ impl IFDataGen {
             crate::json_interpreter::read_nav_file_filtered(
                 &mut c_nav_data,
                 &rinex_file,
-                Some(utc_time),   // Фильтрация по времени
+                Some(utc_time), // Фильтрация по времени
                 &enabled_systems,
             );
 
@@ -2129,10 +2129,8 @@ impl IFDataGen {
                         continue;
                     }
 
-                    // Для Galileo используем секунды недели в шкале GST
-                    let utc_now = crate::gnsstime::gps_time_to_utc(self.cur_time, true);
-                    let gal_now = crate::gnsstime::utc_to_galileo_time(utc_now);
-                    let transmit_time = (gal_now.MilliSeconds as f64) / 1000.0;
+                    // Для согласованности с C-версией используем GPS секунды недели
+                    let transmit_time = (self.cur_time.MilliSeconds as f64) / 1000.0;
                     let mut sat_pos = KinematicInfo::default();
                     let mut eph_mut = *eph; // Копируем эфемериды для мутабельности
                     let delta_t = transmit_time - eph.toe as f64;
@@ -2211,10 +2209,8 @@ impl IFDataGen {
 
                 for j in 0..sat_number {
                     if let Some(eph) = &self.gal_eph_visible[j] {
-                        // Для Galileo используем секунды недели в шкале GST
-                        let utc_now = crate::gnsstime::gps_time_to_utc(self.cur_time, true);
-                        let gal_now = crate::gnsstime::utc_to_galileo_time(utc_now);
-                        let transmit_time = (gal_now.MilliSeconds as f64) / 1000.0;
+                        // Для согласованности с C-версией используем GPS секунды недели
+                        let transmit_time = (self.cur_time.MilliSeconds as f64) / 1000.0;
                         let mut sat_pos_vel = KinematicInfo::default();
                         let mut eph_mut = *eph;
 
