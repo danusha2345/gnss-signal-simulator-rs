@@ -1004,11 +1004,11 @@ impl IFDataGen {
                 &mut c_nav_data,
                 &rinex_file,
                 Some(utc_time),   // Фильтрация по времени
-                &enabled_systems, // Только BeiDou система
+                &enabled_systems,
             );
 
-            // ГЛОБАЛЬНЫЙ ВЫБОР ЕДИНОЙ ЭПОХИ ДЛЯ ВСЕХ СИСТЕМ
-            self.select_global_epochs_and_fill(&c_nav_data, utc_time);
+            // Первичная загрузка: выбираем per-satellite, чтобы не расходиться с C-версией
+            self.select_per_satellite_and_fill(&c_nav_data, utc_time);
         } else {
             println!("[ERROR]\tRINEX file not found: {}", rinex_file);
         }
@@ -1401,7 +1401,7 @@ impl IFDataGen {
                 if eph.svid as usize == svid {
                     let diff = ((gw - eph.week) as i64) * 604800 + (gs - eph.toe as i64);
                     let ad = diff.abs();
-                    if ad <= 7200 && best.map_or(true, |(_, bd)| ad < bd) {
+                    if ad <= 10800 && best.map_or(true, |(_, bd)| ad < bd) {
                         best = Some((*eph, ad));
                     }
                 }
