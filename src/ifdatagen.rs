@@ -855,10 +855,11 @@ impl IFDataGen {
         }
 
         // Find ephemeris matching current time and fill in data to generate bit stream
-        // NOTE: Do not overwrite gps_eph array that was loaded from RINEX!
+        // Не перезаписываем ранее выбранные RINEX-эфемериды; дополняем только при отсутствии
         for i in 1..=TOTAL_GPS_SAT {
-            // Use already loaded ephemeris instead of searching (which returns None)
-            self.gps_eph[i-1] = self.nav_data.find_ephemeris(GnssSystem::GpsSystem, self.cur_time, i as i32, 0, 0);
+            if self.gps_eph[i-1].is_none() {
+                self.gps_eph[i-1] = self.nav_data.find_ephemeris(GnssSystem::GpsSystem, self.cur_time, i as i32, 0, 0);
+            }
             
             // For L1CA/L1C/L2C/L5, all can use the same ephemeris data
             if let Some(ref eph) = self.gps_eph[i-1] {

@@ -820,14 +820,9 @@ pub fn read_nav_file_filtered(
             },
             'E' if galileo_enabled => {
                 // *** КРИТИЧЕСКИЙ БЛОК: GALILEO ЭФЕМЕРИДЫ ПАРСИНГ ***
-                // Galileo эфемериды (только если Galileo включена в enabled_systems)
-                // Формат строки: "E## YYYY MM DD HH MM SS ..." где ## - SVID спутника (01-36)
-                // ВАЖНО: Galileo данные в RINEX файле начинаются в середине (~строка 45048)
-                // Galileo ephemeris parsing...
-                
-                if let Some(eph) = parse_gps_ephemeris(&line, &mut lines) {
-                    // ПРИМЕЧАНИЕ: parse_gps_ephemeris используется для Galileo потому что
-                    // структура данных совместима (GST синхронизован с GPS временем)
+                // Используем специализированный парсер Galileo (6 строк данных)
+                if let Some(eph) = parse_galileo_ephemeris(&line, &mut lines) {
+                    // Структура данных совместима (используется GpsEphemeris как контейнер)
                     
                     galileo_parsed += 1;
                     // Parsed Galileo ephemeris
@@ -2078,12 +2073,19 @@ where
     let mut eph = GpsEphemeris::default();
     let mut data = [0.0f64; 32]; // Массив для 32 параметров RINEX эфемерид
     
-    // Парсим первую строку используя точную логику C++
+    // Парсим первую строку: SVID + af0/af1/af2 (и извлечём эпоху для toc)
     let svid = read_contents_time(line, &mut data[0..3])?;
     eph.svid = svid;
     eph.af0 = data[0];
     eph.af1 = data[1]; 
     eph.af2 = data[2];
+
+    // Вычисляем toc из календарной эпохи заголовка
+    if let Some(epoch_utc) = parse_epoch_from_header_line(line) {
+        // Преобразуем календарное время в GPS-время и берём секунды недели
+        let gps_time = utc_to_gps_time(epoch_utc, false);
+        eph.toc = (gps_time.MilliSeconds / 1000) as i32;
+    }
     
     // Читаем 7 строк данных (каждая содержит 4 значения)
     for i in 0..7 {
@@ -2098,7 +2100,7 @@ where
     }
     
     // Заполняем структуру эфемерид точно как в C++ (NavDataGpsLnav case)
-    eph.toc = (data[11] + 0.5) as i32; // toc = toe для GPS
+    // toe остаётся как в данных RINEX (секунды недели)
     eph.sqrtA = data[10];
     eph.ecc = data[8];
     eph.i0 = data[15];
@@ -2516,6 +2518,12 @@ where
     eph.af0 = data[0];
     eph.af1 = data[1]; 
     eph.af2 = data[2];
+
+    // toc: используем календарную эпоху заголовка, конвертируя в GPS-время
+    if let Some(epoch_utc) = parse_epoch_from_header_line(line) {
+        let gps_time = utc_to_gps_time(epoch_utc, false);
+        eph.toc = (gps_time.MilliSeconds / 1000) as i32;
+    }
     
     // Читаем 6 строк данных для Galileo (в отличие от 7 для GPS)
     for i in 0..6 {
@@ -2530,7 +2538,6 @@ where
     }
     
     // Заполняем структуру эфемерид для Galileo (аналогично GPS но с учетом разных индексов)
-    eph.toc = (data[11] + 0.5) as i32; // toc = toe для Galileo
     eph.sqrtA = data[10];    // √a
     eph.ecc = data[8];       // e
     eph.i0 = data[15];       // i0
@@ -2649,6 +2656,22 @@ fn read_contents_time(line: &str, data: &mut [f64]) -> Option<u8> {
     }
     
     Some(svid)
+}
+
+/// Парсит календарную эпоху из заголовочной строки RINEX (YYYY MM DD hh mm ss.s)
+/// Возвращает UtcTime (используем его как общий календарный контейнер)
+fn parse_epoch_from_header_line(line: &str) -> Option<UtcTime> {
+    // Формат: <Sys><SVID> YYYY MM DD hh mm ss.sssss ....
+    // Используем разбиение по пробелам для устойчивости к отступам
+    let mut parts = line.split_whitespace();
+    let _sys_svid = parts.next()?; // G07, E05, C13, ...
+    let year = parts.next()?.parse::<i32>().ok()?;
+    let month = parts.next()?.parse::<i32>().ok()?;
+    let day = parts.next()?.parse::<i32>().ok()?;
+    let hour = parts.next()?.parse::<i32>().ok()?;
+    let minute = parts.next()?.parse::<i32>().ok()?;
+    let second = parts.next()?.replace('D', "E").parse::<f64>().ok()?;
+    Some(UtcTime { Year: year, Month: month, Day: day, Hour: hour, Minute: minute, Second: second })
 }
 
 /// *** КРИТИЧЕСКАЯ ФУНКЦИЯ ПАРСИНГА СТРОК ДАННЫХ RINEX ЭФЕМЕРИДЫ ***
