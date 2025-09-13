@@ -885,6 +885,41 @@ impl IFDataGen {
         }
     }
 
+    // C-совместимый выбор: для каждого спутника выбираем ближайшую эфемериду в пределах окна.
+    fn select_per_satellite_and_fill(&mut self, c_nav_data: &crate::json_interpreter::CNavData, utc_time: UtcTime) {
+        // Очистка
+        self.gps_eph.fill(None); self.bds_eph.fill(None); self.gal_eph.fill(None); self.glo_eph.fill(None);
+
+        // 1) GPS (UTC→GPS)
+        let tgt_gps = utc_to_gps_time(utc_time, false);
+        let tgt_week = tgt_gps.Week; let tgt_sec = (tgt_gps.MilliSeconds/1000) as i64;
+        for svid in 1..=TOTAL_GPS_SAT { let mut best: Option<(GpsEphemeris,i64)> = None; for eph in &c_nav_data.gps_ephemeris { if eph.svid as usize == svid && eph.health==0 { let diff = ((tgt_week - eph.week) as i64)*604800 + (tgt_sec - eph.toe as i64); let ad = diff.abs(); if ad <= 7200 && best.map_or(true, |(_,bd)| ad<bd){ best = Some((*eph,ad)); } } } if let Some((eph,_))=best { self.gps_eph[svid-1]=Some(eph); } }
+
+        // 2) BeiDou (UTC→BDT)
+        let tgt_bds = utc_to_bds_time(utc_time); let bw=tgt_bds.Week; let bs=(tgt_bds.MilliSeconds/1000) as i64;
+        for svid in 1..=TOTAL_BDS_SAT { let mut best: Option<(GpsEphemeris,i64)> = None; for eph in &c_nav_data.beidou_ephemeris { if eph.svid as usize == svid && eph.health==0 { let diff = ((bw - eph.week) as i64)*604800 + (bs - eph.toe as i64); let ad=diff.abs(); if ad<=7200 && best.map_or(true, |(_,bd)| ad<bd){ best=Some((eph.to_gps_ephemeris(),ad)); } } } if let Some((eph,_))=best { self.bds_eph[svid-1]=Some(eph); } }
+
+        // 3) Galileo (UTC→GPS) — как в C-версии
+        let tgt_gps = utc_to_gps_time(utc_time, false); let gw=tgt_gps.Week; let gs=(tgt_gps.MilliSeconds/1000) as i64;
+        for svid in 1..=TOTAL_GAL_SAT { let mut best: Option<(GpsEphemeris,i64)> = None; for eph in &c_nav_data.galileo_ephemeris { if eph.svid as usize == svid && eph.health==0 { let diff=((gw - eph.week) as i64)*604800 + (gs - eph.toe as i64); let ad=diff.abs(); if ad<=7200 && best.map_or(true, |(_,bd)| ad<bd){ best=Some((*eph,ad)); } } } if let Some((eph,_))=best { self.gal_eph[svid-1]=Some(eph); } }
+
+        // 4) ГЛОНАСС (UTC→ГЛОНАСС) — окно 1800с
+        let gtime = utc_to_glonass_time_corrected(utc_time); let req_day = gtime.Day; let req_sec=(gtime.MilliSeconds/1000) as i64;
+        for slot in 1..=TOTAL_GLO_SAT {
+            let mut best: Option<(crate::types::GlonassEphemeris,i64)> = None;
+            for eph in &c_nav_data.glonass_ephemeris {
+                if eph.slot as usize == slot && eph.flag!=0 {
+                    let mut day_diff = (req_day - eph.day as i32) as i64;
+                    if day_diff>183 { day_diff-=365; } else if day_diff < -183 { day_diff+=365; }
+                    let diff = day_diff*86400 + (req_sec - eph.tb as i64);
+                    let ad = diff.abs();
+                    if ad<=1800 && best.map_or(true, |(_,bd)| ad<bd) { best=Some((*eph,ad)); }
+                }
+            }
+            if let Some((eph,_))=best { self.glo_eph[slot-1]=Some(eph); }
+        }
+    }
+
 
     fn setup_navigation_data(&mut self, nav_bit_array: &mut Vec<Option<UnifiedNavData>>, 
                            utc_time: UtcTime, glonass_time: GlonassTime, _bds_time: GnssTime) -> Result<(), Box<dyn std::error::Error>> {
@@ -3025,6 +3060,8 @@ impl IFDataGen {
         
         // Переменная для пути к RINEX файлу
         let mut rinex_file = String::from("Rinex_Data/rinex_v3_20251560000.rnx"); // Значение по умолчанию
+        // Стратегия выбора эпох: per_sat (по умолчанию, как в C) или global
+        let mut epoch_selection = String::from("per_sat");
         
         // УПРОЩЕННЫЙ JSON ПАРСИНГ - читаем файл напрямую и парсим нужные параметры  
         if let Ok(json_content) = std::fs::read_to_string(config_file) {
@@ -3346,10 +3383,11 @@ impl IFDataGen {
                 &enabled_systems // Только BeiDou система
             );
             
-            // Копируем загруженные эфемериды в наши данные
-            self.copy_ephemeris_from_json_nav_data(&c_nav_data, utc_time); // GPS эфемериды
-            self.copy_beidou_ephemeris_from_json_nav_data(&c_nav_data, utc_time); // BeiDou эфемериды
-            self.copy_galileo_ephemeris_from_json_nav_data(&c_nav_data, utc_time); // Galileo эфемериды
+            // Стратегия выбора эпох
+            match epoch_selection.as_str() {
+                "global" => self.select_global_epochs_and_fill(&c_nav_data, utc_time),
+                _ => self.select_per_satellite_and_fill(&c_nav_data, utc_time),
+            }
             
             println!("[INFO]\tMinimal ephemeris loaded successfully");
         } else {
