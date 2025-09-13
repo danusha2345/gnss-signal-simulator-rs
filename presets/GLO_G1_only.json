@@ -1,6 +1,6 @@
 {
 	"version": 1.0,
-	"description": "GLONASS G1 only - 10 MHz - 3 minutes",
+    "description": "GLONASS G1 only - 10 MHz - 1 second",
 	"time": {
 		"type": "UTC",
 		"year": 2025,
@@ -25,10 +25,10 @@
 			"course": 318.91
 		},
 		"trajectoryList": [
-			{
-				"type": "Const",
-				"time": 180.0
-			}
+            {
+                "type": "Const",
+                "time": 1.0
+            }
 		]
 	},
 	"ephemeris": {
@@ -40,7 +40,7 @@
 		"format": "IQ8",
 		"sampleFreq": 10.0,
 		"centerFreq": 1602.0,
-		"name": "generated_files/GLO_G1_only_3min.C8",
+        "name": "generated_files/GLO_G1_only_1s.C8",
 		"config": {
 			"elevationMask": 5
 		},

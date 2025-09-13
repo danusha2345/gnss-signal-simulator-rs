@@ -2376,8 +2376,12 @@ impl IFDataGen {
             nav_bit_array,
             cur_pos,
         )?;
-        total_channel_number =
-            self.create_glonass_signals(&mut sat_if_signals, total_channel_number, nav_bit_array)?;
+        total_channel_number = self.create_glonass_signals(
+            &mut sat_if_signals,
+            total_channel_number,
+            nav_bit_array,
+            cur_pos,
+        )?;
 
         Ok(sat_if_signals)
     }
@@ -4421,13 +4425,41 @@ impl IFDataGen {
     }
 
     fn create_glonass_signals(
-        &self,
+        &mut self,
         sat_if_signals: &mut Vec<Option<Box<SatIfSignal>>>,
         mut total_channel_number: usize,
         nav_bit_array: &Vec<Option<UnifiedNavData>>,
+        cur_pos: KinematicInfo,
     ) -> Result<usize, Box<dyn std::error::Error>> {
         for i in 0..self.glo_sat_number {
             if let Some(eph) = &self.glo_eph_visible[i] {
+                // Рассчитываем параметры спутника для корректных доплеров и задержек
+                let position_lla = ecef_to_lla(&cur_pos);
+                let utc_now = crate::gnsstime::gps_time_to_utc(self.cur_time, true);
+                let glonass_time = crate::gnsstime::utc_to_glonass_time_corrected(utc_now);
+
+                let default_iono = IonoParam {
+                    a0: 0.0,
+                    a1: 0.0,
+                    a2: 0.0,
+                    a3: 0.0,
+                    b0: 0.0,
+                    b1: 0.0,
+                    b2: 0.0,
+                    b3: 0.0,
+                    flag: 0,
+                };
+                let iono_param = self.nav_data.get_gps_iono().unwrap_or(&default_iono);
+
+                crate::satellite_param::get_glonass_satellite_param(
+                    &cur_pos,
+                    &position_lla,
+                    &glonass_time,
+                    eph,
+                    iono_param,
+                    &mut self.glo_sat_param[eph.n as usize - 1],
+                );
+
                 // Check each GLONASS signal
                 let glo_signals = [
                     (SIGNAL_INDEX_G1, crate::types::GEN_G1),
@@ -4441,10 +4473,30 @@ impl IFDataGen {
                         .CompactConfig
                         .is_signal_enabled(signal_mask)
                     {
-                        let center_freq = SIGNAL_CENTER_FREQ[GnssSystem::GlonassSystem as usize]
-                            [signal_index.min(7)]
-                            + eph.freq as f64 * 562500.0;
-                        let if_freq = (center_freq - self.output_param.CenterFreq as f64) as i32;
+                        let base = SIGNAL_CENTER_FREQ[GnssSystem::GlonassSystem as usize]
+                            [signal_index.min(7)];
+                        let step = if signal_index == SIGNAL_INDEX_G2 {
+                            437500.0
+                        } else if signal_index == SIGNAL_INDEX_G1 {
+                            562500.0
+                        } else {
+                            0.0
+                        };
+                        let center_freq = base + eph.freq as f64 * step;
+
+                        // Добавляем Допплер для реалистичной IF частоты
+                        let doppler = crate::satellite_param::get_doppler(
+                            &self.glo_sat_param[eph.n as usize - 1],
+                            signal_index,
+                        );
+                        let if_freq =
+                            ((center_freq + doppler) - self.output_param.CenterFreq as f64) as i32;
+                        if eph.n <= 3 {
+                            println!(
+                                "[DEBUG] GLO R{:02}: center_freq={:.0} Hz, doppler={:.1} Hz, CenterFreq={} Hz, if_freq={} Hz",
+                                eph.n, center_freq, doppler, self.output_param.CenterFreq, if_freq
+                            );
+                        }
                         // SatIfSignal expects number of samples per millisecond, not Hz
                         let samples_per_ms = self.output_param.SampleFreq / 1000;
                         let mut new_signal = SatIfSignal::new(

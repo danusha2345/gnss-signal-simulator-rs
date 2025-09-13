@@ -167,23 +167,32 @@ pub fn get_glonass_satellite_param(
     // Calculate GLONASS satellite position
     glonass_sat_pos_speed_eph(satellite_time, glo_eph, &mut sat_position, None);
 
-    let mut travel_time =
-        geometry_distance(position_ecef, &sat_position, &mut satellite_param.LosVector)
-            / LIGHT_SPEED;
+    let mut travel_time = geometry_distance(
+        position_ecef,
+        &sat_position,
+        Some(&mut satellite_param.LosVector),
+    ) / LIGHT_SPEED;
 
     // Correct for satellite motion during signal travel
     sat_position.x -= travel_time * sat_position.vx;
     sat_position.y -= travel_time * sat_position.vy;
     sat_position.z -= travel_time * sat_position.vz;
 
-    travel_time = geometry_distance(position_ecef, &sat_position, &mut satellite_param.LosVector)
-        / LIGHT_SPEED;
+    travel_time = geometry_distance(
+        position_ecef,
+        &sat_position,
+        Some(&mut satellite_param.LosVector),
+    ) / LIGHT_SPEED;
     let corrected_satellite_time = satellite_time - travel_time;
 
     // Calculate accurate satellite position at transmit time
     glonass_sat_pos_speed_eph(corrected_satellite_time, glo_eph, &mut sat_position, None);
 
-    let distance = geometry_distance(position_ecef, &sat_position, &mut satellite_param.LosVector);
+    let distance = geometry_distance(
+        position_ecef,
+        &sat_position,
+        Some(&mut satellite_param.LosVector),
+    );
     let (elevation, azimuth) = sat_el_az_from_los(&satellite_param.LosVector);
 
     // Calculate ionospheric delay
@@ -263,17 +272,22 @@ pub fn get_satellite_param(
         gps_sat_pos_speed_eph(system, satellite_time, eph, &mut sat_position, None);
     }
 
-    let mut travel_time =
-        geometry_distance(position_ecef, &sat_position, &mut satellite_param.LosVector)
-            / LIGHT_SPEED;
+    let mut travel_time = geometry_distance(
+        position_ecef,
+        &sat_position,
+        Some(&mut satellite_param.LosVector),
+    ) / LIGHT_SPEED;
 
     // Correct for satellite motion during signal travel
     sat_position.x -= travel_time * sat_position.vx;
     sat_position.y -= travel_time * sat_position.vy;
     sat_position.z -= travel_time * sat_position.vz;
 
-    travel_time = geometry_distance(position_ecef, &sat_position, &mut satellite_param.LosVector)
-        / LIGHT_SPEED;
+    travel_time = geometry_distance(
+        position_ecef,
+        &sat_position,
+        Some(&mut satellite_param.LosVector),
+    ) / LIGHT_SPEED;
     satellite_time -= travel_time;
 
     // Calculate accurate satellite position at transmit time
@@ -294,7 +308,11 @@ pub fn get_satellite_param(
         0.0
     };
 
-    let distance = geometry_distance(position_ecef, &sat_position, &mut satellite_param.LosVector);
+    let distance = geometry_distance(
+        position_ecef,
+        &sat_position,
+        Some(&mut satellite_param.LosVector),
+    );
     let (elevation, azimuth) = sat_el_az_from_los(&satellite_param.LosVector);
 
     // Calculate ionospheric delay
@@ -603,32 +621,10 @@ fn sat_el_az_from_los(los_vector: &[f64; 3]) -> (f64, f64) {
 }
 
 /// Calculate relative speed between receiver and satellite
-fn sat_relative_speed(receiver_pos: &KinematicInfo, sat_pos: &KinematicInfo) -> f64 {
-    let dx = sat_pos.x - receiver_pos.x;
-    let dy = sat_pos.y - receiver_pos.y;
-    let dz = sat_pos.z - receiver_pos.z;
-    let distance = (dx * dx + dy * dy + dz * dz).sqrt();
-
-    let dvx = sat_pos.vx - receiver_pos.vx;
-    let dvy = sat_pos.vy - receiver_pos.vy;
-    let dvz = sat_pos.vz - receiver_pos.vz;
-
-    (dx * dvx + dy * dvy + dz * dvz) / distance
-}
+// Use sat_relative_speed from coordinate.rs for consistent sign conventions
 
 /// Calculate geometry distance and LOS vector
-fn geometry_distance(pos1: &KinematicInfo, pos2: &KinematicInfo, los_vector: &mut [f64; 3]) -> f64 {
-    let dx = pos2.x - pos1.x;
-    let dy = pos2.y - pos1.y;
-    let dz = pos2.z - pos1.z;
-    let distance = (dx * dx + dy * dy + dz * dz).sqrt();
-
-    los_vector[0] = dx / distance;
-    los_vector[1] = dy / distance;
-    los_vector[2] = dz / distance;
-
-    distance
-}
+// Use geometry_distance from coordinate.rs (includes Sagnac compensation)
 
 // Placeholder functions - these should be implemented in coordinate module
 /// Рассчитывает позицию и скорость спутника GPS/BeiDou/Galileo на основе эфемерид
@@ -1265,17 +1261,22 @@ pub fn get_satellite_param_with_prediction(
         gps_sat_pos_speed_eph(system, satellite_time, eph, &mut sat_position, None);
     }
 
-    let mut travel_time =
-        geometry_distance(position_ecef, &sat_position, &mut satellite_param.LosVector)
-            / LIGHT_SPEED;
+    let mut travel_time = geometry_distance(
+        position_ecef,
+        &sat_position,
+        Some(&mut satellite_param.LosVector),
+    ) / LIGHT_SPEED;
 
     // Correct for satellite motion during signal travel
     sat_position.x -= travel_time * sat_position.vx;
     sat_position.y -= travel_time * sat_position.vy;
     sat_position.z -= travel_time * sat_position.vz;
 
-    travel_time = geometry_distance(position_ecef, &sat_position, &mut satellite_param.LosVector)
-        / LIGHT_SPEED;
+    travel_time = geometry_distance(
+        position_ecef,
+        &sat_position,
+        Some(&mut satellite_param.LosVector),
+    ) / LIGHT_SPEED;
     satellite_time -= travel_time;
 
     // Calculate accurate satellite position at transmit time
@@ -1295,7 +1296,11 @@ pub fn get_satellite_param_with_prediction(
         0.0
     };
 
-    let distance = geometry_distance(position_ecef, &sat_position, &mut satellite_param.LosVector);
+    let distance = geometry_distance(
+        position_ecef,
+        &sat_position,
+        Some(&mut satellite_param.LosVector),
+    );
     let (elevation, azimuth) = sat_el_az_from_los(&satellite_param.LosVector);
 
     // Calculate ionospheric delay
