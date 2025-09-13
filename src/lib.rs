@@ -59,6 +59,7 @@ pub mod avx512_intrinsics;
 #[cfg(feature = "gpu")]
 pub mod cuda_acceleration;
 pub mod benchmarks;
+pub mod pvt;
 
 pub use almanac::*;
 pub use bcnav1bit::*;

@@ -51,6 +51,7 @@ use crate::types::SatelliteParam;
 use crate::satellite_param::get_doppler;
 use crate::navdata::NavDataType;
 use crate::nav_data::NavData as UnifiedNavData;
+use crate::pvt;
 
 #[derive(Debug)]
 pub struct GenerationStats {
@@ -3624,6 +3625,27 @@ impl IFDataGen {
         // Настраиваем систему
         self.setup_navigation_data(&mut nav_bit_array, utc_time, glonass_time, bds_time)?;
         self.calculate_visible_satellites(cur_pos, glonass_time)?;
+
+        // Санити-проверка PVT перед генерацией: пытаемся восстановить позицию приёмника
+        let utc_now = self.parse_utc_time_from_json(&self.output_param.config_filename)
+            .unwrap_or(UtcTime { Year: 2025, Month: 6, Day: 5, Hour: 10, Minute: 5, Second: 30.0 });
+        let gps_now = crate::gnsstime::utc_to_gps_time(utc_now, true);
+        let bds_now = crate::gnsstime::utc_to_bds_time(utc_now);
+        let gal_now = crate::gnsstime::utc_to_galileo_time(utc_now);
+        let init_pos = cur_pos;
+        if let Some((sol_ecef, cb_s, _alt)) = pvt::solve_pvt_wls(gps_now, bds_now, gal_now,
+            &self.gps_eph_visible, &self.bds_eph_visible, &self.gal_eph_visible, init_pos) {
+            let sol_lla = ecef_to_lla(&sol_ecef);
+            let true_lla = ecef_to_lla(&cur_pos);
+            let dx = sol_ecef.x - cur_pos.x; let dy = sol_ecef.y - cur_pos.y; let dz = sol_ecef.z - cur_pos.z;
+            let err = (dx*dx + dy*dy + dz*dz).sqrt();
+            println!("[PVT] Solution: lat={:.6} lon={:.6} alt={:.1} m; clk={:.3} ns; err={:.2} m",
+                     sol_lla.lat.to_degrees(), sol_lla.lon.to_degrees(), sol_lla.alt, cb_s*1e9, err);
+            println!("[PVT] Truth:   lat={:.6} lon={:.6} alt={:.1} m",
+                     true_lla.lat.to_degrees(), true_lla.lon.to_degrees(), true_lla.alt);
+        } else {
+            println!("[PVT] Not enough satellites for position fix (need >=4)");
+        }
 
         // Создаем спутниковые сигналы и генерируем данные
         let mut sat_if_signals = self.create_satellite_signals(&nav_bit_array, cur_pos)?;
