@@ -1148,7 +1148,7 @@ impl IFDataGen {
         let mut candidates: HashSet<i64> = HashSet::new();
         let gps_abs = |w: i32, t: i32| -> i64 { (w as i64) * 604800 + (t as i64) };
         let bds_abs = |w: i32, t: i32| -> i64 { ((w as i64) + 1356) * 604800 + (t as i64) }; // игнор 14с
-        let gal_abs = |w: i32, t: i32| -> i64 { ((w as i64) + 1024) * 604800 + (t as i64) };
+        let gal_abs = |w: i32, t: i32| -> i64 { (w as i64) * 604800 + (t as i64) };
         for (&(w, t), _) in gps_by_epoch.iter() {
             candidates.insert(gps_abs(w, t));
         }
@@ -1398,7 +1398,7 @@ impl IFDataGen {
         for svid in 1..=TOTAL_GAL_SAT {
             let mut best: Option<(GpsEphemeris, i64)> = None;
             for eph in &c_nav_data.galileo_ephemeris {
-                if eph.svid as usize == svid && eph.health == 0 {
+                if eph.svid as usize == svid {
                     let diff = ((gw - eph.week) as i64) * 604800 + (gs - eph.toe as i64);
                     let ad = diff.abs();
                     if ad <= 7200 && best.map_or(true, |(_, bd)| ad < bd) {
@@ -2117,9 +2117,9 @@ impl IFDataGen {
                         eph.health
                     );
 
-                    if (eph.valid & 1) == 0 || eph.health != 0 {
+                    if (eph.valid & 1) == 0 {
                         valid_failed += 1;
-                        println!("[DEBUG] GAL{:02} - FAILED: valid/health check", i + 1);
+                        println!("[DEBUG] GAL{:02} - FAILED: valid check", i + 1);
                         continue;
                     }
 

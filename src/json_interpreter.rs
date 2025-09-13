@@ -1443,6 +1443,26 @@ fn is_ephemeris_within_time_window(
     within_window
 }
 
+/// Galileo time-window check: adjusts week number from GST to GPS epoch
+fn is_galileo_ephemeris_within_time_window(
+    eph: &GpsEphemeris,
+    target_time: &UtcTime,
+    window_hours: f64,
+) -> bool {
+    // Target time in GPS seconds
+    let target_gps = utc_to_gps_time(*target_time, false);
+    let target_seconds =
+        (target_gps.Week as f64) * 604800.0 + (target_gps.MilliSeconds as f64) / 1000.0;
+
+    // Galileo week is relative to GST epoch; align to GPS by adding offset
+    const GAL_TO_GPS_WEEK_OFFSET: i32 = 1024;
+    let corrected_week = eph.week + GAL_TO_GPS_WEEK_OFFSET;
+    let eph_seconds = (corrected_week as f64) * 604800.0 + (eph.toe as f64);
+
+    let time_diff_hours = (eph_seconds - target_seconds).abs() / 3600.0;
+    time_diff_hours <= window_hours
+}
+
 /// Пропускает строки эфемериды (7 строк для GPS/BeiDou/Galileo, 3 для GLONASS)
 fn skip_ephemeris_lines<T: Iterator<Item = Result<String, std::io::Error>>>(lines: &mut T) {
     // Для универсальности пропускаем максимально 7 строк
@@ -2977,8 +2997,8 @@ where
         eph.toc = (gps_time.MilliSeconds / 1000) as i32;
     }
 
-    // Читаем 6 строк данных для Galileo (в отличие от 7 для GPS)
-    for i in 0..6 {
+    // Читаем 7 строк данных для Galileo (как и GPS в RINEX 3.x навигации)
+    for i in 0..7 {
         if let Some(Ok(data_line)) = lines.next() {
             if i * 4 + 3 + 4 <= data.len() {
                 read_contents_data(&data_line, &mut data[i * 4 + 3..i * 4 + 7]);
@@ -3019,7 +3039,7 @@ where
         "[GAL-PARSE] SV{:02}: data[3]={:.0} (IODnav), iodc={}, toe={}",
         eph.svid, data[3], eph.iodc, eph.toe
     );
-    eph.week = data[21] as i32; // Week
+    eph.week = data[21] as i32; // Week (GST week count in RINEX 3.x)
     eph.ura = get_ura_index(data[22]) as i16; // SISA → URA mapping
     eph.health = data[23] as u16; // Health
 
