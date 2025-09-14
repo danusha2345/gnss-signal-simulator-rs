@@ -752,7 +752,6 @@ impl NavBitTrait for GNavBit {
         Box::new(self.clone())
     }
 }
-use crate::dprintln;
 use crate::fastmath::FastMath;
 use rayon::prelude::*;
 
@@ -969,7 +968,6 @@ impl IFDataGen {
             if let Ok(json) = serde_json::from_str::<serde_json::Value>(&json_content) {
                 if let Some(ephemeris) = json.get("ephemeris") {
                     if let Some(name) = ephemeris.get("name").and_then(|v| v.as_str()) {
-                        dprintln!("[DEBUG] Using ephemeris file from JSON: {}", name);
                         rinex_file = String::from(name);
                     }
                 }
@@ -998,8 +996,6 @@ impl IFDataGen {
                 enabled_systems.push("Galileo");
             }
 
-            dprintln!("[DEBUG] Using filtered RINEX loading: time={}-{:02}-{:02} {:02}:{:02}:{:02}, systems={:?}", 
-                utc_time.Year, utc_time.Month, utc_time.Day, utc_time.Hour, utc_time.Minute, utc_time.Second, enabled_systems);
 
             // Используем оптимизированную загрузку RINEX с фильтрацией систем из JSON
             crate::json_interpreter::read_nav_file_filtered(
@@ -1077,12 +1073,10 @@ impl IFDataGen {
         )?;
         self.calculate_visible_satellites(cur_pos, glonass_time)?;
         if crate::logutil::is_verbose() {
-            dprintln!("[DEBUG]\tVisible satellites calculation completed");
         }
 
         let mut sat_if_signals = self.create_satellite_signals(&nav_bit_array[..], cur_pos)?;
         if crate::logutil::is_verbose() {
-            dprintln!("[DEBUG]\tSatellite signals created successfully");
         }
 
         // Парсим время траектории из JSON пресета (используем хардкод пока)
@@ -1534,7 +1528,6 @@ impl IFDataGen {
         // ИСПРАВЛЕНИЕ: Не перезаписываем BeiDou эфемериды из find_ephemeris
         // Они уже правильно скопированы из JSON в copy_beidou_ephemeris_from_json_nav_data
         // find_ephemeris ищет в nav_data.bds_ephemeris, но не в bds_ephemeris_pool
-        dprintln!("[DEBUG] Skipping find_ephemeris loop for BeiDou - data already copied from JSON");
 
         /*
         for i in 1..=TOTAL_BDS_SAT {
@@ -1705,11 +1698,6 @@ impl IFDataGen {
                 total_gps_eph += 1;
             }
         }
-        dprintln!(
-            "[DEBUG] Total GPS ephemeris available: {}/{}",
-            total_gps_eph,
-            TOTAL_GPS_SAT
-        );
 
         // Calculate visible GPS satellites
         self.gps_sat_number = if self.output_param.CompactConfig.should_parse_gps() {
@@ -1719,50 +1707,20 @@ impl IFDataGen {
             // КАК В C ВЕРСИИ: передаем только секунды недели, не полное время
             let transmit_time = (self.cur_time.MilliSeconds as f64) / 1000.0;
 
-            dprintln!("[DEBUG] GPS Visibility Analysis:");
-            dprintln!(
-                "[DEBUG] Current GPS time: Week={}, MS={}, Seconds={:.1}",
-                self.cur_time.Week,
-                self.cur_time.MilliSeconds,
-                transmit_time
-            );
-            dprintln!(
-                "[DEBUG] Receiver position: ({:.1}, {:.1}, {:.1})",
-                cur_pos.x,
-                cur_pos.y,
-                cur_pos.z
-            );
-            dprintln!(
-                "[DEBUG] GPS mask out value: 0x{:08x}, elevation mask: {}°",
-                self.output_param.GpsMaskOut,
-                elevation_mask.to_degrees()
-            );
 
             for i in 0..TOTAL_GPS_SAT {
                 if let Some(eph) = &self.gps_eph[i] {
-                    dprintln!("[DEBUG] Checking GPS satellite {} (SVID {})", i, eph.svid);
 
                     // Check health and validity
                     if (eph.valid & 1) == 0 {
-                        dprintln!(
-                            "[DEBUG] Satellite {} rejected: invalid (valid={})",
-                            i,
-                            eph.valid
-                        );
                         continue;
                     }
                     if eph.health != 0 {
-                        dprintln!(
-                            "[DEBUG] Satellite {} rejected: unhealthy (health={})",
-                            i,
-                            eph.health
-                        );
                         continue;
                     }
 
                     // Check mask out
                     if (self.output_param.GpsMaskOut & (1u32 << i)) != 0 {
-                        dprintln!("[DEBUG] Satellite {} rejected: masked out", i);
                         continue;
                     }
 
@@ -1854,88 +1812,17 @@ impl IFDataGen {
                             if sat_number < TOTAL_GPS_SAT {
                                 self.gps_eph_visible[sat_number] = Some(*eph);
                                 sat_number += 1;
-                                dprintln!(
-                                    "[DEBUG] Satellite {} added as visible #{}",
-                                    i,
-                                    sat_number
-                                );
                             }
                         } else {
-                            dprintln!("[DEBUG] Satellite {} rejected: elevation too low ({:.1}° < {:.1}°)", 
-                                     i, elevation.to_degrees(), elevation_mask);
                         }
                     } else {
-                        dprintln!(
-                            "[DEBUG] Satellite {} rejected: position calculation failed",
-                            i
-                        );
                     }
                 } else if i < 10 {
                     // Показать только первые 10 для краткости
-                    dprintln!("[DEBUG] No ephemeris for GPS satellite {}", i);
                 }
             }
             println!("[INFO]\tFound {} visible GPS satellites", sat_number);
 
-            // Подробная таблица видимых GPS спутников как в C-версии
-            if sat_number > 0 {
-                println!("┌─────┬─────┬──────────┬──────────┬─────────────┬──────────┐");
-                println!("│ PRN │ SV  │ Elev(°)  │ Azim(°)  │ Doppler(Hz) │ Range(m) │");
-                println!("├─────┼─────┼──────────┼──────────┼─────────────┼──────────┤");
-
-                for j in 0..sat_number {
-                    if let Some(eph) = &self.gps_eph_visible[j] {
-                        // КАК В C ВЕРСИИ: передаем только секунды недели, не полное время
-                        let transmit_time = (self.cur_time.MilliSeconds as f64) / 1000.0;
-                        let mut sat_pos_vel = KinematicInfo::default();
-                        let mut eph_mut = *eph;
-
-                        if crate::coordinate::gps_sat_pos_speed_eph(
-                            GnssSystem::GpsSystem,
-                            transmit_time,
-                            &mut eph_mut,
-                            &mut sat_pos_vel,
-                            None,
-                        ) {
-                            let mut elevation = 0.0;
-                            let mut azimuth = 0.0;
-                            crate::coordinate::sat_el_az_from_positions(
-                                &cur_pos,
-                                &sat_pos_vel,
-                                &mut elevation,
-                                &mut azimuth,
-                            );
-
-                            let range = ((sat_pos_vel.x - cur_pos.x).powi(2)
-                                + (sat_pos_vel.y - cur_pos.y).powi(2)
-                                + (sat_pos_vel.z - cur_pos.z).powi(2))
-                            .sqrt();
-
-                            // Вычисление Doppler частоты
-                            let los_x = (sat_pos_vel.x - cur_pos.x) / range;
-                            let los_y = (sat_pos_vel.y - cur_pos.y) / range;
-                            let los_z = (sat_pos_vel.z - cur_pos.z) / range;
-                            let radial_velocity = los_x * sat_pos_vel.vx
-                                + los_y * sat_pos_vel.vy
-                                + los_z * sat_pos_vel.vz;
-                            let doppler_hz =
-                                -radial_velocity * 1575.42e6 / crate::constants::LIGHT_SPEED;
-
-                            println!(
-                                "│ {:3} │ {:3} │ {:8.1} │ {:8.1} │ {:11.1} │ {:8.0} │",
-                                eph.svid,
-                                eph.svid,
-                                elevation.to_degrees(),
-                                azimuth.to_degrees(),
-                                doppler_hz,
-                                range
-                            );
-                        }
-                    }
-                }
-                println!("└─────┴─────┴──────────┴──────────┴─────────────┴──────────┘");
-                println!();
-            }
 
             sat_number
         } else {
@@ -2005,7 +1892,6 @@ impl IFDataGen {
                     if i < 5 {
                         // Логируем только первые 5 для отладки
                         let delta_t_bds = transmit_time - eph.toe as f64;
-                        dprintln!("[DEBUG] BDS{:02} toe={}, transmit_time_week(BDT)={:.1}, delta_t={:.1}h", eph.svid, eph.toe, transmit_time, delta_t_bds / 3600.0);
                     }
                     if pos_calc_success {
                         println!(
@@ -2039,67 +1925,6 @@ impl IFDataGen {
             }
             println!("[INFO]\tFound {} visible BeiDou satellites", sat_number);
 
-            // Подробная таблица видимых BeiDou спутников как в C-версии
-            if sat_number > 0 {
-                println!("┌─────┬─────┬──────────┬──────────┬─────────────┬──────────┐");
-                println!("│ PRN │ SV  │ Elev(°)  │ Azim(°)  │ Doppler(Hz) │ Range(m) │");
-                println!("├─────┼─────┼──────────┼──────────┼─────────────┼──────────┤");
-
-                for j in 0..sat_number {
-                    if let Some(eph) = &self.bds_eph_visible[j] {
-                        // Для BeiDou используем секунды недели в шкале BDT
-                        let utc_now = crate::gnsstime::gps_time_to_utc(self.cur_time, true);
-                        let bds_now = crate::gnsstime::utc_to_bds_time(utc_now);
-                        let transmit_time = (bds_now.MilliSeconds as f64) / 1000.0;
-                        let mut sat_pos_vel = KinematicInfo::default();
-                        let mut eph_mut = *eph;
-
-                        if crate::coordinate::gps_sat_pos_speed_eph(
-                            GnssSystem::BdsSystem,
-                            transmit_time,
-                            &mut eph_mut,
-                            &mut sat_pos_vel,
-                            None,
-                        ) {
-                            let mut elevation = 0.0;
-                            let mut azimuth = 0.0;
-                            crate::coordinate::sat_el_az_from_positions(
-                                &cur_pos,
-                                &sat_pos_vel,
-                                &mut elevation,
-                                &mut azimuth,
-                            );
-
-                            let range = ((sat_pos_vel.x - cur_pos.x).powi(2)
-                                + (sat_pos_vel.y - cur_pos.y).powi(2)
-                                + (sat_pos_vel.z - cur_pos.z).powi(2))
-                            .sqrt();
-
-                            // Вычисление Doppler частоты для BeiDou B1C
-                            let los_x = (sat_pos_vel.x - cur_pos.x) / range;
-                            let los_y = (sat_pos_vel.y - cur_pos.y) / range;
-                            let los_z = (sat_pos_vel.z - cur_pos.z) / range;
-                            let radial_velocity = los_x * sat_pos_vel.vx
-                                + los_y * sat_pos_vel.vy
-                                + los_z * sat_pos_vel.vz;
-                            let doppler_hz =
-                                -radial_velocity * 1575.42e6 / crate::constants::LIGHT_SPEED;
-
-                            println!(
-                                "│ C{:2} │ {:3} │ {:8.1} │ {:8.1} │ {:11.1} │ {:8.0} │",
-                                eph.svid,
-                                eph.svid,
-                                elevation.to_degrees(),
-                                azimuth.to_degrees(),
-                                doppler_hz,
-                                range
-                            );
-                        }
-                    }
-                }
-                println!("└─────┴─────┴──────────┴──────────┴─────────────┴──────────┘");
-                println!();
-            }
 
             sat_number
         } else {
@@ -2134,13 +1959,11 @@ impl IFDataGen {
 
                     if (eph.valid & 1) == 0 {
                         valid_failed += 1;
-                        dprintln!("[DEBUG] GAL{:02} - FAILED: valid check", i + 1);
                         continue;
                     }
 
                     if (self.output_param.GalileoMaskOut & (1u64 << i)) != 0 {
                         mask_failed += 1;
-                        dprintln!("[DEBUG] GAL{:02} - FAILED: mask out", i + 1);
                         continue;
                     }
 
@@ -2208,75 +2031,13 @@ impl IFDataGen {
                         }
                     } else {
                         pos_failed += 1;
-                        dprintln!("[DEBUG] GAL{:02} - FAILED: position calculation", i + 1);
                     }
                 }
             }
-            dprintln!("[DEBUG] Galileo summary: checked={}, valid_failed={}, mask_failed={}, pos_failed={}, elev_failed={}, visible={}", 
-                     total_checked, valid_failed, mask_failed, pos_failed, elev_failed, sat_number);
             if crate::logutil::is_verbose() {
                 println!("[INFO]\tFound {} visible Galileo satellites", sat_number);
             }
 
-            // Подробная таблица видимых Galileo спутников как в C-версии
-            if sat_number > 0 {
-                println!("┌─────┬─────┬──────────┬──────────┬─────────────┬──────────┐");
-                println!("│ PRN │ SV  │ Elev(°)  │ Azim(°)  │ Doppler(Hz) │ Range(m) │");
-                println!("├─────┼─────┼──────────┼──────────┼─────────────┼──────────┤");
-
-                for j in 0..sat_number {
-                    if let Some(eph) = &self.gal_eph_visible[j] {
-                        // Для согласованности с C-версией используем GPS секунды недели
-                        let transmit_time = (self.cur_time.MilliSeconds as f64) / 1000.0;
-                        let mut sat_pos_vel = KinematicInfo::default();
-                        let mut eph_mut = *eph;
-
-                        if crate::coordinate::gps_sat_pos_speed_eph(
-                            GnssSystem::GalileoSystem,
-                            transmit_time,
-                            &mut eph_mut,
-                            &mut sat_pos_vel,
-                            None,
-                        ) {
-                            let mut elevation = 0.0;
-                            let mut azimuth = 0.0;
-                            crate::coordinate::sat_el_az_from_positions(
-                                &cur_pos,
-                                &sat_pos_vel,
-                                &mut elevation,
-                                &mut azimuth,
-                            );
-
-                            let range = ((sat_pos_vel.x - cur_pos.x).powi(2)
-                                + (sat_pos_vel.y - cur_pos.y).powi(2)
-                                + (sat_pos_vel.z - cur_pos.z).powi(2))
-                            .sqrt();
-
-                            // Вычисление Doppler частоты для Galileo E1
-                            let los_x = (sat_pos_vel.x - cur_pos.x) / range;
-                            let los_y = (sat_pos_vel.y - cur_pos.y) / range;
-                            let los_z = (sat_pos_vel.z - cur_pos.z) / range;
-                            let radial_velocity = los_x * sat_pos_vel.vx
-                                + los_y * sat_pos_vel.vy
-                                + los_z * sat_pos_vel.vz;
-                            let doppler_hz =
-                                -radial_velocity * 1575.42e6 / crate::constants::LIGHT_SPEED;
-
-                            println!(
-                                "│ E{:2} │ {:3} │ {:8.1} │ {:8.1} │ {:11.1} │ {:8.0} │",
-                                eph.svid,
-                                eph.svid,
-                                elevation.to_degrees(),
-                                azimuth.to_degrees(),
-                                doppler_hz,
-                                range
-                            );
-                        }
-                    }
-                }
-                println!("└─────┴─────┴──────────┴──────────┴─────────────┴──────────┘");
-                println!();
-            }
 
             sat_number
         } else {
@@ -2330,7 +2091,6 @@ impl IFDataGen {
                     print!("SV{:02}(k={:+2}) ", eph.n, eph.freq);
                 }
             }
-            println!();
         }
 
         // Temporarily store values to avoid borrowing conflicts
@@ -2484,9 +2244,7 @@ impl IFDataGen {
         );
 
         if debug_mode {
-            println!("[PERF]\tDEBUG MODE: Using fast test signals instead of full GNSS generation");
         }
-        println!();
 
         let start_time = Instant::now();
 
@@ -2628,14 +2386,6 @@ impl IFDataGen {
                 let sat_total_duration = sat_start.elapsed();
 
                 // Детальная статистика каждые 1000 миллисекунд
-                if length % 1000 == 0 {
-                    println!("[TIMING_DETAIL] ms {}: Noise: {:.3}ms, SatProcess: {:.3}ms, Accumulation: {:.3}ms, Total: {:.3}ms",
-                        length,
-                        noise_duration.as_millis(),
-                        sat_process_duration.as_millis(),
-                        accumulation_duration.as_millis(),
-                        sat_total_duration.as_millis());
-                }
             }
 
             let quant_start = std::time::Instant::now();
@@ -3120,7 +2870,6 @@ impl IFDataGen {
 
         // Переходим на новую строку после завершения всех блоков
         if crate::logutil::is_verbose() {
-            println!();
         }
 
         // Финальная статистика
@@ -3539,7 +3288,6 @@ impl IFDataGen {
             }
             println!("]");
         }
-        println!();
     }
 
     fn count_signals_per_system(&self) -> (usize, usize, usize, usize) {
@@ -4216,8 +3964,6 @@ impl IFDataGen {
                             ((center_freq + doppler) - self.output_param.CenterFreq as f64) as i32;
                         if eph.svid <= 3 {
                             // Отладка для первых 3 спутников
-                            dprintln!("[DEBUG] GPS G{:02}: center_freq={:.0} Hz, doppler={:.1} Hz, CenterFreq={} Hz, if_freq={} Hz", 
-                                    eph.svid, center_freq, doppler, self.output_param.CenterFreq, if_freq);
                         }
                         // SatIfSignal expects number of samples per millisecond, not Hz
                         let samples_per_ms = self.output_param.SampleFreq / 1000;
@@ -4320,8 +4066,6 @@ impl IFDataGen {
                             ((center_freq + doppler) - self.output_param.CenterFreq as f64) as i32;
                         if eph.svid <= 3 {
                             // Отладка для первых 3 спутников
-                            dprintln!("[DEBUG] BDS C{:02}: center_freq={:.0} Hz, doppler={:.1} Hz, CenterFreq={} Hz, if_freq={} Hz", 
-                                    eph.svid, center_freq, doppler, self.output_param.CenterFreq, if_freq);
                         }
                         // SatIfSignal expects number of samples per millisecond, not Hz
                         let samples_per_ms = self.output_param.SampleFreq / 1000;
@@ -4420,8 +4164,6 @@ impl IFDataGen {
                             ((center_freq + doppler) - self.output_param.CenterFreq as f64) as i32;
                         if eph.svid <= 3 {
                             // Отладка для первых 3 спутников
-                            dprintln!("[DEBUG] GAL E{:02}: center_freq={:.0} Hz, doppler={:.1} Hz, CenterFreq={} Hz, if_freq={} Hz", 
-                                    eph.svid, center_freq, doppler, self.output_param.CenterFreq, if_freq);
                         }
                         // SatIfSignal expects number of samples per millisecond, not Hz
                         let samples_per_ms = self.output_param.SampleFreq / 1000;
@@ -4678,7 +4420,6 @@ impl IFDataGen {
                 // Парсим путь к файлу эфемерид
                 if let Some(ephemeris) = json.get("ephemeris") {
                     if let Some(name) = ephemeris.get("name").and_then(|v| v.as_str()) {
-                        dprintln!("[DEBUG] Found ephemeris file in JSON: {}", name);
                         rinex_file = String::from(name); // Копируем путь из JSON
                     }
                 }
@@ -4687,7 +4428,6 @@ impl IFDataGen {
                 if let Some(output) = json.get("output") {
                     // Парсим имя файла
                     if let Some(filename) = output.get("name").and_then(|v| v.as_str()) {
-                        dprintln!("[DEBUG] Found filename in JSON: {}", filename);
                         let filename_bytes = filename.as_bytes();
                         let len = filename_bytes.len().min(255);
                         self.output_param.filename[..len].copy_from_slice(&filename_bytes[..len]);
@@ -4970,8 +4710,6 @@ impl IFDataGen {
                 enabled_systems.push("Galileo");
             }
 
-            dprintln!("[DEBUG] Using filtered RINEX loading: time={}-{:02}-{:02} {:02}:{:02}:{:02}, systems={:?}", 
-                utc_time.Year, utc_time.Month, utc_time.Day, utc_time.Hour, utc_time.Minute, utc_time.Second, enabled_systems);
 
             // Используем оптимизированную загрузку RINEX с фильтрацией систем из JSON
             crate::json_interpreter::read_nav_file_filtered(
@@ -5050,34 +4788,28 @@ impl IFDataGen {
     }
 
     pub fn initialize(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        dprintln!("[DEBUG] Starting initialize()...");
 
         // Инициализация уже выполнена при загрузке конфигурации
         // Здесь только базовая настройка системы
         self.trajectory.reset_trajectory_time();
 
-        dprintln!("[DEBUG] Initializing CN0 for GPS satellites...");
         // Инициализируем CN0 для спутников
         for i in 0..TOTAL_GPS_SAT {
             self.gps_sat_param[i].CN0 = (self.power_control.init_cn0 * 100.0 + 0.5) as i32;
         }
 
-        dprintln!("[DEBUG] Initializing CN0 for BeiDou satellites...");
         for i in 0..TOTAL_BDS_SAT {
             self.bds_sat_param[i].CN0 = (self.power_control.init_cn0 * 100.0 + 0.5) as i32;
         }
 
-        dprintln!("[DEBUG] Initializing CN0 for Galileo satellites...");
         for i in 0..TOTAL_GAL_SAT {
             self.gal_sat_param[i].CN0 = (self.power_control.init_cn0 * 100.0 + 0.5) as i32;
         }
 
-        dprintln!("[DEBUG] Initializing CN0 for GLONASS satellites...");
         for i in 0..TOTAL_GLO_SAT {
             self.glo_sat_param[i].CN0 = (self.power_control.init_cn0 * 100.0 + 0.5) as i32;
         }
 
-        dprintln!("[DEBUG] initialize() completed successfully");
         Ok(())
     }
 
@@ -5369,7 +5101,6 @@ impl IFDataGen {
     }
 
     pub fn generate_data(&mut self) -> Result<GenerationStats, Box<dyn std::error::Error>> {
-        dprintln!("[DEBUG] Starting generate_data()...");
 
         // Используем стандартные данные пока не реализованы get методы
         let utc_time = self

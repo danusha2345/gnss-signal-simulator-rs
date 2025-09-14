@@ -127,7 +127,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // ЭТАП 3: Инициализация системы (включая парсинг RINEX)
     let system_init_start = Instant::now();
-    dprintln!("[DEBUG] About to call initialize()...");
     if_data_gen.initialize()?;
     let system_init_duration = system_init_start.elapsed();
     if is_verbose() {
@@ -142,7 +141,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if is_verbose() {
         println!("[INFO]\tStarting IF data generation...");
     }
-    dprintln!("[DEBUG] About to call generate_data()...");
     let generation_start = Instant::now();
     let result = if_data_gen.generate_data();
     let generation_duration = generation_start.elapsed();
