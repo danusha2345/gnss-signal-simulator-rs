@@ -1721,13 +1721,6 @@ impl IFDataGen {
                                             // Для отладочного вывода используем секунды недели
                     let transmit_time_week_seconds = (self.cur_time.MilliSeconds as f64) / 1000.0;
                     let delta_t_gps = transmit_time_week_seconds - eph.toe as f64;
-                    println!(
-                        "[DEBUG] GPS{:02} - toe={}, transmit_time_week={}, delta_t={:.1}h",
-                        i + 1,
-                        eph.toe,
-                        transmit_time_week_seconds,
-                        delta_t_gps / 3600.0
-                    );
                     if crate::coordinate::gps_sat_pos_speed_eph(
                         GnssSystem::GpsSystem,
                         transmit_time,
@@ -1739,14 +1732,6 @@ impl IFDataGen {
                             + (sat_pos.y - cur_pos.y).powi(2)
                             + (sat_pos.z - cur_pos.z).powi(2))
                         .sqrt();
-                        println!(
-                            "[DEBUG] Satellite {} position: ({:.1}, {:.1}, {:.1}), range: {:.0}km",
-                            i,
-                            sat_pos.x,
-                            sat_pos.y,
-                            sat_pos.z,
-                            range / 1000.0
-                        );
 
                         // Calculate elevation and azimuth using coordinate.rs function
                         let mut elevation = 0.0;
@@ -1789,13 +1774,6 @@ impl IFDataGen {
                             // println!("[GPS{:02}-DEBUG] Function returned: Elevation: {:.1}°, Azimuth: {:.1}°",
                             //          i+1, elevation.to_degrees(), azimuth.to_degrees());
                         }
-                        println!(
-                            "[DEBUG] Satellite {} elevation: {:.1}°, azimuth: {:.1}°, mask: {:.1}°",
-                            i,
-                            elevation.to_degrees(),
-                            azimuth.to_degrees(),
-                            elevation_mask.to_degrees()
-                        );
 
                         if elevation >= elevation_mask {
                             if sat_number < TOTAL_GPS_SAT {
@@ -1819,29 +1797,10 @@ impl IFDataGen {
         };
 
         // Calculate visible BeiDou satellites
-        println!(
-            "[DEBUG] CompactConfig = 0x{:08x}",
-            self.output_param.CompactConfig.config
-        );
-        println!(
-            "[DEBUG] Parsing systems: GPS={}, BDS={}, GAL={}, GLO={}",
-            self.output_param.CompactConfig.should_parse_gps(),
-            self.output_param.CompactConfig.should_parse_bds(),
-            self.output_param.CompactConfig.should_parse_galileo(),
-            self.output_param.CompactConfig.should_parse_glonass()
-        );
         self.bds_sat_number = if self.output_param.CompactConfig.should_parse_bds() {
             let mut sat_number = 0;
             let elevation_mask = self.output_param.ElevationMask;
 
-            println!(
-                "[DEBUG] Checking BeiDou satellites visibility, elevation_mask = {}",
-                elevation_mask
-            );
-            println!(
-                "[DEBUG] Total BDS ephemeris slots to check: {}",
-                TOTAL_BDS_SAT
-            );
 
             // Проверим состояние массива bds_eph
             let mut filled_slots = 0;
@@ -1850,10 +1809,6 @@ impl IFDataGen {
                     filled_slots += 1;
                 }
             }
-            println!(
-                "[DEBUG] Total filled BDS ephemeris slots: {}/{}",
-                filled_slots, TOTAL_BDS_SAT
-            );
 
             for i in 0..TOTAL_BDS_SAT {
                 if let Some(eph) = &self.bds_eph[i] {
@@ -1883,10 +1838,6 @@ impl IFDataGen {
                         let delta_t_bds = transmit_time - eph.toe as f64;
                     }
                     if pos_calc_success {
-                        println!(
-                            "[DEBUG] BeiDou sat pos calculated: ({:.1}, {:.1}, {:.1})",
-                            sat_pos.x, sat_pos.y, sat_pos.z
-                        );
                         let mut elevation = 0.0;
                         let mut azimuth = 0.0;
                         crate::coordinate::sat_el_az_from_positions(
@@ -1901,12 +1852,6 @@ impl IFDataGen {
                             sat_number += 1;
                             if sat_number <= 5 {
                                 // Показываем первые 5 видимых
-                                println!(
-                                    "[DEBUG] BDS[{}]: VISIBLE, SVID={}, elevation={:.1}°",
-                                    i,
-                                    eph.svid,
-                                    elevation.to_degrees()
-                                );
                             }
                         }
                     }
@@ -1930,21 +1875,10 @@ impl IFDataGen {
             let mut elev_failed = 0;
             let elevation_mask = self.output_param.ElevationMask;
 
-            println!(
-                "[DEBUG] Starting Galileo visibility check: elevation_mask={}",
-                elevation_mask
-            );
 
             for i in 0..TOTAL_GAL_SAT {
                 if let Some(eph) = &self.gal_eph[i] {
                     total_checked += 1;
-                    println!(
-                        "[DEBUG] GAL{:02} - svid={}, valid={}, health={}",
-                        i + 1,
-                        eph.svid,
-                        eph.valid,
-                        eph.health
-                    );
 
                     if (eph.valid & 1) == 0 {
                         valid_failed += 1;
@@ -1961,27 +1895,12 @@ impl IFDataGen {
                     let mut sat_pos = KinematicInfo::default();
                     let mut eph_mut = *eph; // Копируем эфемериды для мутабельности
                     let delta_t = transmit_time - eph.toe as f64;
-                    println!(
-                        "[DEBUG] GAL{:02} - toe={}, transmit_time_week(GST)={:.1}, delta_t={:.1}h",
-                        i + 1,
-                        eph.toe,
-                        transmit_time,
-                        delta_t / 3600.0
-                    );
                     let pos_calc_success = crate::coordinate::gps_sat_pos_speed_eph(
                         GnssSystem::GalileoSystem,
                         transmit_time,
                         &mut eph_mut,
                         &mut sat_pos,
                         None,
-                    );
-                    println!(
-                        "[DEBUG] GAL{:02} - pos_calc_success={}, sat_pos=({:.1}, {:.1}, {:.1})",
-                        i + 1,
-                        pos_calc_success,
-                        sat_pos.x,
-                        sat_pos.y,
-                        sat_pos.z
                     );
                     if pos_calc_success {
                         let mut elevation = 0.0;
@@ -1992,31 +1911,14 @@ impl IFDataGen {
                             &mut elevation,
                             &mut azimuth,
                         );
-                        println!(
-                            "[DEBUG] GAL{:02} - elevation={:.1}°, azimuth={:.1}°",
-                            i + 1,
-                            elevation.to_degrees(),
-                            azimuth.to_degrees()
-                        );
 
                         if elevation >= elevation_mask {
                             if sat_number < TOTAL_GAL_SAT {
                                 self.gal_eph_visible[sat_number] = Some(*eph);
                                 sat_number += 1;
-                                println!(
-                                    "[DEBUG] GAL{:02} - VISIBLE! Added as #{}",
-                                    i + 1,
-                                    sat_number
-                                );
                             }
                         } else {
                             elev_failed += 1;
-                            println!(
-                                "[DEBUG] GAL{:02} - FAILED: elevation {:.1}° < {:.1}°",
-                                i + 1,
-                                elevation.to_degrees(),
-                                elevation_mask.to_degrees()
-                            );
                         }
                     } else {
                         pos_failed += 1;
@@ -2255,12 +2157,6 @@ impl IFDataGen {
 
         while length < total_duration_ms {
             iteration_count += 1;
-            if iteration_count <= 5 {
-                vprintln!(
-                    "[DEBUG]\tGeneration iteration {}, current length: {} ms / {} ms total",
-                    iteration_count, length, total_duration_ms
-                );
-            }
 
             // Step to next millisecond
             self.step_to_next_ms(&mut cur_pos)?;
@@ -2386,23 +2282,9 @@ impl IFDataGen {
                     &mut clipped_in_block,
                 );
                 let bytes_written = if_file.write(&quant_array[..samples_per_ms])?;
-                if iteration_count <= 5 {
-                    // Debug first few writes
-                    println!(
-                        "[DEBUG]\tWrote {} bytes (IQ4) to file at iteration {}, ms {}",
-                        bytes_written, iteration_count, length
-                    );
-                }
             } else {
                 Self::quant_samples_iq8(&noise_array, &mut quant_array, &mut clipped_in_block);
                 let bytes_written = if_file.write(&quant_array)?;
-                if iteration_count <= 5 {
-                    // Debug first few writes
-                    println!(
-                        "[DEBUG]\tWrote {} bytes (IQ8) to file at iteration {}, ms {}",
-                        bytes_written, iteration_count, length
-                    );
-                }
             }
             let quant_duration = quant_start.elapsed();
 
@@ -4252,12 +4134,6 @@ impl IFDataGen {
                         );
                         let if_freq =
                             ((center_freq + doppler) - self.output_param.CenterFreq as f64) as i32;
-                        if eph.n <= 3 {
-                            println!(
-                                "[DEBUG] GLO R{:02}: center_freq={:.0} Hz, doppler={:.1} Hz, CenterFreq={} Hz, if_freq={} Hz",
-                                eph.n, center_freq, doppler, self.output_param.CenterFreq, if_freq
-                            );
-                        }
                         // SatIfSignal expects number of samples per millisecond, not Hz
                         let samples_per_ms = self.output_param.SampleFreq / 1000;
                         let mut new_signal = SatIfSignal::new(
@@ -4815,10 +4691,6 @@ impl IFDataGen {
         utc_time: UtcTime,
     ) {
         println!("[INFO]\tCopying GPS ephemeris from JSON CNavData");
-        println!(
-            "[DEBUG] Source has {} GPS ephemeris records",
-            c_nav_data.gps_ephemeris.len()
-        );
 
         use std::collections::{HashMap, HashSet};
         // Целевое время в секундах от GPS эпохи
@@ -4900,10 +4772,6 @@ impl IFDataGen {
         utc_time: UtcTime,
     ) {
         println!("[INFO]\tCopying BeiDou ephemeris from JSON CNavData");
-        println!(
-            "[DEBUG] Source has {} BeiDou ephemeris records",
-            c_nav_data.beidou_ephemeris.len()
-        );
 
         // Целевое время в секундах от BDT эпохи
         use std::collections::{HashMap, HashSet};
@@ -5000,10 +4868,6 @@ impl IFDataGen {
         utc_time: UtcTime,
     ) {
         println!("[INFO]\tCopying Galileo ephemeris from JSON CNavData");
-        println!(
-            "[DEBUG] Source has {} Galileo ephemeris records",
-            c_nav_data.galileo_ephemeris.len()
-        );
 
         // Целевое время в секундах от GST эпохи
         use std::collections::{HashMap, HashSet};
