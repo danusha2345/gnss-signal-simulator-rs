@@ -119,9 +119,9 @@ impl CNavBit {
         }
 
         // first determine the current TOW and subframe number
-        let mut week = start_time.Week;
+        let mut _week = start_time.Week;
         let mut milli_seconds = start_time.MilliSeconds;
-        week += milli_seconds / 604800000;
+        _week += milli_seconds / 604800000;
         milli_seconds %= 604800000;
         tow = milli_seconds / (if param != 0 { 6000 } else { 12000 });
         let message: i32 = tow % 100; // message index within super frame
@@ -444,7 +444,7 @@ impl CNavBit {
         midi_alm_data[0] |= COMPOSE_BITS!(int_value >> 10, 0, 1);
         midi_alm_data[1] = COMPOSE_BITS!(int_value, 22, 10);
         uint_value = Self::unscale_uint(almanac.sqrtA, -4) as u32;
-        midi_alm_data[1] |= COMPOSE_BITS!(int_value, 5, 17);
+        midi_alm_data[1] |= COMPOSE_BITS!(uint_value as i32, 5, 17);
         int_value = Self::unscale_int(almanac.omega0 / std::f64::consts::PI, -15);
         midi_alm_data[1] |= COMPOSE_BITS!(int_value >> 11, 0, 5);
         midi_alm_data[2] = COMPOSE_BITS!(int_value, 21, 11);
@@ -742,7 +742,7 @@ impl CNavBit {
         600 // Return number of bits generated
     }
 
-    pub fn set_ephemeris_alt(&mut self, svid: i32, eph: &GpsEphemeris) -> bool {
+    pub fn set_ephemeris_alt(&mut self, svid: i32, _eph: &GpsEphemeris) -> bool {
         // Validate SVID
         if !(1..=32).contains(&svid) {
             return false;

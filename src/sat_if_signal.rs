@@ -16,6 +16,8 @@ use crate::types::{GnssSystem, GnssTime, SatelliteParam};
 use wide::f64x4; // SIMD векторизация для 4 элементов за раз
                  // ЭКСТРЕМАЛЬНОЕ АППАРАТНОЕ УСКОРЕНИЕ
 use crate::avx512_intrinsics::Avx512Accelerator;
+#[cfg(feature = "gpu")]
+use crate::cuda_acceleration::CudaGnssAccelerator;
 
 /// Кэш PRN кодов для агрессивной оптимизации
 /// Предвычисляет PRN биты на несколько миллисекунд вперед
@@ -69,8 +71,8 @@ impl PrnCache {
         }
 
         // Обработка оставшихся элементов
-        for chip_index in i..prn_len {
-            self.cached_prn_bits[chip_index] = if data_prn[chip_index] != 0 { -1.0 } else { 1.0 };
+        for (chip_index, val) in data_prn.iter().enumerate().skip(i).take(prn_len - i) {
+            self.cached_prn_bits[chip_index] = if *val != 0 { -1.0 } else { 1.0 };
         }
 
         // Заполняем остальное пространство (1023 - prn_len) значениями 1.0
@@ -167,6 +169,7 @@ pub struct CarrierPhaseCache {
     /// Размер кэша (количество фаз)
     cache_size: usize,
     /// Шаг фазы
+    #[allow(dead_code)]
     phase_step: f64,
 }
 
@@ -228,6 +231,7 @@ pub struct SatIfSignal {
     /// КЭШ для минимизации повторных вычислений
     computation_cache: ComputationCache,
     // ЭКСТРЕМАЛЬНАЯ АППАРАТНАЯ ОПТИМИЗАЦИЯ: AVX-512 ускоритель
+    #[allow(dead_code)]
     avx512_accelerator: Option<Avx512Accelerator>,
 }
 
@@ -471,6 +475,7 @@ impl SatIfSignal {
     }
 
     // FAST VERSION: Only update PRN codes (change every 1ms), keep same navigation bits
+    #[allow(dead_code)]
     fn get_if_sample_fast(&mut self, cur_time: GnssTime) {
         let p_sat_param = if let Some(param) = &self.sat_param {
             param
@@ -591,8 +596,8 @@ impl SatIfSignal {
         };
 
         // SIMD векторы для обработки 4 элементов за раз
-        let code_step_vec = f64x4::splat(code_step);
-        let phase_step_vec = f64x4::splat(phase_step);
+        let _code_step_vec = f64x4::splat(code_step);
+        let _phase_step_vec = f64x4::splat(phase_step);
         let amp_vec = f64x4::splat(amp);
         let nav_value_vec = f64x4::splat(nav_value);
         let base_phase_vec = f64x4::new([0.0, phase_step, phase_step * 2.0, phase_step * 3.0]);
@@ -740,9 +745,20 @@ impl SatIfSignal {
     ) {
         use crate::avx512_intrinsics::Avx512Accelerator;
 
-        // Если AVX-512 недоступен, используем кэшированную версию
+        // Если AVX-512 недоступен, но доступен GPU — остаёмся в этой функции, чтобы задействовать GPU.
+        // Иначе fallback на кэшированную версию.
         if !avx512_processor.is_available() {
-            return self.get_if_sample_cached(cur_time);
+            #[cfg(feature = "gpu")]
+            {
+                if !CudaGnssAccelerator::is_available() {
+                    return self.get_if_sample_cached(cur_time);
+                }
+                // GPU доступен — продолжаем, ниже сработает GPU-ветка.
+            }
+            #[cfg(not(feature = "gpu"))]
+            {
+                return self.get_if_sample_cached(cur_time);
+            }
         }
 
         // Получаем параметры спутника
@@ -791,6 +807,41 @@ impl SatIfSignal {
                 self.sample_number as usize,
                 phase_step,
             ));
+        }
+
+        // GPU OFFLOAD: Если доступен CUDA и включена фича `gpu`, выполняем всю миллисекунду на GPU
+        #[cfg(feature = "gpu")]
+        if CudaGnssAccelerator::is_available() {
+            if let Some(ref carrier_cache) = self.carrier_phase_cache {
+                let len = self.sample_number as usize;
+                // Подготовка входных векторов для GPU за один проход
+                let mut a_real = vec![0.0f32; len]; // PRN * NAV * AMP
+                let a_imag = vec![0.0f32; len]; // нули
+                let mut b_real = vec![0.0f32; len]; // cos
+                let mut b_imag = vec![0.0f32; len]; // sin
+
+                let scale = (amp * nav_value) as f32;
+                for i in 0..len {
+                    let chip_offset = base_chip_offset + (i as f64) * code_step;
+                    let chip_index = (chip_offset as usize) & 0x3FF;
+                    a_real[i] = (self.prn_cache.get_prn_bit(chip_index) as f32) * scale;
+                    b_real[i] = carrier_cache.cached_cos[i] as f32;
+                    b_imag[i] = carrier_cache.cached_sin[i] as f32;
+                }
+
+                if let Ok(cuda) = CudaGnssAccelerator::new() {
+                    if let Ok((out_i, out_q)) =
+                        cuda.complex_signal_processing_gpu(&a_real, &a_imag, &b_real, &b_imag)
+                    {
+                        for i in 0..len {
+                            self.sample_array[i].real = out_i[i] as f64;
+                            self.sample_array[i].imag = out_q[i] as f64;
+                        }
+                        return; // Успешно обработали на GPU, выходим
+                    }
+                }
+                // Если что-то пошло не так с GPU — продолжаем на AVX-512 ниже
+            }
         }
 
         // РЕВОЛЮЦИЯ AVX-512: Обрабатываем 16 сэмплов одновременно!
@@ -969,14 +1020,14 @@ impl SatIfSignal {
 
         // Инициализация carrier кэша на всё время
         if self.carrier_phase_cache.is_none() {
-            let p_sat_param = if let Some(ref sat_param) = self.sat_param {
+            let _p_sat_param = if let Some(ref sat_param) = self.sat_param {
                 sat_param
             } else {
                 return;
             };
 
-            let phase_step = 2.0 * std::f64::consts::PI * self.if_freq as f64 / sample_freq;
-            self.carrier_phase_cache = Some(CarrierPhaseCache::new(total_samples, phase_step));
+            let _phase_step = 2.0 * std::f64::consts::PI * self.if_freq as f64 / sample_freq;
+            self.carrier_phase_cache = Some(CarrierPhaseCache::new(total_samples, _phase_step));
         }
     }
 
@@ -1009,7 +1060,7 @@ impl SatIfSignal {
 
         let amp = computation_cache.cached_amp;
         let code_step = computation_cache.cached_code_step;
-        let phase_step = computation_cache.cached_phase_step;
+        let _phase_step = computation_cache.cached_phase_step;
         let nav_value = if self.data_signal.real >= 0.0 {
             1.0
         } else {
@@ -1108,9 +1159,9 @@ impl SatIfSignal {
             let full_groups = (self.sample_number as usize) / samples_per_group;
 
             // СУПЕР-КРИТИЧЕСКАЯ ОПТИМИЗАЦИЯ: полное кэширование всех вычислений!
-            let code_step_x4 = code_step * 4.0; // Предвычисляем шаг для группы
+            let _code_step_x4 = code_step * 4.0; // Предвычисляем шаг для группы
             let pi2 = self.computation_cache.cached_two_pi;
-            let pi2_phase_step = pi2 * phase_step; // Предвычисляем константу
+            let _pi2_phase_step = pi2 * phase_step; // Предвычисляем константу
 
             // Векторизованная обработка групп по 4 элемента с ПОЛНЫМ кэшированием
             for group in 0..full_groups {

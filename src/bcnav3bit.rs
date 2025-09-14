@@ -230,9 +230,7 @@ impl BCNav3Bit {
         let mut data_bits = [0u32; 21];
 
         // Copy data bits to temporary array
-        for i in 0..word_count {
-            data_bits[i] = frame_data[i];
-        }
+        data_bits[..word_count].copy_from_slice(&frame_data[..word_count]);
 
         // Calculate CRC
         for i in 0..486 {
@@ -258,22 +256,26 @@ impl BCNav3Bit {
         let mut matrix_index = 0usize;
 
         // Calculate parity symbols (защита от выхода за пределы матрицы)
-        for i in 0..symbol_length {
-            for j in 0..symbol_length {
-                if matrix_index >= bytes.len() { break; }
+        for parity_row in parity_symbols.iter_mut().take(symbol_length) {
+            for sym in symbols.iter().take(symbol_length) {
+                if matrix_index >= bytes.len() {
+                    break;
+                }
                 let matrix_value = bytes[matrix_index].saturating_sub(b'0');
                 if matrix_value < 64 {
-                    parity_symbols[i] ^= self.gf6_int_mul(symbols[j], matrix_value as i32);
+                    *parity_row ^= self.gf6_int_mul(*sym, matrix_value as i32);
                 }
                 matrix_index += 1;
             }
-            if matrix_index >= bytes.len() { break; }
+            if matrix_index >= bytes.len() {
+                break;
+            }
         }
 
         // Append parity symbols to data symbols
-        for i in 0..symbol_length {
+        for (i, val) in parity_symbols.into_iter().enumerate().take(symbol_length) {
             if i + symbol_length < symbols.len() {
-                symbols[i + symbol_length] = parity_symbols[i];
+                symbols[i + symbol_length] = val;
             }
         }
     }
@@ -370,9 +372,11 @@ impl BCNav3Bit {
             0 => {
                 // SOW message
                 frame_data[1] = COMPOSE_BITS!(sow as u32, 4, 20);
-                for i in 2..20 {
-                    frame_data[i] = 0x5a5a5a5a; // Fill with pattern
-                }
+                frame_data
+                    .iter_mut()
+                    .take(20)
+                    .skip(2)
+                    .for_each(|w| *w = 0x5a5a5a5a);
             }
             10 => {
                 // Ephemeris message

@@ -25,6 +25,8 @@
 //
 //----------------------------------------------------------------------
 
+#![allow(non_snake_case)]
+
 use crate::gnsstime::utc_to_glonass_time;
 use crate::gps_time_to_utc;
 use crate::types::*;
@@ -60,7 +62,7 @@ impl GNavBit {
         // Calculate frame and string index from GLONASS time
         let utc_time = gps_time_to_utc(start_time, true);
         let glonass_time = utc_to_glonass_time(utc_time);
-        let frame_idx = (glonass_time.MilliSeconds / 30000) % 5;
+        let _frame_idx = (glonass_time.MilliSeconds / 30000) % 5;
         let string_idx = (glonass_time.MilliSeconds % 30000) / 2000;
 
         // Get the appropriate data string (ephemeris or almanac)
@@ -122,7 +124,9 @@ impl GNavBit {
         }
     }
 
-    pub fn set_ephemeris(&mut self, _svid: i32, _eph: &GpsEphemeris) -> i32 { 0 }
+    pub fn set_ephemeris(&mut self, _svid: i32, _eph: &GpsEphemeris) -> i32 {
+        0
+    }
 
     pub fn set_glonass_ephemeris(&mut self, svid: i32, eph: &GlonassEphemeris) -> i32 {
         if !(1..=24).contains(&svid) || eph.flag == 0 {
@@ -442,6 +446,7 @@ impl GNavBit {
     }
 
     // Conversion functions (placeholder implementations)
+    #[allow(dead_code)]
     fn convert_gps_to_glonass_ephemeris(&self, gps_eph: &GpsEphemeris) -> GlonassEphemeris {
         // Минимально достаточная конверсия для формирования непустых строк
         let mut glo = GlonassEphemeris::new();
@@ -471,21 +476,24 @@ impl GNavBit {
     fn convert_gps_to_glonass_almanac(&self, gps_alm: &[GpsAlmanac]) -> Vec<GlonassAlmanac> {
         let mut out = Vec::with_capacity(24);
         for i in 0..24 {
-            let mut g = GlonassAlmanac::default();
-            g.flag = 1;
-            g.freq = (i as i8 % 14) - 7;
-            g.leap_year = 0;
-            g.day = 100 + i as i16;
-            g.t = 0.0;
-            g.lambda = 0.1 * (i as f64);
-            g.di = 0.0;
-            g.ecc = 0.0;
-            g.w = 0.0;
-            g.dt = 0.0;
-            g.dt_dot = 0.0;
-            g.clock_error = 0.0;
+            let mut g = GlonassAlmanac {
+                flag: 1,
+                freq: (i as i8 % 14) - 7,
+                leap_year: 0,
+                day: 100 + i as i16,
+                t: 0.0,
+                lambda: 0.1 * (i as f64),
+                di: 0.0,
+                ecc: 0.0,
+                w: 0.0,
+                dt: 0.0,
+                dt_dot: 0.0,
+                clock_error: 0.0,
+            };
             // если есть соответствующий GPS альманах — можно добавить здоровье
-            if i < gps_alm.len() && gps_alm[i].valid == 0 { g.flag = 0; }
+            if i < gps_alm.len() && gps_alm[i].valid == 0 {
+                g.flag = 0;
+            }
             out.push(g);
         }
         out

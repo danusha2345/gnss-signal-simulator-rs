@@ -244,7 +244,7 @@ pub fn get_almanac_gps(reader: &mut BufReader<&mut File>) -> Option<GpsAlmanac> 
     alm.health = 0;
     alm.valid = 1;
 
-    if alm.svid <= 0 || alm.svid > 32 {
+    if alm.svid == 0 || alm.svid > 32 {
         None
     } else {
         Some(alm)
@@ -279,22 +279,23 @@ pub fn get_almanac_bds(reader: &mut BufReader<&mut File>) -> Option<GpsAlmanac> 
         return None;
     }
 
-    let mut alm = GpsAlmanac::default();
+    let mut alm = GpsAlmanac {
+        svid: parts[0].parse().ok()?,
+        ecc: parts[1].parse().ok()?,
+        toa: parts[2].parse().ok()?,
+        i0: parts[3].parse().ok()?,
+        omega_dot: parts[4].parse().ok()?,
+        sqrtA: parts[5].parse().ok()?,
+        omega0: parts[6].parse().ok()?,
+        w: parts[7].parse().ok()?,
+        M0: parts[8].parse().ok()?,
+        af0: parts[9].parse().ok()?,
+        af1: parts[10].parse().ok()?,
+        week: parts[11].parse().ok()?,
+        ..Default::default()
+    };
 
-    alm.svid = parts[0].parse().ok()?;
-    alm.ecc = parts[1].parse().ok()?;
-    alm.toa = parts[2].parse().ok()?;
-    alm.i0 = parts[3].parse().ok()?;
-    alm.omega_dot = parts[4].parse().ok()?;
-    alm.sqrtA = parts[5].parse().ok()?;
-    alm.omega0 = parts[6].parse().ok()?;
-    alm.w = parts[7].parse().ok()?;
-    alm.M0 = parts[8].parse().ok()?;
-    alm.af0 = parts[9].parse().ok()?;
-    alm.af1 = parts[10].parse().ok()?;
-    alm.week = parts[11].parse().ok()?;
-
-    if alm.svid <= 0 || alm.svid > 63 {
+    if alm.svid == 0 || alm.svid > 63 {
         return None;
     }
 
@@ -524,18 +525,21 @@ pub fn get_almanac_glonass(reader: &mut BufReader<&mut File>) -> Option<(i32, Gl
         return None;
     }
 
-    let mut utc_time = UtcTime::default();
-    utc_time.Day = date_parts[0].parse().ok()?;
-    utc_time.Month = date_parts[1].parse().ok()?;
-    utc_time.Year = date_parts[2].parse::<i32>().ok()? + 2000;
-    utc_time.Hour = 0;
-    utc_time.Minute = 0;
-    utc_time.Second = 0.0;
+    let utc_time = UtcTime {
+        Day: date_parts[0].parse().ok()?,
+        Month: date_parts[1].parse().ok()?,
+        Year: date_parts[2].parse::<i32>().ok()? + 2000,
+        Hour: 0,
+        Minute: 0,
+        Second: 0.0,
+    };
 
     let glonass_time = utc_to_glonass_time(utc_time);
 
-    let mut alm = GlonassAlmanac::default();
-    alm.t = parts[2].parse().ok()?;
+    let mut alm = GlonassAlmanac {
+        t: parts[2].parse().ok()?,
+        ..Default::default()
+    };
     let period: f64 = parts[3].parse().ok()?;
     alm.ecc = parts[4].parse().ok()?;
     let inclination: f64 = parts[5].parse().ok()?;
@@ -568,11 +572,12 @@ pub fn norm_angle(mut angle: f64) -> f64 {
 }
 
 pub fn get_almanac_from_ephemeris(eph: &GpsEphemeris, week: i32, toa: i32) -> GpsAlmanac {
-    let mut alm = GpsAlmanac::default();
-
-    alm.valid = eph.valid & 1;
-    alm.health = eph.health as u8;
-    alm.svid = eph.svid;
+    let mut alm = GpsAlmanac {
+        valid: eph.valid & 1,
+        health: eph.health as u8,
+        svid: eph.svid,
+        ..Default::default()
+    };
 
     if alm.valid == 0 {
         return alm;

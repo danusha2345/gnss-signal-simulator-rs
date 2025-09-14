@@ -137,7 +137,11 @@ fn t(ms: i32) -> GnssTime {
 }
 
 fn non_zero_ratio(bits: &[i32]) -> f32 {
-    let cnt = bits.iter().take( bits.len().min(2000) ).filter(|&&b| b != 0).count();
+    let cnt = bits
+        .iter()
+        .take(bits.len().min(2000))
+        .filter(|&&b| b != 0)
+        .count();
     cnt as f32 / bits.len().min(2000) as f32
 }
 
@@ -157,7 +161,11 @@ fn gps_lnav_forms_frames() {
         let mut bits = [0i32; 300];
         let rc = nav.get_frame_data(t(1000 + i * 6000), 1, 0, &mut bits);
         assert_eq!(rc, 0);
-        assert!(non_zero_ratio(&bits) > 0.05, "too sparse LNAV frame {}", i + 1);
+        assert!(
+            non_zero_ratio(&bits) > 0.05,
+            "too sparse LNAV frame {}",
+            i + 1
+        );
     }
 }
 

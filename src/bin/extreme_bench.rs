@@ -24,8 +24,8 @@ fn massive_prn_benchmark() {
     let mut output_avx = vec![0.0f32; samples];
 
     // Заполняем тестовыми данными
-    for i in 0..samples {
-        prn_data[i] = ((i as f32 * 0.001).sin() * 127.0) / 127.0;
+    for (i, v) in prn_data.iter_mut().enumerate().take(samples) {
+        *v = ((i as f32 * 0.001).sin() * 127.0) / 127.0;
     }
 
     let amplitude = 0.95f32;
@@ -34,8 +34,8 @@ fn massive_prn_benchmark() {
     println!("Запуск CPU теста...");
     let start_cpu = Instant::now();
     for _ in 0..iterations {
-        for i in 0..samples {
-            output_cpu[i] = prn_data[i] * amplitude;
+        for (o, p) in output_cpu.iter_mut().zip(prn_data.iter()).take(samples) {
+            *o = *p * amplitude;
         }
     }
     let cpu_time = start_cpu.elapsed();
@@ -58,8 +58,8 @@ fn massive_prn_benchmark() {
             }
         } else {
             // Fallback
-            for i in 0..samples {
-                output_avx[i] = prn_data[i] * amplitude;
+            for (o, p) in output_avx.iter_mut().zip(prn_data.iter()).take(samples) {
+                *o = *p * amplitude;
             }
         }
     }
@@ -92,21 +92,28 @@ fn massive_complex_benchmark() {
     let mut result_imag = vec![0.0f64; samples];
 
     // Заполняем тестовыми данными
-    for i in 0..samples {
+    for (i, (((r1, i1), r2), i2)) in real1
+        .iter_mut()
+        .zip(imag1.iter_mut())
+        .zip(real2.iter_mut())
+        .zip(imag2.iter_mut())
+        .enumerate()
+        .take(samples)
+    {
         let phase = i as f64 * 0.001;
-        real1[i] = phase.cos();
-        imag1[i] = phase.sin();
-        real2[i] = (phase + 1.0).cos();
-        imag2[i] = (phase + 1.0).sin();
+        *r1 = phase.cos();
+        *i1 = phase.sin();
+        *r2 = (phase + 1.0).cos();
+        *i2 = (phase + 1.0).sin();
     }
 
     // CPU тест
     println!("Запуск CPU комплексного теста...");
     let start_cpu = Instant::now();
     for _ in 0..iterations {
-        for i in 0..samples {
+        for (i, rr) in result_real.iter_mut().enumerate().take(samples) {
             // Комплексное умножение: (a + bi) * (c + di) = (ac - bd) + (ad + bc)i
-            result_real[i] = real1[i] * real2[i] - imag1[i] * imag2[i];
+            *rr = real1[i] * real2[i] - imag1[i] * imag2[i];
             result_imag[i] = real1[i] * imag2[i] + imag1[i] * real2[i];
         }
     }
@@ -155,17 +162,22 @@ fn massive_trigonometric_benchmark() {
     let mut output_cos_avx = vec![0.0f64; samples];
 
     // Заполняем тестовыми данными
-    for i in 0..samples {
-        input[i] = (i as f64 * 0.001) % (2.0 * std::f64::consts::PI);
+    for (i, v) in input.iter_mut().enumerate().take(samples) {
+        *v = (i as f64 * 0.001) % (2.0 * std::f64::consts::PI);
     }
 
     // CPU тест
     println!("Запуск CPU тригонометрического теста...");
     let start_cpu = Instant::now();
     for _ in 0..iterations {
-        for i in 0..samples {
-            output_sin_cpu[i] = input[i].sin();
-            output_cos_cpu[i] = input[i].cos();
+        for ((s, c), &x) in output_sin_cpu
+            .iter_mut()
+            .zip(output_cos_cpu.iter_mut())
+            .zip(input.iter())
+            .take(samples)
+        {
+            *s = x.sin();
+            *c = x.cos();
         }
     }
     let cpu_time = start_cpu.elapsed();

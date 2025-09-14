@@ -9,6 +9,7 @@ use core::arch::x86_64::*;
 /// КРИТИЧЕСКОЕ УСКОРЕНИЕ: Обрабатывает 16 double значений одновременно!
 /// (512 bit / 32 bit = 16 float или 512 bit / 64 bit = 8 double)
 pub struct Avx512Accelerator {
+    #[allow(dead_code)]
     initialized: bool,
 }
 
@@ -36,6 +37,9 @@ impl Avx512Accelerator {
     /// Обрабатывает 16 float значений за одну инструкцию!
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "avx512f")]
+    /// # Safety
+    /// Requires AVX‑512 support. Slices must have length >= 16 and be valid
+    /// for read/write; they must not alias in undefined ways.
     pub unsafe fn process_prn_codes_avx512(prn_data: &[f32], samples: &mut [f32], amplitude: f32) {
         assert!(prn_data.len() >= 16);
         assert!(samples.len() >= 16);
@@ -55,6 +59,11 @@ impl Avx512Accelerator {
     /// Обрабатывает 8 комплексных чисел (16 float) одновременно
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "avx512f")]
+    /// # Safety
+    /// Caller must ensure CPU supports AVX‑512 (checked via `is_available()`),
+    /// and that all input/output slices have length >= 16 and do not overlap in
+    /// undefined ways for concurrent reads/writes. Pointers are read/written via
+    /// unaligned loads/stores (`_mm512_loadu_ps/_storeu_ps`).
     pub unsafe fn complex_multiply_avx512(
         real_a: &[f32],
         imag_a: &[f32],
@@ -87,6 +96,9 @@ impl Avx512Accelerator {
     /// ОПТИМИЗИРОВАННАЯ функция для PRN * carrier с амплитудой
     /// Специально для случая генерации GNSS сигналов
     #[target_feature(enable = "avx512f")]
+    /// # Safety
+    /// Requires AVX‑512 support and all slices length >= 16. Output slices must
+    /// be distinct from inputs or aliasing must be safe for simultaneous reads/writes.
     pub unsafe fn complex_multiply_prn_carrier_avx512(
         prn_data: &[f32],
         carrier_cos: &[f32],
@@ -119,6 +131,9 @@ impl Avx512Accelerator {
     /// Обрабатывает 16 углов одновременно используя lookup таблицы
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "avx512f")]
+    /// # Safety
+    /// Requires AVX‑512 support. All provided buffers must be length >= 16.
+    /// Indices computed are masked to LUT size; caller ensures LUTs are valid.
     pub unsafe fn fast_sin_cos_avx512(
         angles: &[f32],
         sin_lut: &[f32; 65536],
@@ -156,6 +171,9 @@ impl Avx512Accelerator {
     /// Суммирует 16 комплексных сигналов одновременно
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "avx512f")]
+    /// # Safety
+    /// Requires AVX‑512 support. All slices length >= 16. Accumulators must be
+    /// valid for mutable writes and may alias neither each other nor inputs.
     pub unsafe fn accumulate_signals_avx512(
         signal_real: &[f32],
         signal_imag: &[f32],
@@ -183,6 +201,9 @@ impl Avx512Accelerator {
     /// Использует полную ширину AVX-512 для обработки данных от 16 спутников
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "avx512f")]
+    /// # Safety
+    /// Requires AVX‑512 support. All slice references must be valid and sized
+    /// exactly for 16 elements.
     pub unsafe fn parallel_satellite_processing_avx512(
         satellite_phases: &mut [f32; 16],
         phase_steps: &[f32; 16],
@@ -215,6 +236,9 @@ impl Avx512Accelerator {
     /// AVX-512 векторное сложение двух массивов float32
     /// СУПЕР-БЫСТРОЕ сложение 16 элементов одновременно!
     #[target_feature(enable = "avx512f")]
+    /// # Safety
+    /// Requires AVX‑512 support and all slices length >= 16. Result must be
+    /// valid for writes and not alias `a`/`b` in undefined ways.
     pub unsafe fn vector_add_avx512(a: &[f32], b: &[f32], result: &mut [f32]) {
         assert!(a.len() >= 16 && b.len() >= 16 && result.len() >= 16);
 
@@ -228,6 +252,9 @@ impl Avx512Accelerator {
     /// AVX-512 векторное умножение на скаляр
     /// Умножает массив float32 на скалярное значение
     #[target_feature(enable = "avx512f")]
+    /// # Safety
+    /// Requires AVX‑512 support and all slices length >= 16. `scalar` is
+    /// expected to contain 16 identical values.
     pub unsafe fn vector_multiply_scalar_avx512(
         input: &[f32],
         scalar: &[f32], // Для совместимости с API (должен содержать 16 одинаковых значений)

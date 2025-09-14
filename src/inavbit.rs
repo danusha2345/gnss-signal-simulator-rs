@@ -442,7 +442,7 @@ impl INavBit {
         let ssp: [u32; 3] = [0x04000000, 0x2b000000, 0x2f000000];
         let mut even_part: [u8; 30] = [0; 30];
         let mut odd_part: [u8; 30] = [0; 30];
-        let mut conv_encode_bits: u8 = 0; // each part contains 8x30 bits
+        // use separate state variables for convolutional encoders
 
         // first determine the current tow and subframe number
         let mut start_time_local = start_time;
@@ -483,9 +483,9 @@ impl INavBit {
         let data: &[u32] = self.get_word_data(svid, word, subframe);
 
         // DEBUG: проверим заполненность Galileo E1 I/NAV данных
-        let mut data_density = 0;
+        let mut _data_density = 0;
         for word_data in data {
-            data_density += word_data.count_ones();
+            _data_density += word_data.count_ones();
         }
         // DEBUG: GAL stream отключен для уменьшения вывода
         // println!("[GAL-STREAM-DEBUG] SV{:02} word{}: {} битов из {} ({:.1}%)",
@@ -516,11 +516,11 @@ impl INavBit {
         let crc_result: u32 = self.crc24q_encode(&encode_data, 196);
 
         // do convolution encode on even part (encode_data[0] bit3 through encode_data[4] bit18)
-        conv_encode_bits = 0;
+        let mut conv_bits_even: u8 = 0;
         encode_word = encode_data[0] << 28; // move to MSB
         for i in 0..(114 / 2) {
             even_part[i / 2] = (even_part[i / 2] << 4)
-                + self.gal_convolution_encode(&mut conv_encode_bits, &mut encode_word);
+                + self.gal_convolution_encode(&mut conv_bits_even, &mut encode_word);
             bit_count += 2;
             if (bit_count % 32) == 0 {
                 let index = (bit_count >> 5) as usize;
@@ -533,18 +533,18 @@ impl INavBit {
         }
         encode_word = 0; // append 6 zeros as tail
         even_part[28] = (even_part[28] << 4)
-            + self.gal_convolution_encode(&mut conv_encode_bits, &mut encode_word);
-        even_part[29] = self.gal_convolution_encode(&mut conv_encode_bits, &mut encode_word);
+            + self.gal_convolution_encode(&mut conv_bits_even, &mut encode_word);
+        even_part[29] = self.gal_convolution_encode(&mut conv_bits_even, &mut encode_word);
         even_part[29] = (even_part[29] << 4)
-            + self.gal_convolution_encode(&mut conv_encode_bits, &mut encode_word);
+            + self.gal_convolution_encode(&mut conv_bits_even, &mut encode_word);
 
         // do convolution encode on odd part (encode_data[4] bit17 through encode_data[6] bit0)
-        conv_encode_bits = 0;
+        let mut conv_bits_odd: u8 = 0;
         encode_word = encode_data[4] << 14; // move to MSB
         bit_count = 142;
         for i in 0..(82 / 2) {
             odd_part[i / 2] = (odd_part[i / 2] << 4)
-                + self.gal_convolution_encode(&mut conv_encode_bits, &mut encode_word);
+                + self.gal_convolution_encode(&mut conv_bits_odd, &mut encode_word);
             bit_count += 2;
             if (bit_count % 32) == 0 {
                 let index = (bit_count >> 5) as usize;
@@ -559,7 +559,7 @@ impl INavBit {
         for i in (82 / 2)..(106 / 2) {
             // encode CRC
             odd_part[i / 2] = (odd_part[i / 2] << 4)
-                + self.gal_convolution_encode(&mut conv_encode_bits, &mut encode_word);
+                + self.gal_convolution_encode(&mut conv_bits_odd, &mut encode_word);
         }
         encode_word = if param != 0 {
             0
@@ -569,14 +569,14 @@ impl INavBit {
         for i in (106 / 2)..(114 / 2) {
             // encode ssp
             odd_part[i / 2] = (odd_part[i / 2] << 4)
-                + self.gal_convolution_encode(&mut conv_encode_bits, &mut encode_word);
+                + self.gal_convolution_encode(&mut conv_bits_odd, &mut encode_word);
         }
         encode_word = 0; // append 6 zeros as tail
-        odd_part[28] = (odd_part[28] << 4)
-            + self.gal_convolution_encode(&mut conv_encode_bits, &mut encode_word);
-        odd_part[29] = self.gal_convolution_encode(&mut conv_encode_bits, &mut encode_word);
-        odd_part[29] = (odd_part[29] << 4)
-            + self.gal_convolution_encode(&mut conv_encode_bits, &mut encode_word);
+        odd_part[28] =
+            (odd_part[28] << 4) + self.gal_convolution_encode(&mut conv_bits_odd, &mut encode_word);
+        odd_part[29] = self.gal_convolution_encode(&mut conv_bits_odd, &mut encode_word);
+        odd_part[29] =
+            (odd_part[29] << 4) + self.gal_convolution_encode(&mut conv_bits_odd, &mut encode_word);
 
         // do interleaving and put into NavBits
         let mut nav_bits_index = 0;
@@ -585,13 +585,9 @@ impl INavBit {
             nav_bits_index += 1;
         }
         for i in 0..8 {
-            let conv_encode_bits = 0x80 >> i;
+            let mask = 0x80 >> i;
             for j in 0..30 {
-                nav_bits[nav_bits_index] = if (even_part[j] & conv_encode_bits) != 0 {
-                    1
-                } else {
-                    0
-                };
+                nav_bits[nav_bits_index] = if (even_part[j] & mask) != 0 { 1 } else { 0 };
                 nav_bits_index += 1;
             }
         }
@@ -600,13 +596,9 @@ impl INavBit {
             nav_bits_index += 1;
         }
         for i in 0..8 {
-            let conv_encode_bits = 0x80 >> i;
+            let mask = 0x80 >> i;
             for j in 0..30 {
-                nav_bits[nav_bits_index] = if (odd_part[j] & conv_encode_bits) != 0 {
-                    1
-                } else {
-                    0
-                };
+                nav_bits[nav_bits_index] = if (odd_part[j] & mask) != 0 { 1 } else { 0 };
                 nav_bits_index += 1;
             }
         }
@@ -829,7 +821,7 @@ impl INavBit {
         // Заполняем оставшиеся биты реальными данными (исправляем типы)
         let integrity_flags = ((ephemeris.valid as u32 & 1) << 7) |  // Data validity
                              ((ephemeris.health as u32 & 1) << 6) |  // Satellite health
-                             ((sisa_index as u32 & 0x3F)); // SISA info
+                             (sisa_index as u32 & 0x3F); // SISA info
         ephdata[19] |= COMPOSE_BITS!(integrity_flags, 10, 8);
 
         // Дополнительные временные параметры для целостности

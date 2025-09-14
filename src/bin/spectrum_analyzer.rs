@@ -21,7 +21,7 @@ impl Complex {
 }
 
 /// Быстрое преобразование Фурье (FFT) - алгоритм Кули-Тьюки
-fn fft(data: &mut Vec<Complex>) {
+fn fft(data: &mut [Complex]) {
     let n = data.len();
     if n <= 1 {
         return;
@@ -164,14 +164,14 @@ fn calculate_psd(samples: &[Complex], sample_rate: f64) -> (Vec<f64>, Vec<f64>) 
     let fft_size = samples.len().next_power_of_two();
 
     // Подготовка данных для FFT с дополнением нулями
-    let mut fft_data: Vec<Complex> = samples.iter().copied().collect();
+    let mut fft_data: Vec<Complex> = samples.to_vec();
     fft_data.resize(fft_size, Complex::new(0.0, 0.0));
 
     // Применение окна Хэмминга для уменьшения спектральных утечек
-    for i in 0..samples.len() {
+    for (i, val) in fft_data.iter_mut().enumerate().take(samples.len()) {
         let window = 0.54 - 0.46 * (2.0 * PI * i as f64 / (samples.len() - 1) as f64).cos();
-        fft_data[i].real *= window;
-        fft_data[i].imag *= window;
+        val.real *= window;
+        val.imag *= window;
     }
 
     // Выполнение FFT
@@ -188,11 +188,12 @@ fn calculate_psd(samples: &[Complex], sample_rate: f64) -> (Vec<f64>, Vec<f64>) 
     // Переупорядочиваем для отображения [-fs/2...0...+fs/2]
 
     // Сначала отрицательные частоты (вторая половина FFT)
-    for i in fft_size / 2..fft_size {
+    for (offset, val) in fft_data[fft_size / 2..].iter().enumerate() {
+        let i = offset + fft_size / 2;
         let freq = (i as f64 - fft_size as f64) * freq_resolution;
         frequencies.push(freq);
 
-        let magnitude = fft_data[i].magnitude();
+        let magnitude = val.magnitude();
         let power_db = if magnitude > 0.0 {
             20.0 * (magnitude / fft_size as f64).log10()
         } else {
@@ -202,11 +203,11 @@ fn calculate_psd(samples: &[Complex], sample_rate: f64) -> (Vec<f64>, Vec<f64>) 
     }
 
     // Затем положительные частоты (первая половина FFT)
-    for i in 0..fft_size / 2 {
+    for (i, val) in fft_data[..fft_size / 2].iter().enumerate() {
         let freq = i as f64 * freq_resolution;
         frequencies.push(freq);
 
-        let magnitude = fft_data[i].magnitude();
+        let magnitude = val.magnitude();
         let power_db = if magnitude > 0.0 {
             20.0 * (magnitude / fft_size as f64).log10()
         } else {

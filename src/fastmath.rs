@@ -36,7 +36,9 @@ pub struct FastMath;
 
 impl FastMath {
     // Размер lookup таблицы - ДОЛЖЕН быть степенью двойки для быстрого взятия остатка
+    #[allow(dead_code)]
     const TRIG_LUT_SIZE: usize = 65536; // 2^16 = 65536
+    #[allow(dead_code)]
     const TRIG_LUT_SCALE: f64 = Self::TRIG_LUT_SIZE as f64 / (2.0 * std::f64::consts::PI);
 }
 

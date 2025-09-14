@@ -33,7 +33,6 @@ use crate::{
     speed_ecef_to_local, WGS_OMEGDOTE,
 };
 use crate::{CPowerControl, JsonObject};
-use std::collections::HashMap;
 use std::os::raw::c_char;
 
 // Временные алиасы для недостающих типов - в будущем нужно реализовать отдельные структуры
@@ -391,15 +390,17 @@ fn get_double_value(_object: *mut JsonObject) -> f64 {
 
 // Import coordinate functions
 use crate::coordinate::{calc_conv_matrix_lla, speed_course_to_enu, speed_enu_to_course};
+use crate::dprintln;
 
 // External function declarations (would be implemented elsewhere)
+#[allow(improper_ctypes)]
 extern "C" {
     fn json_stream_get_first_object(object: *mut JsonObject) -> *mut JsonObject;
     fn json_stream_get_next_object(object: *mut JsonObject) -> *mut JsonObject;
 }
 
 // Main function - equivalent to AssignParameters
-pub fn assign_parameters(
+pub unsafe fn assign_parameters(
     object: *mut JsonObject,
     mut utc_time: Option<&mut UtcTime>,
     mut start_pos: Option<&mut LlaPosition>,
@@ -660,7 +661,7 @@ pub fn read_nav_file_limited(nav_data: &mut CNavData, filename: &str, max_per_sy
             'G' | ' ' => {
                 if gps_count < max_per_system {
                     // GPS ephemeris parsing - НЕ добавляем напрямую, только группируем по эпохам
-                    if let Some(eph) = parse_gps_ephemeris(&line, &mut lines) {
+                    if let Some(_eph) = parse_gps_ephemeris(&line, &mut lines) {
                         // Прямое добавление в nav_data УДАЛЕНО - будет добавлено в критической секции
                         gps_count += 1;
                     }
@@ -678,7 +679,7 @@ pub fn read_nav_file_limited(nav_data: &mut CNavData, filename: &str, max_per_sy
             'C' => {
                 if beidou_count < max_per_system {
                     // BeiDou ephemeris parsing - НЕ добавляем напрямую, только группируем по эпохам
-                    if let Some(eph) = parse_beidou_ephemeris(&line, &mut lines) {
+                    if let Some(_eph) = parse_beidou_ephemeris(&line, &mut lines) {
                         // Прямое добавление в nav_data УДАЛЕНО - будет добавлено в критической секции
                         beidou_count += 1;
                     }
@@ -772,7 +773,7 @@ pub fn read_nav_file_filtered(
     let mut beidou_accepted = 0;
     let mut galileo_parsed = 0;
     let mut galileo_accepted = 0;
-    let mut other_skipped = 0;
+    let mut _other_skipped = 0;
     let mut total_lines_processed = 0;
 
     // Кэш эфемерид по эпохам для GPS и BeiDou
@@ -960,7 +961,7 @@ pub fn read_nav_file_filtered(
                                     // *** КРИТИЧНО: Группируем эфемериды по эпоху времени (toe) ***
                                     galileo_ephemeris_by_epoch
                                         .entry(eph.toe)
-                                        .or_insert_with(HashMap::new)
+                                        .or_default()
                                         .insert(eph.svid, eph);
                                     galileo_accepted += 1;
                                 } else {
@@ -981,23 +982,23 @@ pub fn read_nav_file_filtered(
                     }
                     'G' | ' ' if !gps_enabled => {
                         // GPS отключена в конфиге - пропускаем эфемериду
-                        other_skipped += 1;
+                        _other_skipped += 1;
                         // ВРЕМЕННО: не вызываем skip_ephemeris_lines для диагностики
                         continue;
                     }
                     'R' if !glonass_enabled => {
                         // GLONASS отключена в конфиге - пропускаем эфемериду
-                        other_skipped += 1;
+                        _other_skipped += 1;
                         continue;
                     }
                     'C' if !beidou_enabled => {
                         // BeiDou отключена в конфиге - пропускаем эфемериду
-                        other_skipped += 1;
+                        _other_skipped += 1;
                         continue;
                     }
                     'E' if !galileo_enabled => {
                         // Galileo отключена в конфиге - пропускаем эфемериду
-                        other_skipped += 1;
+                        _other_skipped += 1;
                         continue;
                     }
                     'S' => {
@@ -1005,7 +1006,7 @@ pub fn read_nav_file_filtered(
                         // DEBUG: SBAS пропуск отключен для уменьшения вывода
                         // println!("[DEBUG] Skipping SBAS satellite at line {}", total_lines_processed);
                         skip_ephemeris_lines(&mut lines);
-                        other_skipped += 1;
+                        _other_skipped += 1;
                         continue;
                     }
                     ' ' => {
@@ -1020,7 +1021,7 @@ pub fn read_nav_file_filtered(
                 }
             }
             Some(Err(e)) => {
-                println!(
+                dprintln!(
                     "[WARN] Error reading line {}: {}",
                     total_lines_processed + 1,
                     e
@@ -1028,7 +1029,7 @@ pub fn read_nav_file_filtered(
                 continue; // Продолжаем несмотря на ошибку чтения одной строки
             }
             None => {
-                println!(
+                dprintln!(
                     "[DEBUG] End of file reached at line {}",
                     total_lines_processed
                 );
@@ -1048,19 +1049,19 @@ pub fn read_nav_file_filtered(
         all_available_epochs.extend(&beidou_available_epochs);
         all_available_epochs.extend(&galileo_available_epochs);
 
-        println!(
+        dprintln!(
             "[EPOCH-SELECT] Available GPS epochs: {:?}",
             gps_available_epochs
         );
-        println!(
+        dprintln!(
             "[EPOCH-SELECT] Available BeiDou epochs: {:?}",
             beidou_available_epochs
         );
-        println!(
+        dprintln!(
             "[EPOCH-SELECT] Available Galileo epochs: {:?}",
             galileo_available_epochs
         );
-        println!(
+        dprintln!(
             "[EPOCH-SELECT] Combined epochs for selection: {:?}",
             all_available_epochs
         );
@@ -1072,7 +1073,7 @@ pub fn read_nav_file_filtered(
             let target_seconds =
                 (target_gps.Week as f64) * 604800.0 + (target_gps.MilliSeconds as f64) / 1000.0;
 
-            let mut best_epoch = 0i32;
+            let mut _best_epoch = 0i32;
             let mut best_epoch_diff = f64::INFINITY;
 
             // ШАГ 3: Ищем эпоху с минимальной разницей по времени (ближайшую)
@@ -1081,7 +1082,7 @@ pub fn read_nav_file_filtered(
                 let epoch_seconds = (target_gps.Week as f64) * 604800.0 + (epoch as f64);
                 let time_diff = (epoch_seconds - target_seconds).abs();
 
-                println!(
+                dprintln!(
                     "[EPOCH-SELECT] Checking epoch {} ({}s): target={}s, diff={:.1}h",
                     epoch,
                     epoch_seconds,
@@ -1091,8 +1092,8 @@ pub fn read_nav_file_filtered(
 
                 if time_diff < best_epoch_diff {
                     best_epoch_diff = time_diff;
-                    best_epoch = epoch;
-                    println!(
+                    _best_epoch = epoch;
+                    dprintln!(
                         "[EPOCH-SELECT] → New closest epoch {} (diff={:.1}h)",
                         epoch,
                         time_diff / 3600.0
@@ -1119,7 +1120,7 @@ pub fn read_nav_file_filtered(
             if !gps_available_epochs.is_empty() {
                 if let Some(epoch_ephemeris) = gps_ephemeris_by_epoch.get(&best_gps_epoch) {
                     // GPS-specific epoch selected
-                    for (svid, eph) in epoch_ephemeris {
+                    for eph in epoch_ephemeris.values() {
                         nav_data.add_gps_ephemeris(*eph);
                         gps_accepted += 1;
                     }
@@ -1130,7 +1131,7 @@ pub fn read_nav_file_filtered(
             let mut best_beidou_epoch = 0i32;
             let mut best_beidou_diff = f64::INFINITY;
 
-            println!(
+            dprintln!(
                 "[BEIDOU-DEBUG] Available BeiDou epochs: {:?}",
                 beidou_available_epochs
             );
@@ -1140,7 +1141,7 @@ pub fn read_nav_file_filtered(
                 let epoch_time_of_day = epoch % 86400;
                 let hours = epoch_time_of_day / 3600;
                 let minutes = (epoch_time_of_day % 3600) / 60;
-                println!(
+                dprintln!(
                     "[BEIDOU-DEBUG] Epoch toe={} ({:02}:{:02}:00) diff={:.1}min",
                     epoch,
                     hours,
@@ -1157,31 +1158,31 @@ pub fn read_nav_file_filtered(
             // Добавляем все BeiDou эфемериды с выбранной эпохи в nav_data
             if !beidou_available_epochs.is_empty() {
                 if let Some(epoch_ephemeris) = beidou_ephemeris_by_epoch.get(&best_beidou_epoch) {
-                    println!(
+                    dprintln!(
                         "[EPOCH-SELECT] Selected BeiDou epoch: toe={} (diff={:.1}h)",
                         best_beidou_epoch,
                         best_beidou_diff / 3600.0
                     );
-                    println!(
+                    dprintln!(
                         "[BEIDOU-DEBUG] BeiDou satellites in selected epoch: {} satellites",
                         epoch_ephemeris.len()
                     );
-                    println!(
+                    dprintln!(
                         "[BEIDOU-DEBUG] SVIDs: {:?}",
                         epoch_ephemeris.keys().collect::<Vec<_>>()
                     );
                     // Check toe values in this epoch
                     let mut toe_values = std::collections::HashMap::new();
-                    for (svid, eph) in epoch_ephemeris {
+                    for eph in epoch_ephemeris.values() {
                         *toe_values.entry(eph.toe).or_insert(0) += 1;
                     }
-                    println!(
+                    dprintln!(
                         "[BEIDOU-DEBUG] TOE values in this 'epoch': {:?}",
                         toe_values
                     );
 
                     // Adding BeiDou satellites from selected epoch
-                    for (svid, eph) in epoch_ephemeris {
+                    for eph in epoch_ephemeris.values() {
                         nav_data.add_beidou_ephemeris(*eph);
                         beidou_accepted += 1;
                         // Added BeiDou ephemeris
@@ -1193,7 +1194,7 @@ pub fn read_nav_file_filtered(
             let mut best_galileo_epoch = 0i32;
             let mut best_galileo_diff = f64::INFINITY;
 
-            println!(
+            dprintln!(
                 "[GALILEO-DEBUG] Available Galileo epochs: {:?}",
                 galileo_available_epochs
             );
@@ -1203,7 +1204,7 @@ pub fn read_nav_file_filtered(
                 let epoch_time_of_day = epoch % 86400;
                 let hours = epoch_time_of_day / 3600;
                 let minutes = (epoch_time_of_day % 3600) / 60;
-                println!(
+                dprintln!(
                     "[GALILEO-DEBUG] Epoch toe={} ({:02}:{:02}:00) diff={:.1}min",
                     epoch,
                     hours,
@@ -1257,7 +1258,7 @@ pub fn read_nav_file_filtered(
                 "[INFO] No time filtering - using first GPS epoch: toe={}",
                 first_epoch
             );
-            for (_svid, eph) in first_epoch_ephemeris {
+            for eph in first_epoch_ephemeris.values() {
                 nav_data.add_gps_ephemeris(*eph);
                 gps_accepted += 1;
             }
@@ -1266,7 +1267,7 @@ pub fn read_nav_file_filtered(
         // Добавляем BeiDou с той же эпохи если есть, иначе с первой доступной
         if let Some(epoch) = selected_epoch {
             if let Some(epoch_ephemeris) = beidou_ephemeris_by_epoch.get(&epoch) {
-                for (_svid, eph) in epoch_ephemeris {
+                for eph in epoch_ephemeris.values() {
                     nav_data.add_beidou_ephemeris(*eph);
                     beidou_accepted += 1;
                 }
@@ -1279,7 +1280,7 @@ pub fn read_nav_file_filtered(
                 "[INFO] No time filtering - using first BeiDou epoch: toe={}",
                 first_epoch
             );
-            for (_svid, eph) in first_epoch_ephemeris {
+            for eph in first_epoch_ephemeris.values() {
                 nav_data.add_beidou_ephemeris(*eph);
                 beidou_accepted += 1;
             }
@@ -1288,7 +1289,7 @@ pub fn read_nav_file_filtered(
         // Добавляем Galileo с той же эпохи если есть, иначе с первой доступной
         if let Some(epoch) = selected_epoch {
             if let Some(epoch_ephemeris) = galileo_ephemeris_by_epoch.get(&epoch) {
-                for (_svid, eph) in epoch_ephemeris {
+                for eph in epoch_ephemeris.values() {
                     nav_data.add_galileo_ephemeris(*eph);
                     galileo_accepted += 1;
                 }
@@ -1300,7 +1301,7 @@ pub fn read_nav_file_filtered(
                 "[INFO] No time filtering - using first Galileo epoch: toe={}",
                 first_epoch
             );
-            for (_svid, eph) in first_epoch_ephemeris {
+            for eph in first_epoch_ephemeris.values() {
                 nav_data.add_galileo_ephemeris(*eph);
                 galileo_accepted += 1;
             }
@@ -1308,10 +1309,12 @@ pub fn read_nav_file_filtered(
     }
 
     // ========== ИТОГОВЫЙ ОТЧЁТ О ОТОБРАННЫХ СПУТНИКАХ ==========
-    println!("\n📊 ИТОГОВЫЙ ОТЧЁТ ПО ЭФЕМЕРИДАМ СПУТНИКОВ");
-    println!("═══════════════════════════════════════════════════════");
+    if crate::logutil::is_verbose() {
+        println!("\n📊 ИТОГОВЫЙ ОТЧЁТ ПО ЭФЕМЕРИДАМ СПУТНИКОВ");
+        println!("═══════════════════════════════════════════════════════");
+    }
 
-    if gps_enabled && gps_accepted > 0 {
+    if gps_enabled && gps_accepted > 0 && crate::logutil::is_verbose() {
         println!("📡 GPS система: {} спутников отобрано", gps_accepted);
         for eph in &nav_data.gps_ephemeris {
             println!(
@@ -1319,11 +1322,11 @@ pub fn read_nav_file_filtered(
                 eph.svid, eph.toe, eph.valid, eph.health
             );
         }
-    } else if gps_enabled {
+    } else if gps_enabled && crate::logutil::is_verbose() {
         println!("⚠️  GPS система: НЕТ ОТОБРАННЫХ СПУТНИКОВ");
     }
 
-    if beidou_enabled && beidou_accepted > 0 {
+    if beidou_enabled && beidou_accepted > 0 && crate::logutil::is_verbose() {
         println!("📡 BeiDou система: {} спутников отобрано", beidou_accepted);
         for eph in &nav_data.beidou_ephemeris {
             println!(
@@ -1331,11 +1334,11 @@ pub fn read_nav_file_filtered(
                 eph.svid, eph.toe, eph.valid, eph.health
             );
         }
-    } else if beidou_enabled {
+    } else if beidou_enabled && crate::logutil::is_verbose() {
         println!("⚠️  BeiDou система: НЕТ ОТОБРАННЫХ СПУТНИКОВ");
     }
 
-    if galileo_enabled && galileo_accepted > 0 {
+    if galileo_enabled && galileo_accepted > 0 && crate::logutil::is_verbose() {
         println!(
             "📡 Galileo система: {} спутников отобрано",
             galileo_accepted
@@ -1346,17 +1349,24 @@ pub fn read_nav_file_filtered(
                 eph.svid, eph.toe, eph.valid, eph.health
             );
         }
-    } else if galileo_enabled {
+    } else if galileo_enabled && crate::logutil::is_verbose() {
         println!("⚠️  Galileo система: НЕТ ОТОБРАННЫХ СПУТНИКОВ");
     }
 
-    println!("═══════════════════════════════════════════════════════");
-    println!(
-        "📈 Статистика парсинга: GPS {}/{}, BeiDou {}/{}, Galileo {}/{}",
-        gps_accepted, gps_parsed, beidou_accepted, beidou_parsed, galileo_accepted, galileo_parsed
-    );
-    println!("🗂️  Источник: {}", filename);
-    println!("═══════════════════════════════════════════════════════\n");
+    if crate::logutil::is_verbose() {
+        println!("═══════════════════════════════════════════════════════");
+        println!(
+            "📈 Статистика парсинга: GPS {}/{}, BeiDou {}/{}, Galileo {}/{}",
+            gps_accepted,
+            gps_parsed,
+            beidou_accepted,
+            beidou_parsed,
+            galileo_accepted,
+            galileo_parsed
+        );
+        println!("🗂️  Источник: {}", filename);
+        println!("═══════════════════════════════════════════════════════\n");
+    }
 }
 
 /// Оригинальная функция для обратной совместимости
@@ -1406,11 +1416,8 @@ fn is_beidou_ephemeris_within_time_window(
     let eph_seconds = (corrected_bds_week as f64) * 604800.0 + (eph.toe as f64);
 
     let time_diff_hours = (eph_seconds - target_seconds).abs() / 3600.0;
-    let within_window = time_diff_hours <= window_hours;
-
     // BeiDou time filtering completed successfully
-
-    within_window
+    time_diff_hours <= window_hours
 }
 
 fn is_ephemeris_within_time_window(
@@ -1434,16 +1441,13 @@ fn is_ephemeris_within_time_window(
 
     // ШАГ 3: Вычисляем разность времен и проверяем попадание в окно
     let time_diff_hours = (eph_seconds - target_seconds).abs() / 3600.0;
-    let within_window = time_diff_hours <= window_hours;
-
     // Time filtering completed successfully
-
     // Time window filtering result (no debug output)
-
-    within_window
+    time_diff_hours <= window_hours
 }
 
 /// Galileo time-window check: adjusts week number from GST to GPS epoch
+#[allow(dead_code)]
 fn is_galileo_ephemeris_within_time_window(
     eph: &GpsEphemeris,
     target_time: &UtcTime,
@@ -1519,15 +1523,7 @@ fn set_trajectory(
 ) -> bool {
     let mut content = 0;
     let mut velocity_type = 0;
-    let mut convert_matrix = ConvertMatrix::default();
-    let mut position = KinematicInfo {
-        x: 0.0,
-        y: 0.0,
-        z: 0.0,
-        vx: 0.0,
-        vy: 0.0,
-        vz: 0.0,
-    };
+    // Initialize-on-use inside the velocity_type == 1 branch below
     let mut velocity = KinematicInfo {
         x: 0.0,
         y: 0.0,
@@ -1573,20 +1569,18 @@ fn set_trajectory(
                     }
                     if velocity_type == 1 {
                         // velocity in ECEF format and stored in velocity
-                        convert_matrix = calc_conv_matrix_lla(start_pos);
-                        position = lla_to_ecef(start_pos);
+                        let convert_matrix = calc_conv_matrix_lla(start_pos);
+                        let mut position = lla_to_ecef(start_pos);
                         position.vx = velocity.vx;
                         position.vy = velocity.vy;
                         position.vz = velocity.vz;
                         speed_ecef_to_local(&convert_matrix, &position, start_vel);
                     }
                     set_init_pos_vel(trajectory, start_pos, start_vel, false);
-                    unsafe {
-                        assign_trajectory_list(
-                            json_stream_get_first_object(current_object),
-                            trajectory,
-                        );
-                    }
+                    assign_trajectory_list(
+                        json_stream_get_first_object(current_object),
+                        trajectory,
+                    );
                 }
                 _ => {}
             }
@@ -1671,6 +1665,7 @@ fn set_almanac_file(object: *mut JsonObject, nav_data: &mut CNavData) -> bool {
 }
 
 // Additional external function declarations
+#[allow(improper_ctypes)]
 extern "C" {
     fn assign_trajectory_list(object: *mut JsonObject, trajectory: &mut CTrajectory);
 }
@@ -1947,13 +1942,9 @@ fn assign_start_velocity(
     }
 
     if velocity_type == 2 {
-        unsafe {
-            speed_course_to_enu(start_vel);
-        }
+        speed_course_to_enu(start_vel);
     } else if velocity_type == 3 {
-        unsafe {
-            speed_enu_to_course(start_vel);
-        }
+        speed_enu_to_course(start_vel);
     }
     velocity_type
 }
@@ -2068,7 +2059,7 @@ fn mask_out_satellite(system: i32, svid: i32, output_param: &mut OutputParam) ->
     true
 }
 
-fn process_system_select(object: *mut JsonObject, output_param: &mut OutputParam) -> bool {
+fn process_system_select(object: *mut JsonObject, _output_param: &mut OutputParam) -> bool {
     let mut system = 0; // GpsSystem
     let mut signal = -1;
 
@@ -2102,12 +2093,12 @@ fn process_system_select(object: *mut JsonObject, output_param: &mut OutputParam
                         system = -1;
                     }
                     if system >= 0 {
-                        let mut signal_index = signal;
+                        let mut _signal_index = signal;
                         if signal < 0 {
                             // frequency not set, set as primary signal
-                            signal_index = 0;
+                            _signal_index = 0;
                         } else {
-                            signal_index %= 8;
+                            _signal_index %= 8;
                         }
                         let object_type = get_object_type(current_object);
                         if object_type == 6 { // ValueTypeTrue
@@ -2408,6 +2399,7 @@ fn format_speed(value: f64, format: i32) -> f64 {
 }
 
 // External function declarations for CPowerControl
+#[allow(improper_ctypes)]
 extern "C" {
     fn set_noise_floor(power_control: &mut CPowerControl, noise_floor: f64);
     fn get_noise_floor(power_control: &CPowerControl) -> f64;
@@ -2609,6 +2601,7 @@ where
 }
 
 // GLONASS ephemeris parser
+#[allow(dead_code)]
 fn parse_glonass_ephemeris<I>(line: &str, lines: &mut I) -> Option<GlonassEphemeris>
 where
     I: Iterator<Item = Result<String, std::io::Error>>,
@@ -2766,7 +2759,7 @@ where
         return None;
     }
 
-    let slot: i16 = parts[0].parse().ok()?;
+    let _slot: i16 = parts[0].parse().ok()?;
 
     // Read multiple lines to get all almanac data
     let mut all_data: Vec<String> = Vec::new();
@@ -2791,8 +2784,10 @@ where
         return None;
     }
 
-    let mut alm = GlonassAlmanac::default();
-    alm.flag = 1;
+    let mut alm = GlonassAlmanac {
+        flag: 1,
+        ..Default::default()
+    };
 
     // Parse GLONASS almanac fields (simplified)
     if let Ok(freq) = all_data[0].parse::<i8>() {
@@ -2903,21 +2898,9 @@ where
         tgd2: gps_eph.tgd2, // TGD2 для B2I сигнала
 
         // Дополнительные TGD для новых сигналов (из расширенного массива)
-        tgd_b1cp: if gps_eph.tgd_ext.len() > 0 {
-            gps_eph.tgd_ext[0]
-        } else {
-            0.0
-        },
-        tgd_b2ap: if gps_eph.tgd_ext.len() > 1 {
-            gps_eph.tgd_ext[1]
-        } else {
-            0.0
-        },
-        tgd_b2bp: if gps_eph.tgd_ext.len() > 2 {
-            gps_eph.tgd_ext[2]
-        } else {
-            0.0
-        },
+        tgd_b1cp: gps_eph.tgd_ext.first().copied().unwrap_or(0.0),
+        tgd_b2ap: gps_eph.tgd_ext.get(1).copied().unwrap_or(0.0),
+        tgd_b2bp: gps_eph.tgd_ext.get(2).copied().unwrap_or(0.0),
 
         // BeiDou специфические параметры (определяем из SVID)
         sat_type: determine_beidou_satellite_type(gps_eph.svid),
@@ -3069,7 +3052,7 @@ where
     Some(eph)
 }
 
-/// Парсит BeiDou альманах
+// Парсит BeiDou альманах
 
 /// Парсит первую строку RINEX эфемериды (время + 3 параметра) - ТОЧНО как в C++
 /// *** КРИТИЧЕСКАЯ ФУНКЦИЯ ПАРСИНГА ЗАГОЛОВОЧНОЙ СТРОКИ RINEX ЭФЕМЕРИДЫ ***
@@ -3258,8 +3241,8 @@ where
     // и переводим её в GLONASS-время для корректного поля day
     let epoch_utc = parse_epoch_from_header_line(line)?;
     let gtime = crate::gnsstime::utc_to_glonass_time_corrected(epoch_utc);
-    let seconds_of_day = (epoch_utc.Hour * 3600 + epoch_utc.Minute * 60) as i32
-        + epoch_utc.Second.floor() as i32;
+    let seconds_of_day =
+        (epoch_utc.Hour * 3600 + epoch_utc.Minute * 60) as i32 + epoch_utc.Second.floor() as i32;
 
     // Читаем 3 строки данных (как в C++ версии)
     for i in 0..3 {
@@ -3284,8 +3267,8 @@ where
         Ft: 0,                // Нет данных
         Bn: data[6] as u8,
         En: data[14] as u8,
-        tb: 0,                                  // Будет вычислен ниже
-        day: gtime.Day as u16,                  // Совместимо с нашим GlonassTime::Day
+        tb: 0,                 // Будет вычислен ниже
+        day: gtime.Day as u16, // Совместимо с нашим GlonassTime::Day
         gamma: data[1],
         tn: -data[0], // Clock bias (знак меняется)
         dtn: 0.0,     // Нет в RINEX

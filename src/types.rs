@@ -10,6 +10,8 @@
 //! Модуль служит основой для всех других компонентов системы и обеспечивает
 //! единообразное представление данных между различными модулями.
 
+#![allow(non_snake_case)]
+
 /// Логический тип для совместимости с C кодом
 /// Используется в старом коде для флагов вместо стандартного bool
 pub type Bool = i32;
@@ -481,7 +483,7 @@ impl BeiDouEphemeris {
             af2: gps.af2,
             tgd1: gps.tgd,  // GPS TGD -> BeiDou TGD1
             tgd2: gps.tgd2, // TGD2 сохраняется
-            tgd_b1cp: if gps.tgd_ext.len() > 0 {
+            tgd_b1cp: if !gps.tgd_ext.is_empty() {
                 gps.tgd_ext[0]
             } else {
                 0.0

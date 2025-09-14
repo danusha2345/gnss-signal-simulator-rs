@@ -620,10 +620,10 @@ fn sat_el_az_from_los(los_vector: &[f64; 3]) -> (f64, f64) {
     (elevation, azimuth)
 }
 
-/// Calculate relative speed between receiver and satellite
+// Calculate relative speed between receiver and satellite
 // Use sat_relative_speed from coordinate.rs for consistent sign conventions
 
-/// Calculate geometry distance and LOS vector
+// Calculate geometry distance and LOS vector
 // Use geometry_distance from coordinate.rs (includes Sagnac compensation)
 
 // Placeholder functions - these should be implemented in coordinate module
@@ -727,9 +727,9 @@ fn gps_sat_pos_speed_eph(
     let yp_dot = rk_dot * sin_uk + xp * uk_dot;
 
     // Рассчитываем промежуточные переменные для ускорения
-    let (xp_dot2, yp_dot2) = if acc.is_some() {
-        let uk_dot2 = acc.as_ref().unwrap()[1]; // Используем сохраненное значение
-        let rk_dot2 = acc.as_ref().unwrap()[0]; // Используем сохраненное значение
+    let (xp_dot2, yp_dot2) = if let Some(acc_ref) = &acc {
+        let uk_dot2 = acc_ref[1]; // Используем сохраненное значение
+        let rk_dot2 = acc_ref[0]; // Используем сохраненное значение
         let xp_dot2 =
             rk_dot2 * cos_uk - 2.0 * uk_dot * rk_dot * sin_uk - uk_dot * uk_dot * xp - uk_dot2 * yp;
         let yp_dot2 =
@@ -1009,11 +1009,7 @@ fn gps_iono_delay(
     lat_semi += psi * azimuth.cos();
 
     // Ограничение широты
-    if lat_semi > 0.416 {
-        lat_semi = 0.416;
-    } else if lat_semi < -0.416 {
-        lat_semi = -0.416;
-    }
+    lat_semi = lat_semi.clamp(-0.416, 0.416);
 
     lon_semi += psi * azimuth.sin() / (lat_semi * PI).cos();
     lat_semi += 0.064 * ((lon_semi - 1.617) * PI).cos();
@@ -1200,6 +1196,7 @@ pub fn get_sat_pos_vel(
 }
 
 /// Enhanced get_satellite_param with position prediction support
+#[allow(clippy::too_many_arguments)]
 pub fn get_satellite_param_with_prediction(
     position_ecef: &KinematicInfo,
     position_lla: &LlaPosition,

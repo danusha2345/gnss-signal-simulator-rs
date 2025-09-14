@@ -25,7 +25,7 @@ use crate::pilotbit::get_pilot_bits;
 use crate::types::{GnssSystem, GnssTime};
 use crate::NavDataType;
 
-const AMPLITUDE_1_2: f64 = 0.707_106_781_186_547_6;
+const AMPLITUDE_1_2: f64 = std::f64::consts::FRAC_1_SQRT_2;
 const AMPLITUDE_1_4: f64 = 0.5;
 const AMPLITUDE_3_4: f64 = 0.866_025_403_784_438_6;
 
@@ -139,7 +139,9 @@ pub struct SatelliteSignal {
     is_in_time_marker: bool,
     time_marker_bits: [u8; 30],
     data_bits: [u8; 4096], // Adjusted size for safety
+    #[allow(dead_code)]
     secondary_code: u32,
+    #[allow(dead_code)]
     secondary_length: i32,
     attribute: &'static SignalAttribute,
 }
@@ -301,7 +303,7 @@ impl SatelliteSignal {
 
         let bit_length = self.attribute.code_length * self.attribute.nh_length;
         let frame_number;
-        let mut bit_number = 0;
+        let mut bit_number: usize;
         let bit_pos;
         let data_bit;
         let mut pilot_bit = 0; // По умолчанию 0 для сигналов без пилотной составляющей
@@ -318,8 +320,8 @@ impl SatelliteSignal {
                     use crate::gnavbit::GNavBit;
                     let mut time_marker_i32 = vec![0i32; 30];
                     GNavBit::get_time_marker(&mut time_marker_i32);
-                    for i in 0..30 {
-                        self.time_marker_bits[i] = time_marker_i32[i] as u8;
+                    for (i, v) in time_marker_i32.iter().enumerate().take(30) {
+                        self.time_marker_bits[i] = (*v) as u8;
                     }
                 }
                 let time_marker_bit_index = string_position / 10;
@@ -389,7 +391,7 @@ impl SatelliteSignal {
 
                     // DEBUG: Проверка навигационных данных
                     let non_zero_count = data_bits_i32.iter().filter(|&&x| x != 0).count();
-                    let system_name = match self.sat_system {
+                    let _system_name = match self.sat_system {
                         GnssSystem::GpsSystem => "GPS",
                         GnssSystem::BdsSystem => "BDS",
                         GnssSystem::GalileoSystem => "GAL",
@@ -413,11 +415,11 @@ impl SatelliteSignal {
                         //         system_name, self.svid, self.current_frame, non_zero_count,
                         //         (non_zero_count as f32 / 4096.0) * 100.0);
                         if non_zero_count > 0 {
-                            let first_10 = (0..10)
+                            let _first_10 = (0..10)
                                 .map(|i| if data_bits_i32[i] != 0 { "1" } else { "0" })
                                 .collect::<String>();
                             // IODC младшие биты должны быть в word 5 subframe 1 (~150 биты)
-                            let iodc_bits = (120..130)
+                            let _iodc_bits = (120..130)
                                 .map(|i| {
                                     if data_bits_i32.get(i).copied().unwrap_or(0) != 0 {
                                         "1"
@@ -426,7 +428,7 @@ impl SatelliteSignal {
                                     }
                                 })
                                 .collect::<String>();
-                            let late_bits = (200..210)
+                            let _late_bits = (200..210)
                                 .map(|i| {
                                     if data_bits_i32.get(i).copied().unwrap_or(0) != 0 {
                                         "1"
@@ -442,8 +444,8 @@ impl SatelliteSignal {
                         }
                     }
 
-                    for i in 0..4096 {
-                        self.data_bits[i] = data_bits_i32[i] as u8;
+                    for (i, val) in data_bits_i32.iter().enumerate() {
+                        self.data_bits[i] = (*val) as u8;
                     }
                 }
             }

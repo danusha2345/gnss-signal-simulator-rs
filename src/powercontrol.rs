@@ -83,9 +83,7 @@ impl CPowerControl {
     pub fn add_control_element(&mut self, control_element: &SignalPower) {
         // Allocate array or expand size (grows by 100 elements at a time like in C++)
         // Выделить массив или расширить размер (растет по 100 элементов как в C++)
-        if self.power_control_array.is_empty() {
-            self.power_control_array.reserve(100);
-        } else if (self.array_size % 100) == 0 {
+        if self.power_control_array.is_empty() || (self.array_size % 100) == 0 {
             self.power_control_array.reserve(100);
         }
 

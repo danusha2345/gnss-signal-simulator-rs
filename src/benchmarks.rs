@@ -63,8 +63,8 @@ pub fn benchmark_prn_generation(samples: usize) -> PerformanceBenchmark {
     let mut output = vec![0.0f32; samples];
 
     // Заполняем данные псевдослучайными значениями
-    for i in 0..samples {
-        prn_data[i] = ((i as f32).sin() * 127.0).round() / 127.0;
+    for (i, val) in prn_data.iter_mut().enumerate() {
+        *val = ((i as f32).sin() * 127.0).round() / 127.0;
     }
 
     let amplitude = 0.8f32;
@@ -72,15 +72,15 @@ pub fn benchmark_prn_generation(samples: usize) -> PerformanceBenchmark {
     // CPU бенчмарк (обычная обработка)
     let start = Instant::now();
     for _ in 0..100 {
-        for i in 0..samples {
-            output[i] = prn_data[i] * amplitude;
+        for (i, out) in output.iter_mut().enumerate() {
+            *out = prn_data[i] * amplitude;
         }
     }
     benchmark.cpu_time = start.elapsed();
 
     // AVX-512 бенчмарк
     let start = Instant::now();
-    let accelerator = Avx512Accelerator::new();
+    let _accelerator = Avx512Accelerator::new();
     for _ in 0..100 {
         if Avx512Accelerator::is_available() {
             unsafe {
@@ -105,12 +105,10 @@ pub fn benchmark_prn_generation(samples: usize) -> PerformanceBenchmark {
         if let Ok(cuda_accelerator) = CudaGnssAccelerator::new() {
             let start = Instant::now();
             for _ in 0..100 {
-                if let Ok(_) = cuda_accelerator.generate_prn_codes_gpu(
-                    &[1, 2, 3, 4],
-                    samples,
-                    1.023e6,
-                    16.368e6,
-                ) {
+                if cuda_accelerator
+                    .generate_prn_codes_gpu(&[1, 2, 3, 4], samples, 1.023e6, 16.368e6)
+                    .is_ok()
+                {
                     // GPU обработка завершена
                 }
             }
@@ -234,9 +232,9 @@ pub fn benchmark_satellite_processing(
     for _ in 0..10 {
         for sat_id in 0..num_satellites {
             // Имитируем PRN генерацию и модуляцию
-            for i in 0..samples_per_sat {
+            for (i, val) in data.iter_mut().enumerate().take(samples_per_sat) {
                 let phase = (i as f64 * sat_id as f64 * 0.001) % (2.0 * std::f64::consts::PI);
-                data[i] = phase.sin() * phase.cos();
+                *val = phase.sin() * phase.cos();
             }
         }
     }
@@ -287,17 +285,17 @@ pub fn benchmark_satellite_processing(
                 // AVX-512 обработка для небольших данных
                 for chunk in (0..samples_per_sat).step_by(16) {
                     let chunk_size = std::cmp::min(16, samples_per_sat - chunk);
-                    for i in 0..chunk_size {
-                        let phase = ((chunk + i) as f64 * sat_id as f64 * 0.001)
-                            % (2.0 * std::f64::consts::PI);
-                        data[chunk + i] = phase.sin() * phase.cos() * 1.5;
+                    for (i, val) in data.iter_mut().enumerate().skip(chunk).take(chunk_size) {
+                        let phase =
+                            (i as f64 * sat_id as f64 * 0.001) % (2.0 * std::f64::consts::PI);
+                        *val = phase.sin() * phase.cos() * 1.5;
                     }
                 }
             } else {
                 // GPU обработка для больших данных
-                for i in 0..samples_per_sat {
+                for (i, val) in data.iter_mut().enumerate().take(samples_per_sat) {
                     let phase = (i as f64 * sat_id as f64 * 0.001) % (2.0 * std::f64::consts::PI);
-                    data[i] = (phase.sin() * phase.cos() * 2.0).sqrt();
+                    *val = (phase.sin() * phase.cos() * 2.0).sqrt();
                 }
             }
         }

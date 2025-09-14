@@ -28,7 +28,7 @@ use std::f64::consts::PI;
 
 // Import types from other modules
 use crate::types::GnssTime;
-use crate::{GpsAlmanac, GpsEphemeris, IonoParam, UtcParam};
+use crate::{dprintln, GpsAlmanac, GpsEphemeris, IonoParam, UtcParam};
 // use crate::constants::*; // Unused import
 
 // Parity table for GPS LNAV
@@ -175,20 +175,20 @@ impl LNavBit {
     }
 
     pub fn set_ephemeris(&mut self, svid: i32, eph: &GpsEphemeris) -> i32 {
-        println!(
+        dprintln!(
             "[GPS-EPH] set_ephemeris GPS SV{:02}: valid={}, svid_check={}",
             svid,
             eph.valid,
             (1..=32).contains(&svid)
         );
         if !(1..=32).contains(&svid) || eph.valid == 0 {
-            println!(
+            dprintln!(
                 "[GPS-EPH] REJECTED GPS SV{:02}: out of range or invalid",
                 svid
             );
             return 0;
         }
-        println!(
+        dprintln!(
             "[GPS-EPH] ACCEPTED GPS SV{:02}: composing navigation data",
             svid
         );
@@ -389,11 +389,12 @@ impl LNavBit {
         stream[2][7] |= Self::compose_bits(int_value, 2, 14);
 
         // DEBUG: проверим заполненность субкадров
+        #[allow(clippy::needless_range_loop)]
         for sf in 0..3 {
-            let mut total_bits = 0;
+            let mut _total_bits = 0;
             for word in 0..8 {
                 let word_bits = stream[sf][word].count_ones();
-                total_bits += word_bits;
+                _total_bits += word_bits;
             }
             // DEBUG: GPS stream отключен для уменьшения вывода
             // println!("[GPS-STREAM-DEBUG] SV{:02} subframe {}: {} битов из 192 ({:.1}%)",
@@ -442,6 +443,7 @@ impl LNavBit {
         let mut week = 0;
 
         // Find first valid almanac to get toa and week number
+        #[allow(clippy::needless_range_loop)]
         for i in 0..32 {
             if (almanac[i].valid & 1) != 0 {
                 toa = almanac[i].toa >> 12;
@@ -490,6 +492,7 @@ impl LNavBit {
         // assign AS flag 1100 as AS on and all signal capability
         stream4[0] = Self::compose_bits(0x7f, 16, 8); // DataID = 01, PageID = 63
         stream4[0] |= 0xcccc;
+        #[allow(clippy::needless_range_loop)]
         for i in 1..5 {
             stream4[i] = 0xcccccc;
         }
@@ -590,6 +593,7 @@ impl LNavBit {
         let mut word = word >> 6; // remove bit5~0
         let mut parity = 0u32;
 
+        #[allow(clippy::needless_range_loop)]
         for i in 0..6 {
             parity ^= PARITY_TABLE[i][(word & 0xf) as usize] as u32;
             word >>= 4;

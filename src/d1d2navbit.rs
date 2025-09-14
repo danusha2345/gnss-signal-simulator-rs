@@ -110,7 +110,6 @@ impl D1D2NavBit {
         let d1_data: bool;
         let sow: i32;
         let subframe: i32;
-        let mut page = 0i32;
         let page_ext: i32;
 
         if (1..=5).contains(&svid) || (59..=63).contains(&svid) {
@@ -122,7 +121,7 @@ impl D1D2NavBit {
         }
 
         // First determine the current TOW and subframe number
-        let week = start_time.Week + start_time.MilliSeconds / 604800000;
+        let _week = start_time.Week + start_time.MilliSeconds / 604800000;
         let milliseconds = start_time.MilliSeconds % 604800000;
 
         if d1_data {
@@ -132,7 +131,7 @@ impl D1D2NavBit {
 
             if subframe > 3 {
                 // subframe 4/5, further determine page number
-                page = (sow / 30) % 72;
+                let mut page = (sow / 30) % 72;
                 page_ext = page / 24;
                 page %= 24;
 
@@ -182,7 +181,7 @@ impl D1D2NavBit {
 
             if subframe == 1 {
                 // subframe 1, further determine page number
-                page = (milliseconds / 3000) % 10;
+                let page = (milliseconds / 3000) % 10;
                 let sat_idx = if svid <= 5 { svid - 1 } else { svid - 54 };
 
                 for i in 0..4 {
@@ -732,7 +731,7 @@ impl D1D2NavBit {
         let mut bit_cursor: usize = 0; // от 0 до 9*24-1
         let count = length.min(almanac.len());
         for i in 0..count {
-            let mut health: u32 = if almanac[i].valid == 1 { 0 } else { 0x1FF };
+            let health: u32 = if almanac[i].valid == 1 { 0 } else { 0x1FF };
             for k in (0..9).rev() {
                 let bit = ((health >> k) & 1) as u32;
                 let word = bit_cursor / 24;
@@ -742,9 +741,13 @@ impl D1D2NavBit {
                     stream[word] |= bit << (23 - pos);
                 }
                 bit_cursor += 1;
-                if bit_cursor >= stream.len() * 24 { break; }
+                if bit_cursor >= stream.len() * 24 {
+                    break;
+                }
             }
-            if bit_cursor >= stream.len() * 24 { break; }
+            if bit_cursor >= stream.len() * 24 {
+                break;
+            }
         }
         count as i32
     }

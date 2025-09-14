@@ -1,3 +1,11 @@
+#![allow(
+    clippy::needless_range_loop,
+    clippy::manual_memcpy,
+    clippy::unnecessary_cast,
+    clippy::erasing_op,
+    clippy::missing_safety_doc,
+    clippy::too_many_arguments
+)]
 //! # GNSS Rust Library
 //!
 //! Библиотека для обработки данных глобальных навигационных спутниковых систем (ГНСС/GNSS).
@@ -42,6 +50,7 @@ pub mod json_parser;
 pub mod l5cnavbit;
 pub mod ldpc;
 pub mod lnavbit;
+pub mod logutil;
 pub mod memory_code;
 pub mod nav_data; // NEW: Unified NavData enum for parallelization
 pub mod navbit;
@@ -57,7 +66,6 @@ pub mod types;
 // МАКСИМАЛЬНОЕ АППАРАТНОЕ УСКОРЕНИЕ
 pub mod avx512_intrinsics;
 pub mod benchmarks;
-#[cfg(feature = "gpu")]
 pub mod cuda_acceleration;
 pub mod pvt;
 
@@ -82,7 +90,6 @@ pub use types::*;
 // ВРЕМЕННО ОТКЛЮЧЕНО: pub use json_interpreter::*;
 pub use avx512_intrinsics::*;
 pub use benchmarks::*;
-#[cfg(feature = "gpu")]
 pub use cuda_acceleration::*;
 pub use inavbit::*;
 pub use json_parser::*;

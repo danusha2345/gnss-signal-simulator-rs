@@ -79,10 +79,13 @@ impl CNav2Bit {
         nav_bits: &mut [i32],
     ) -> i32 {
         // validate svid
-        if !(1..=32).contains(&svid) { nav_bits.iter_mut().take(1800).for_each(|b| *b = 0); return -1; }
+        if !(1..=32).contains(&svid) {
+            nav_bits.iter_mut().take(1800).for_each(|b| *b = 0);
+            return -1;
+        }
 
         // TOW/subframe selection
-        let mut milli_seconds = start_time.MilliSeconds % 604_800_000;
+        let milli_seconds = start_time.MilliSeconds % 604_800_000;
         let tow: i32 = milli_seconds / 18_000; // 18s
         let frame_index: i32 = tow % 75; // 25×3
         let subframe_index: i32 = frame_index / 25; // 0,1,2
@@ -93,7 +96,9 @@ impl CNav2Bit {
         let sub_len = match subframe_index {
             0 => {
                 // Subframe 1: преамбула/PRN/TOW — заполняем 9 слов по 24 бита полезных
-                for i in 0..9 { subframe_data[i] = 0x8B0000; }
+                for i in 0..9 {
+                    subframe_data[i] = 0x8B0000;
+                }
                 subframe_data[0] |= (svid as u32) << 6;
                 subframe_data[1] |= ((tow + 1) as u32) << 8; // NEXT TOW как в L5/CNAV
                 9
@@ -116,20 +121,31 @@ impl CNav2Bit {
         };
 
         // LDPC для субкадра 2 (упрощённый XOR на матрице‑генераторе)
-        if subframe_index == 1 { self.ldpc_encode(&mut subframe_data, 38, &L1C_MATRIX_GEN2); }
+        if subframe_index == 1 {
+            self.ldpc_encode(&mut subframe_data, 38, &L1C_MATRIX_GEN2);
+        }
 
         // Выгружаем биты MSB‑first
         let mut bit_index = 0usize;
         for i in 0..sub_len {
             let w = subframe_data[i];
             for j in (0..32).rev() {
-                if bit_index < nav_bits.len() { nav_bits[bit_index] = ((w >> j) & 1) as i32; }
+                if bit_index < nav_bits.len() {
+                    nav_bits[bit_index] = ((w >> j) & 1) as i32;
+                }
                 bit_index += 1;
-                if bit_index >= 1800 { break; }
+                if bit_index >= 1800 {
+                    break;
+                }
             }
-            if bit_index >= 1800 { break; }
+            if bit_index >= 1800 {
+                break;
+            }
         }
-        while bit_index < 1800 { nav_bits[bit_index] = 0; bit_index += 1; }
+        while bit_index < 1800 {
+            nav_bits[bit_index] = 0;
+            bit_index += 1;
+        }
         0
     }
 
@@ -147,7 +163,7 @@ impl CNav2Bit {
         // Слово 0: заголовок/PRN
         f[0] = (0x8B << 24) | ((svid as u32) << 18) | 0x0001;
         // Далее кладём основные поля с масштабированием
-        f[1] = ((eph.week as u32 & 0x0FFF) << 20) | (((eph.toe/300) as u32) & 0x7FF);
+        f[1] = ((eph.week as u32 & 0x0FFF) << 20) | (((eph.toe / 300) as u32) & 0x7FF);
         f[2] = (Self::unscale_uint(eph.M0 / std::f64::consts::PI, -31) & 0x3FFF_FFFF) as u32;
         f[3] = (Self::unscale_uint(eph.ecc, -33) & 0x3FFF_FFFF) as u32;
         f[4] = (Self::unscale_uint(eph.sqrtA, -19) & 0x3FFF_FFFF) as u32;
@@ -165,13 +181,15 @@ impl CNav2Bit {
         f[16] = (Self::unscale_int(eph.cis, -30) as u32) & 0x00FF_FFFF;
         f[17] = (eph.health as u32 & 0x3F) << 12 | (eph.ura as u32 & 0x0F) << 8 | (eph.iode as u32);
         // Остальные слова заполняем часовыми/задержками
-        f[18] = (Self::unscale_int(eph.af0, -35) as u32);
-        f[19] = (Self::unscale_int(eph.af1, -48) as u32);
-        f[20] = (Self::unscale_int(eph.af2, -60) as u32);
-        f[21] = (Self::unscale_int(eph.tgd, -35) as u32);
-        f[22] = (Self::unscale_int(eph.tgd2, -35) as u32);
+        f[18] = Self::unscale_int(eph.af0, -35) as u32;
+        f[19] = Self::unscale_int(eph.af1, -48) as u32;
+        f[20] = Self::unscale_int(eph.af2, -60) as u32;
+        f[21] = Self::unscale_int(eph.tgd, -35) as u32;
+        f[22] = Self::unscale_int(eph.tgd2, -35) as u32;
         // Остаток заполним повторением/контрольными шаблонами, чтобы не было нулей
-        for i in 23..38 { f[i] = f[i-1].wrapping_mul(1664525).wrapping_add(1013904223); }
+        for i in 23..38 {
+            f[i] = f[i - 1].wrapping_mul(1664525).wrapping_add(1013904223);
+        }
 
         self.eph_valid[s] = true;
         svid
@@ -180,20 +198,25 @@ impl CNav2Bit {
     pub fn set_almanac(&mut self, alm: &[GpsAlmanac]) -> i32 {
         // Упаковываем простой MIDI/reduced набор в subframe3 для доступных SV
         for a in alm.iter().take(32) {
-            if a.svid == 0 { continue; }
+            if a.svid == 0 {
+                continue;
+            }
             let s = (a.svid - 1) as usize;
             let f = &mut self.subframe3[s];
             f.fill(0);
             f[0] = (0x8B << 24) | ((a.svid as u32) << 18) | 0x0030; // заголовок/тип
             f[1] = ((a.week as u32) << 12) | ((a.toa as u32) >> 12);
             f[2] = (Self::unscale_uint(a.ecc, -21) as u32) << 8 | (a.health as u32);
-            f[3] = (Self::unscale_uint(a.sqrtA, -11) as u32);
-            f[4] = (Self::unscale_int(a.omega0 / std::f64::consts::PI, -23) as u32);
-            f[5] = (Self::unscale_int(a.w / std::f64::consts::PI, -23) as u32);
-            f[6] = (Self::unscale_int(a.M0 / std::f64::consts::PI, -23) as u32);
-            f[7] = (Self::unscale_int(a.af0, -20) as u32) << 8 | (Self::unscale_int(a.af1, -38) as u32 & 0xFF);
+            f[3] = Self::unscale_uint(a.sqrtA, -11) as u32;
+            f[4] = Self::unscale_int(a.omega0 / std::f64::consts::PI, -23) as u32;
+            f[5] = Self::unscale_int(a.w / std::f64::consts::PI, -23) as u32;
+            f[6] = Self::unscale_int(a.M0 / std::f64::consts::PI, -23) as u32;
+            f[7] = (Self::unscale_int(a.af0, -20) as u32) << 8
+                | (Self::unscale_int(a.af1, -38) as u32 & 0xFF);
             // заполним остаток псевдослучайно
-            for i in 8..26 { f[i] = f[i-1].wrapping_mul(1103515245).wrapping_add(12345); }
+            for i in 8..26 {
+                f[i] = f[i - 1].wrapping_mul(1103515245).wrapping_add(12345);
+            }
             self.alm_valid[s] = true;
         }
         0
@@ -206,7 +229,7 @@ impl CNav2Bit {
             // оставим первые 8 слов как были (альманах, если был), добавим блок UTC/iono
             let base = 16usize;
             if base < f.len() {
-                f[base + 0] = ((Self::unscale_int(iono_param.a0, -30) as u32) << 12)
+                f[base] = ((Self::unscale_int(iono_param.a0, -30) as u32) << 12)
                     | ((Self::unscale_int(iono_param.a1, -27) as u32) & 0x0FFF);
                 f[base + 1] = ((Self::unscale_int(iono_param.a2, -24) as u32) << 12)
                     | ((Self::unscale_int(iono_param.a3, -24) as u32) & 0x0FFF);
@@ -214,8 +237,8 @@ impl CNav2Bit {
                     | ((Self::unscale_int(iono_param.b1, 14) as u32) & 0x0FFF);
                 f[base + 3] = ((Self::unscale_int(iono_param.b2, 16) as u32) << 12)
                     | ((Self::unscale_int(iono_param.b3, 16) as u32) & 0x0FFF);
-                f[base + 4] = (Self::unscale_int(utc_param.A0, -35) as u32);
-                f[base + 5] = (Self::unscale_int(utc_param.A1, -51) as u32);
+                f[base + 4] = Self::unscale_int(utc_param.A0, -35) as u32;
+                f[base + 5] = Self::unscale_int(utc_param.A1, -51) as u32;
                 f[base + 6] = ((utc_param.WN as u32) << 16)
                     | ((utc_param.tot as u32) << 8)
                     | ((utc_param.TLS as u32) & 0xFF);
@@ -225,13 +248,16 @@ impl CNav2Bit {
     }
 
     // Private methods
+    #[allow(dead_code)]
     fn compose_subframe2(&mut self, svid: i32, page_index: i32) {
         // This is a simplified implementation - in a real system, you would need to properly format the data
         // according to the CNAV2 message structure for subframe 2
 
         // Clear subframe data
         let s = (svid - 1) as usize;
-        for i in 0..38 { self.subframe2[s][i] = 0; }
+        for i in 0..38 {
+            self.subframe2[s][i] = 0;
+        }
 
         // Set basic fields
         self.subframe2[s][0] = (0x8B << 24) | ((svid as u32) << 18) | ((page_index as u32) << 12);
@@ -243,13 +269,16 @@ impl CNav2Bit {
         self.compose_subframe3(svid, page_index);
     }
 
+    #[allow(dead_code)]
     fn compose_subframe3(&mut self, svid: i32, page_index: i32) {
         // This is a simplified implementation - in a real system, you would need to properly format the data
         // according to the CNAV2 message structure for subframe 3
 
         // Clear subframe data
         let s = (svid - 1) as usize;
-        for i in 0..26 { self.subframe3[s][i] = 0; }
+        for i in 0..26 {
+            self.subframe3[s][i] = 0;
+        }
 
         // Set basic fields
         self.subframe3[s][0] = (0x8B << 24) | ((svid as u32) << 18) | ((page_index as u32) << 12);
@@ -295,7 +324,7 @@ impl CNav2Bit {
         &self,
         start_time: GnssTime,
         svid: i32,
-        param: i32,
+        _param: i32,
         nav_bits: &mut [i32],
     ) -> i32 {
         // Validate SVID
@@ -325,7 +354,7 @@ impl CNav2Bit {
         1800 // Return number of bits generated
     }
 
-    pub fn set_ephemeris_alt(&mut self, svid: i32, eph: &GpsEphemeris) -> bool {
+    pub fn set_ephemeris_alt(&mut self, svid: i32, _eph: &GpsEphemeris) -> bool {
         // Validate SVID
         if !(1..=32).contains(&svid) {
             return false;
@@ -355,7 +384,7 @@ impl CNav2Bit {
         true
     }
 
-    pub fn set_iono_utc_alt(&mut self, iono: &IonoParam, utc: &UtcParam) -> bool {
+    pub fn set_iono_utc_alt(&mut self, _iono: &IonoParam, _utc: &UtcParam) -> bool {
         // Store ionospheric and UTC parameters for CNAV-2 message generation
         // These parameters are encoded into message type 15
 
@@ -433,7 +462,6 @@ impl CNav2Bit {
         }
 
         // Add LDPC parity bits (simplified - real LDPC is complex matrix operation)
-        let parity_bits = 1800 - 480; // 1320 parity bits for 480 info bits
         for i in 480..nav_bits.len().min(1800) {
             // Simple parity generation (real LDPC would use generator matrix)
             let mut parity = 0;

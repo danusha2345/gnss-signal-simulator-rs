@@ -36,6 +36,7 @@ pub enum NavMessageType {
 ///
 /// Заменяет Box<dyn NavBitTrait> для обеспечения Sync + Send и параллелизации
 #[derive(Clone)]
+#[allow(clippy::large_enum_variant)]
 pub enum NavData {
     // === GPS Navigation Messages ===
     /// GPS L1CA - LNAV (Legacy Navigation)

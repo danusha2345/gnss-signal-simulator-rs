@@ -9,16 +9,18 @@ fn main() {
     println!("=== Тест генерации навигационных данных GPS L1CA ===");
 
     // Создаём минимальные эфемериды GPS
-    let mut gps_eph = GpsEphemeris::default();
-    gps_eph.svid = 1; // GPS PRN 1
-    gps_eph.af0 = 0.0;
-    gps_eph.af1 = 0.0;
-    gps_eph.af2 = 0.0;
-    gps_eph.toe = 345600; // seconds in week
-    gps_eph.toc = 345600; // seconds in week
-    gps_eph.week = 2369; // GPS week (June 2025)
-    gps_eph.iode = 1;
-    gps_eph.iodc = 1;
+    let gps_eph = GpsEphemeris {
+        svid: 1, // GPS PRN 1
+        af0: 0.0,
+        af1: 0.0,
+        af2: 0.0,
+        toe: 345600, // seconds in week
+        toc: 345600, // seconds in week
+        week: 2369,  // GPS week (June 2025)
+        iode: 1,
+        iodc: 1,
+        ..Default::default()
+    };
 
     // Создаём LNavBit для GPS L1CA
     let mut lnav = LNavBit::new();
@@ -53,21 +55,21 @@ fn main() {
 
     // Показываем первые 20 битов
     print!("Первые 20 битов: ");
-    for i in 0..20 {
-        print!("{}", if nav_bits[i] != 0 { "1" } else { "0" });
+    for bit in nav_bits.iter().take(20) {
+        print!("{}", if *bit != 0 { "1" } else { "0" });
     }
     println!();
 
     // Показываем биты из разных субфреймов
     print!("Биты 50-70:      ");
-    for i in 50..70 {
-        print!("{}", if nav_bits[i] != 0 { "1" } else { "0" });
+    for bit in nav_bits.iter().take(70).skip(50) {
+        print!("{}", if *bit != 0 { "1" } else { "0" });
     }
     println!();
 
     print!("Биты 100-120:    ");
-    for i in 100..120 {
-        print!("{}", if nav_bits[i] != 0 { "1" } else { "0" });
+    for bit in nav_bits.iter().take(120).skip(100) {
+        print!("{}", if *bit != 0 { "1" } else { "0" });
     }
     println!();
 

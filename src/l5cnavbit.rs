@@ -282,6 +282,7 @@ impl L5CNavBit {
         (value * 2.0_f64.powi(-scale_factor)).round() as i32
     }
 
+    #[allow(dead_code)]
     fn unscale_uint(&self, value: f64, scale_factor: i32) -> u32 {
         Self::unscale_uint_static(value, scale_factor)
     }

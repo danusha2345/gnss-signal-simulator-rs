@@ -13,8 +13,6 @@ use std::sync::Arc;
 pub struct CudaGnssAccelerator {
     #[cfg(feature = "gpu")]
     device: Arc<CudaDevice>,
-    #[cfg(feature = "gpu")]
-    initialized: bool,
     #[cfg(not(feature = "gpu"))]
     _phantom: std::marker::PhantomData<()>,
 }
@@ -25,10 +23,7 @@ impl CudaGnssAccelerator {
         #[cfg(feature = "gpu")]
         {
             let device = CudaDevice::new(0)?; // Используем GPU #0 (RTX 3090)
-            Ok(Self {
-                device,
-                initialized: true,
-            })
+            Ok(Self { device })
         }
         #[cfg(not(feature = "gpu"))]
         {
@@ -115,9 +110,9 @@ impl CudaGnssAccelerator {
 
         // ЭКСТРЕМАЛЬНЫЙ ПАРАЛЛЕЛИЗМ: каждый блок обрабатывает один спутник
         // каждый thread обрабатывает один sample
-        let threads_per_block = 1024; // Максимум для большинства GPU
+        let threads_per_block: usize = 1024; // Максимум для большинства GPU
         let blocks_x = num_satellites as u32;
-        let blocks_y = ((sample_count + threads_per_block - 1) / threads_per_block) as u32;
+        let blocks_y = sample_count.div_ceil(threads_per_block) as u32;
 
         let launch_config = LaunchConfig {
             grid_dim: (blocks_x, blocks_y, 1),
@@ -204,8 +199,8 @@ impl CudaGnssAccelerator {
         let mut d_imag_out = self.device.alloc_zeros::<f32>(data_size)?;
 
         // Оптимальная конфигурация запуска
-        let threads_per_block = 1024;
-        let num_blocks = (data_size + threads_per_block - 1) / threads_per_block;
+        let threads_per_block: usize = 1024;
+        let num_blocks = data_size.div_ceil(threads_per_block);
 
         let launch_config = LaunchConfig {
             grid_dim: (num_blocks as u32, 1, 1),
@@ -280,8 +275,8 @@ impl CudaGnssAccelerator {
         let mut d_cos_out = self.device.alloc_zeros::<f32>(data_size)?;
 
         // Оптимальная конфигурация
-        let threads_per_block = 1024;
-        let num_blocks = (data_size + threads_per_block - 1) / threads_per_block;
+        let threads_per_block: usize = 1024;
+        let num_blocks = data_size.div_ceil(threads_per_block);
 
         let launch_config = LaunchConfig {
             grid_dim: (num_blocks as u32, 1, 1),
@@ -364,8 +359,8 @@ impl CudaGnssAccelerator {
         let mut d_output = self.device.alloc_zeros::<f32>(total_size)?;
 
         // МАССИВНЫЙ ПАРАЛЛЕЛИЗМ: каждый блок X = спутник, каждый блок Y + thread = sample
-        let threads_per_block = 1024;
-        let blocks_y = (samples_per_satellite + threads_per_block - 1) / threads_per_block;
+        let threads_per_block: usize = 1024;
+        let blocks_y = samples_per_satellite.div_ceil(threads_per_block);
 
         let launch_config = LaunchConfig {
             grid_dim: (satellite_count as u32, blocks_y as u32, 1),
@@ -462,24 +457,31 @@ impl HybridAccelerator {
     /// - Малые данные (<1MB): AVX-512 на CPU (избегаем overhead GPU transfer)
     /// - Большие данные (>1MB): CUDA на GPU (массивный параллелизм)
     pub fn optimal_prn_processing(&self, data: &[f32]) -> Vec<f32> {
+        #[cfg(feature = "gpu")]
         let data_size_mb = (data.len() * 4) as f32 / 1024.0 / 1024.0; // Size in MB
 
         #[cfg(feature = "gpu")]
         if data_size_mb > 1.0 && self.cuda_accelerator.is_some() {
             // Большие данные -> GPU
-            println!("Using GPU acceleration for {} MB of data", data_size_mb);
+            crate::vprintln!("Using GPU acceleration for {} MB of data", data_size_mb);
             // Здесь бы вызвали GPU обработку
             return data.to_vec(); // Placeholder
         }
 
         if self.avx512_available && data.len() >= 16 {
             // Средние данные -> AVX-512
-            println!("Using AVX-512 acceleration for {} elements", data.len());
+            crate::vprintln!("Using AVX-512 acceleration for {} elements", data.len());
             return crate::avx512_intrinsics::SafeAvx512Processor::process_prn_batch(data, 1.0);
         }
 
         // Fallback: обычная CPU обработка
-        println!("Using CPU fallback for {} elements", data.len());
+        crate::vprintln!("Using CPU fallback for {} elements", data.len());
         data.iter().map(|&x| x * 1.0).collect()
+    }
+}
+
+impl Default for HybridAccelerator {
+    fn default() -> Self {
+        Self::new()
     }
 }

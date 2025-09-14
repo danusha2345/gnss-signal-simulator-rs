@@ -591,9 +591,7 @@ impl BCNavBit {
             // D2 message has different structure (10 words vs 9)
             eph2_data[0] = eph1_data[0]; // Copy SVID
             eph2_data[1] = eph1_data[1]; // Copy adjusted TOE
-            for i in 2..9 {
-                eph2_data[i] = eph1_data[i];
-            }
+            eph2_data[2..9].copy_from_slice(&eph1_data[2..9]);
             eph2_data[9] = eph.omega_dot.to_bits() as u32; // Additional field in D2
 
             self.ephemeris1[index] = eph1_data;

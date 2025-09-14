@@ -420,6 +420,7 @@ impl PrnGenerate {
     }
 
     // Helper methods for code generation
+    #[allow(clippy::too_many_arguments)]
     fn get_gold_code(
         &self,
         g1_init: u32,
@@ -445,12 +446,8 @@ impl PrnGenerate {
     }
 
     fn legendre_sequence(&self, data: &mut [i32], length: usize) {
-        for i in 0..length {
-            data[i] = 0;
-        }
-        for i in 1..length {
-            data[(i * i) % length] = 1;
-        }
+        data.iter_mut().take(length).for_each(|v| *v = 0);
+        (1..length).for_each(|i| data[(i * i) % length] = 1);
     }
 
     fn get_l1c_weil(&self, insert_index: i32, phase_diff: i32) -> Vec<i32> {

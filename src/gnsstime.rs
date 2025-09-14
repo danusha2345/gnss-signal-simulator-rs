@@ -527,7 +527,7 @@ mod tests {
     fn test_leap_second() {
         let (leap_sec, at_leap) = GnssTimeConverter::get_leap_second(46828800);
         assert_eq!(leap_sec, 0);
-        assert_eq!(at_leap, true);
+        assert!(at_leap);
     }
 
     #[test]

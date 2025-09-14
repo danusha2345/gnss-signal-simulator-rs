@@ -146,6 +146,7 @@ impl JsonStream {
         -1 // Для строкового режима всегда возвращаем EOF
     }
 
+    #[allow(clippy::only_used_in_recursion)]
     pub fn delete_tree(&mut self, object: *mut JsonObjectParser) {
         if object.is_null() {
             return;
@@ -719,19 +720,19 @@ impl JsonStream {
         self.root_object
     }
 
-    pub fn get_first_object(cur_object: *mut JsonObjectParser) -> *mut JsonObjectParser {
+    pub unsafe fn get_first_object(cur_object: *mut JsonObjectParser) -> *mut JsonObjectParser {
         if cur_object.is_null() {
             ptr::null_mut()
         } else {
-            unsafe { (*cur_object).p_object_content }
+            (*cur_object).p_object_content
         }
     }
 
-    pub fn get_next_object(cur_object: *mut JsonObjectParser) -> *mut JsonObjectParser {
+    pub unsafe fn get_next_object(cur_object: *mut JsonObjectParser) -> *mut JsonObjectParser {
         if cur_object.is_null() {
             ptr::null_mut()
         } else {
-            unsafe { (*cur_object).p_next_object }
+            (*cur_object).p_next_object
         }
     }
 }

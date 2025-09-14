@@ -379,10 +379,10 @@ impl NavBit {
 
     // Put bits from Data into BitStream, MSB first
     pub fn assign_bits(data: u32, bit_number: i32, bit_stream: &mut [i32]) -> i32 {
-        let mut data = data << (32 - bit_number);
-        for i in 0..bit_number as usize {
-            bit_stream[i] = if (data & 0x80000000) != 0 { 1 } else { 0 };
-            data <<= 1;
+        let mut shifted = data << (32 - bit_number);
+        for slot in bit_stream.iter_mut().take(bit_number as usize) {
+            *slot = if (shifted & 0x80000000) != 0 { 1 } else { 0 };
+            shifted <<= 1;
         }
         bit_number
     }

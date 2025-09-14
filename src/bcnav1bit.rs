@@ -382,14 +382,14 @@ impl BCNav1Bit {
         let mut bits3 = [0i32; 528];
 
         // DEBUG: проверим заполненность BeiDou B1C субкадров
-        let mut frame2_density = 0;
+        let mut _frame2_density = 0;
         for word in &frame2_data {
-            frame2_density += word.count_ones();
+            _frame2_density += word.count_ones();
         }
 
-        let mut frame3_density = 0;
+        let mut _frame3_density = 0;
         for word in &data {
-            frame3_density += word.count_ones();
+            _frame3_density += word.count_ones();
         }
 
         // DEBUG: BDS stream отключен для уменьшения вывода
@@ -461,9 +461,7 @@ impl BCNav1Bit {
         let svid_idx = (svid - 1) as usize;
 
         // Максимально заполним все слова для повышения плотности сигнала (как в GPS)
-        for i in 0..25 {
-            frame2_data[i] = 0xAAAAAA; // ~50% заполнение битов для стабильной модуляции
-        }
+        frame2_data.iter_mut().take(25).for_each(|w| *w = 0xAAAAAA);
 
         // Insert WN and HOW for Subframe2 (используем |= для сохранения заполнения)
         frame2_data[0] |= self.base.compose_bits(week as u32, 11, 13);
@@ -544,20 +542,21 @@ impl BCNav1Bit {
 
         // URAI и integrity flags из доступных источников
         let urai = if svid_idx < self.base.integrity_flags.len() {
-            (self.base.integrity_flags[svid_idx] & 0xF) as u32
+            self.base.integrity_flags[svid_idx] & 0xF
         } else {
             8
         }; // default URA = 8
         frame2_data[24] |= self.base.compose_bits(urai, 20, 4);
 
         let integrity_flag = if svid_idx < self.base.integrity_flags.len() {
-            (self.base.integrity_flags[svid_idx] >> 4) as u32
+            self.base.integrity_flags[svid_idx] >> 4
         } else {
             0
         };
         frame2_data[24] |= self.base.compose_bits(integrity_flag, 16, 4);
     }
 
+    #[allow(dead_code)]
     fn unscale_int(value: f64, scale_factor: i32) -> i32 {
         (value * 2.0_f64.powi(-scale_factor)).round() as i32
     }

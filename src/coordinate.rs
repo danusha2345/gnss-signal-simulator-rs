@@ -345,8 +345,7 @@ pub fn gps_sat_pos_speed_eph(
     pos_vel.vz += yp * ik_dot * phi_cos;
 
     // calculate acceleration if given valid array pointer
-    if acc.is_some() {
-        let acc_array = acc.as_mut().unwrap();
+    if let Some(acc_array) = acc.as_mut() {
         let alpha_final = pos_vel.vz * ik_dot + pos_vel.z * ik_dot2 - xp_dot * eph.omega_delta
             + yp_dot * ik_dot * phi_sin
             - yp_dot2 * phi_cos;
@@ -410,8 +409,7 @@ pub fn gps_sat_pos_speed_eph(
         pos_vel.vx += pos_vel.y * CGCS2000_OMEGDOTE;
         pos_vel.vy -= pos_vel.x * CGCS2000_OMEGDOTE;
 
-        if acc.is_some() {
-            let acc_array = acc.as_mut().unwrap();
+        if let Some(acc_array) = acc.as_mut() {
             // first rotate -5 degree
             let yp_acc = acc_array[1] * COS_5 - acc_array[2] * SIN_5; // rotated ay
             acc_array[2] = acc_array[2] * COS_5 + acc_array[1] * SIN_5; // rotated az
@@ -623,7 +621,7 @@ pub fn lla_to_ecef(lla_pos: &LlaPosition) -> KinematicInfo {
     let n = WGS_AXIS_A / (1.0 - WGS_E1_SQR * lla_pos.lat.sin() * lla_pos.lat.sin()).sqrt();
 
     // Прямое применение формул WGS84 для преобразования:
-    let result = KinematicInfo {
+    KinematicInfo {
         // X = (N + h) · cos(φ) · cos(λ)
         x: (n + lla_pos.alt) * lla_pos.lat.cos() * lla_pos.lon.cos(),
         // Y = (N + h) · cos(φ) · sin(λ)
@@ -634,9 +632,7 @@ pub fn lla_to_ecef(lla_pos: &LlaPosition) -> KinematicInfo {
         vx: 0.0,
         vy: 0.0,
         vz: 0.0,
-    };
-
-    result
+    }
 }
 
 /// Calculate conversion matrix from ECEF position
@@ -821,10 +817,8 @@ pub fn geometry_distance_array(
     }
 
     // add earth rotate compensation to final distance
-    let r = r_geometric
-        + (satellite[0] * receiver[1] - satellite[1] * receiver[0]) * (WGS_OMEGDOTE / LIGHT_SPEED);
-
-    r
+    r_geometric
+        + (satellite[0] * receiver[1] - satellite[1] * receiver[0]) * (WGS_OMEGDOTE / LIGHT_SPEED)
 }
 
 /// Calculate geometry distance between two kinematic info structures
@@ -867,12 +861,7 @@ pub fn gps_iono_delay(
     let el = elevation / PI;
     let psi = 0.0137 / (el + 0.11) - 0.022;
     let mut lat_rad = lat / PI + psi * azimuth.cos();
-
-    if lat_rad > 0.416 {
-        lat_rad = 0.416;
-    } else if lat_rad < -0.416 {
-        lat_rad = -0.416;
-    }
+    lat_rad = lat_rad.clamp(-0.416, 0.416);
 
     let lon_rad = lon / PI + psi * azimuth.sin() / (lat_rad * PI).cos();
     lat_rad += 0.064 * ((lon_rad - 1.617) * PI).cos();

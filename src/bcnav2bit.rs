@@ -313,3 +313,4 @@ impl Default for BCNav2Bit {
         Self::new()
     }
 }
+// (moved module-level allow to file head)
