@@ -4321,10 +4321,6 @@ impl IFDataGen {
         let mut start_pos = LlaPosition::default();
         let start_vel = LocalSpeed::default();
 
-        println!(
-            "[DEBUG] Filename before JSON parsing: {:?}",
-            std::str::from_utf8(&self.output_param.filename[..20]).unwrap_or("invalid")
-        );
 
         // println!("[UNIQUE-JSON-START] Starting pure Rust JSON parsing");
 
@@ -4562,10 +4558,6 @@ impl IFDataGen {
             }
         }
 
-        println!(
-            "[DEBUG] Filename after JSON parsing: {:?}",
-            std::str::from_utf8(&self.output_param.filename[..50]).unwrap_or("invalid")
-        );
 
         // Устанавливаем время симуляции из JSON пресета
         self.cur_time = crate::gnsstime::utc_to_gps_time(utc_time, true);
