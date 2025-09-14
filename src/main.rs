@@ -26,6 +26,7 @@ use std::time::Instant;
 const DEFAULT_CONFIG: &str = "config.json";
 
 use gnss_rust::logutil::{is_quiet, is_verbose, set_level, LogLevel};
+use gnss_rust::vprintln;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Обработка аргументов командной строки (до любых логов)
@@ -126,9 +127,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // ЭТАП 3: Инициализация системы (включая парсинг RINEX)
     let system_init_start = Instant::now();
-    if is_verbose() {
-        println!("[DEBUG] About to call initialize()...");
-    }
+    dprintln!("[DEBUG] About to call initialize()...");
     if_data_gen.initialize()?;
     let system_init_duration = system_init_start.elapsed();
     if is_verbose() {
@@ -143,9 +142,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if is_verbose() {
         println!("[INFO]\tStarting IF data generation...");
     }
-    if is_verbose() {
-        println!("[DEBUG] About to call generate_data()...");
-    }
+    dprintln!("[DEBUG] About to call generate_data()...");
     let generation_start = Instant::now();
     let result = if_data_gen.generate_data();
     let generation_duration = generation_start.elapsed();

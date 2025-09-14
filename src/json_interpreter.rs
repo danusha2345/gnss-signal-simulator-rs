@@ -33,6 +33,7 @@ use crate::{
     speed_ecef_to_local, WGS_OMEGDOTE,
 };
 use crate::{CPowerControl, JsonObject};
+use crate::vprintln;
 use std::os::raw::c_char;
 
 // Временные алиасы для недостающих типов - в будущем нужно реализовать отдельные структуры
@@ -3249,7 +3250,7 @@ where
         if let Some(Ok(data_line)) = lines.next() {
             read_contents_data(&data_line, &mut data[i * 4 + 3..i * 4 + 7]);
         } else {
-            println!("[DEBUG] Failed to read GLONASS data line {}", i + 1);
+            dprintln!("[DEBUG] Failed to read GLONASS data line {}", i + 1);
             return None;
         }
     }
@@ -3303,7 +3304,7 @@ where
         eph.P |= 0x04; // Устанавливаем P2 бит
     }
 
-    println!(
+    vprintln!(
         "[DEBUG] Successfully parsed GLONASS ephemeris for SVID {}",
         eph.n
     );

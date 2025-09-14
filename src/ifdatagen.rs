@@ -26,6 +26,7 @@
 
 use std::fs::File;
 use std::io::{BufWriter, Write};
+use crate::vprintln;
 use std::time::Instant;
 
 use crate::complex_number::ComplexNumber;
@@ -968,7 +969,7 @@ impl IFDataGen {
             if let Ok(json) = serde_json::from_str::<serde_json::Value>(&json_content) {
                 if let Some(ephemeris) = json.get("ephemeris") {
                     if let Some(name) = ephemeris.get("name").and_then(|v| v.as_str()) {
-                        println!("[DEBUG] Using ephemeris file from JSON: {}", name);
+                        dprintln!("[DEBUG] Using ephemeris file from JSON: {}", name);
                         rinex_file = String::from(name);
                     }
                 }
@@ -997,10 +998,8 @@ impl IFDataGen {
                 enabled_systems.push("Galileo");
             }
 
-            if crate::logutil::is_verbose() {
-                println!("[DEBUG] Using filtered RINEX loading: time={}-{:02}-{:02} {:02}:{:02}:{:02}, systems={:?}", 
+            dprintln!("[DEBUG] Using filtered RINEX loading: time={}-{:02}-{:02} {:02}:{:02}:{:02}, systems={:?}", 
                 utc_time.Year, utc_time.Month, utc_time.Day, utc_time.Hour, utc_time.Minute, utc_time.Second, enabled_systems);
-            }
 
             // Используем оптимизированную загрузку RINEX с фильтрацией систем из JSON
             crate::json_interpreter::read_nav_file_filtered(
@@ -1078,12 +1077,12 @@ impl IFDataGen {
         )?;
         self.calculate_visible_satellites(cur_pos, glonass_time)?;
         if crate::logutil::is_verbose() {
-            println!("[DEBUG]\tVisible satellites calculation completed");
+            dprintln!("[DEBUG]\tVisible satellites calculation completed");
         }
 
         let mut sat_if_signals = self.create_satellite_signals(&nav_bit_array[..], cur_pos)?;
         if crate::logutil::is_verbose() {
-            println!("[DEBUG]\tSatellite signals created successfully");
+            dprintln!("[DEBUG]\tSatellite signals created successfully");
         }
 
         // Парсим время траектории из JSON пресета (используем хардкод пока)
@@ -1535,7 +1534,7 @@ impl IFDataGen {
         // ИСПРАВЛЕНИЕ: Не перезаписываем BeiDou эфемериды из find_ephemeris
         // Они уже правильно скопированы из JSON в copy_beidou_ephemeris_from_json_nav_data
         // find_ephemeris ищет в nav_data.bds_ephemeris, но не в bds_ephemeris_pool
-        println!("[DEBUG] Skipping find_ephemeris loop for BeiDou - data already copied from JSON");
+        dprintln!("[DEBUG] Skipping find_ephemeris loop for BeiDou - data already copied from JSON");
 
         /*
         for i in 1..=TOTAL_BDS_SAT {
@@ -1763,7 +1762,7 @@ impl IFDataGen {
 
                     // Check mask out
                     if (self.output_param.GpsMaskOut & (1u32 << i)) != 0 {
-                        println!("[DEBUG] Satellite {} rejected: masked out", i);
+                        dprintln!("[DEBUG] Satellite {} rejected: masked out", i);
                         continue;
                     }
 
@@ -2006,7 +2005,7 @@ impl IFDataGen {
                     if i < 5 {
                         // Логируем только первые 5 для отладки
                         let delta_t_bds = transmit_time - eph.toe as f64;
-                        println!("[DEBUG] BDS{:02} toe={}, transmit_time_week(BDT)={:.1}, delta_t={:.1}h", eph.svid, eph.toe, transmit_time, delta_t_bds / 3600.0);
+                        dprintln!("[DEBUG] BDS{:02} toe={}, transmit_time_week(BDT)={:.1}, delta_t={:.1}h", eph.svid, eph.toe, transmit_time, delta_t_bds / 3600.0);
                     }
                     if pos_calc_success {
                         println!(
@@ -2135,13 +2134,13 @@ impl IFDataGen {
 
                     if (eph.valid & 1) == 0 {
                         valid_failed += 1;
-                        println!("[DEBUG] GAL{:02} - FAILED: valid check", i + 1);
+                        dprintln!("[DEBUG] GAL{:02} - FAILED: valid check", i + 1);
                         continue;
                     }
 
                     if (self.output_param.GalileoMaskOut & (1u64 << i)) != 0 {
                         mask_failed += 1;
-                        println!("[DEBUG] GAL{:02} - FAILED: mask out", i + 1);
+                        dprintln!("[DEBUG] GAL{:02} - FAILED: mask out", i + 1);
                         continue;
                     }
 
@@ -2510,7 +2509,7 @@ impl IFDataGen {
         while length < total_duration_ms {
             iteration_count += 1;
             if iteration_count <= 5 {
-                println!(
+                vprintln!(
                     "[DEBUG]\tGeneration iteration {}, current length: {} ms / {} ms total",
                     iteration_count, length, total_duration_ms
                 );
@@ -4217,7 +4216,7 @@ impl IFDataGen {
                             ((center_freq + doppler) - self.output_param.CenterFreq as f64) as i32;
                         if eph.svid <= 3 {
                             // Отладка для первых 3 спутников
-                            println!("[DEBUG] GPS G{:02}: center_freq={:.0} Hz, doppler={:.1} Hz, CenterFreq={} Hz, if_freq={} Hz", 
+                            dprintln!("[DEBUG] GPS G{:02}: center_freq={:.0} Hz, doppler={:.1} Hz, CenterFreq={} Hz, if_freq={} Hz", 
                                     eph.svid, center_freq, doppler, self.output_param.CenterFreq, if_freq);
                         }
                         // SatIfSignal expects number of samples per millisecond, not Hz
@@ -4321,7 +4320,7 @@ impl IFDataGen {
                             ((center_freq + doppler) - self.output_param.CenterFreq as f64) as i32;
                         if eph.svid <= 3 {
                             // Отладка для первых 3 спутников
-                            println!("[DEBUG] BDS C{:02}: center_freq={:.0} Hz, doppler={:.1} Hz, CenterFreq={} Hz, if_freq={} Hz", 
+                            dprintln!("[DEBUG] BDS C{:02}: center_freq={:.0} Hz, doppler={:.1} Hz, CenterFreq={} Hz, if_freq={} Hz", 
                                     eph.svid, center_freq, doppler, self.output_param.CenterFreq, if_freq);
                         }
                         // SatIfSignal expects number of samples per millisecond, not Hz
@@ -4421,7 +4420,7 @@ impl IFDataGen {
                             ((center_freq + doppler) - self.output_param.CenterFreq as f64) as i32;
                         if eph.svid <= 3 {
                             // Отладка для первых 3 спутников
-                            println!("[DEBUG] GAL E{:02}: center_freq={:.0} Hz, doppler={:.1} Hz, CenterFreq={} Hz, if_freq={} Hz", 
+                            dprintln!("[DEBUG] GAL E{:02}: center_freq={:.0} Hz, doppler={:.1} Hz, CenterFreq={} Hz, if_freq={} Hz", 
                                     eph.svid, center_freq, doppler, self.output_param.CenterFreq, if_freq);
                         }
                         // SatIfSignal expects number of samples per millisecond, not Hz
@@ -4679,7 +4678,7 @@ impl IFDataGen {
                 // Парсим путь к файлу эфемерид
                 if let Some(ephemeris) = json.get("ephemeris") {
                     if let Some(name) = ephemeris.get("name").and_then(|v| v.as_str()) {
-                        println!("[DEBUG] Found ephemeris file in JSON: {}", name);
+                        dprintln!("[DEBUG] Found ephemeris file in JSON: {}", name);
                         rinex_file = String::from(name); // Копируем путь из JSON
                     }
                 }
@@ -4688,7 +4687,7 @@ impl IFDataGen {
                 if let Some(output) = json.get("output") {
                     // Парсим имя файла
                     if let Some(filename) = output.get("name").and_then(|v| v.as_str()) {
-                        println!("[DEBUG] Found filename in JSON: {}", filename);
+                        dprintln!("[DEBUG] Found filename in JSON: {}", filename);
                         let filename_bytes = filename.as_bytes();
                         let len = filename_bytes.len().min(255);
                         self.output_param.filename[..len].copy_from_slice(&filename_bytes[..len]);
@@ -4971,7 +4970,7 @@ impl IFDataGen {
                 enabled_systems.push("Galileo");
             }
 
-            println!("[DEBUG] Using filtered RINEX loading: time={}-{:02}-{:02} {:02}:{:02}:{:02}, systems={:?}", 
+            dprintln!("[DEBUG] Using filtered RINEX loading: time={}-{:02}-{:02} {:02}:{:02}:{:02}, systems={:?}", 
                 utc_time.Year, utc_time.Month, utc_time.Day, utc_time.Hour, utc_time.Minute, utc_time.Second, enabled_systems);
 
             // Используем оптимизированную загрузку RINEX с фильтрацией систем из JSON

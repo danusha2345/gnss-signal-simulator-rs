@@ -59,7 +59,7 @@ macro_rules! vprintln {
 #[macro_export]
 macro_rules! dprintln {
     ($($arg:tt)*) => {
-        if cfg!(debug_assertions) {
+        if cfg!(debug_assertions) && $crate::logutil::is_verbose() {
             println!($($arg)*);
         }
     };

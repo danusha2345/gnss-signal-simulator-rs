@@ -27,7 +27,7 @@
 		"trajectoryList": [
 			{
 				"type": "Const",
-                "time": 1.0
+                "time": 90.0
 			}
 		]
 	},
