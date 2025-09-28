@@ -39,7 +39,7 @@ pub enum AlmanacType {
 
 /// Перечисление поддерживаемых ГНСС систем
 /// Каждая система использует свои частоты, форматы сообщений и временные шкалы
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum GnssSystem {
     /// GPS - Global Positioning System (США, L1/L2/L5 частоты, GPS время)
     #[default]

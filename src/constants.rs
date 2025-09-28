@@ -100,6 +100,41 @@ pub const SIGNAL_INDEX_G3: usize = 26;
 pub const B1C_SUBFRAME2_SYMBOL_LENGTH: usize = 100;
 pub const B1C_SUBFRAME3_SYMBOL_LENGTH: usize = 44;
 
+// Signal center frequencies array (moved from ifdatagen.rs for public access)
+pub const SIGNAL_CENTER_FREQ: [[f64; 8]; 4] = [
+    [
+        FREQ_GPS_L1,
+        FREQ_GPS_L1,
+        FREQ_GPS_L2,
+        FREQ_GPS_L2,
+        FREQ_GPS_L5,
+        0.0,
+        0.0,
+        0.0,
+    ],
+    [
+        FREQ_BDS_B1C,
+        FREQ_BDS_B1I,
+        FREQ_BDS_B2I,
+        FREQ_BDS_B3I,
+        FREQ_BDS_B2A,
+        FREQ_BDS_B2B,
+        FREQ_BDS_B2AB,
+        0.0,
+    ],
+    [
+        FREQ_GAL_E1,
+        FREQ_GAL_E5A,
+        FREQ_GAL_E5B,
+        FREQ_GAL_E5,
+        FREQ_GAL_E6,
+        0.0,
+        0.0,
+        0.0,
+    ],
+    [FREQ_GLO_G1, FREQ_GLO_G2, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+];
+
 // Macro for composing bits
 #[macro_export]
 macro_rules! COMPOSE_BITS {
