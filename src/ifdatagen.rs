@@ -757,7 +757,7 @@ use rayon::prelude::*;
 
 // Constants for quantization and time conversion
 const QUANT_SCALE_IQ4: f64 = 3.0;
-const QUANT_SCALE_IQ8: f64 = 25.0;
+const QUANT_SCALE_IQ8: f64 = 100.0; // Увеличено с 25.0 для лучшего использования динамического диапазона
 const WEEK_MS: i32 = 604800000;
 
 const TOTAL_GPS_SAT: usize = 32;
@@ -2314,11 +2314,11 @@ impl IFDataGen {
                     );
                     total_clipped_samples = 0; // reset statistics
                     total_samples = 0;
-                } else if clipping_rate < 0.001 && agc_gain < 1.0 {
+                } else if clipping_rate < 0.001 && agc_gain < 3.0 {
                     // If less than 0.1% clipping
                     agc_gain *= 1.02; // Increase gain by 2%
-                    if agc_gain > 1.0 {
-                        agc_gain = 1.0;
+                    if agc_gain > 3.0 {
+                        agc_gain = 3.0;
                     }
                     println!(
                         "[WARNING]\tAGC: Clipping {:.2}%, increasing gain to {:.3}",
@@ -2425,10 +2425,10 @@ impl IFDataGen {
             10.0_f64.powf((cn0_scaled - REFERENCE_CN0) / 1000.0) / (samples_per_ms as f64).sqrt();
         let total_expected_amplitude = active_satellites as f64 * single_sat_amplitude;
 
-        // ЦЕЛЕВАЯ АМПЛИТУДА ДЛЯ БЕЗОПАСНОЙ РАБОТЫ:
-        // Оставляем 10% запас для предотвращения клиппинга при флуктуациях сигнала.
-        // Максимальная амплитуда цифрового сигнала = ±1.0, целевая = 0.9
-        let target_amplitude = 0.9; // 90% от максимальной амплитуды
+        // ЦЕЛЕВАЯ АМПЛИТУДА ДЛЯ ОПТИМАЛЬНОГО ИСПОЛЬЗОВАНИЯ ДИНАМИЧЕСКОГО ДИАПАЗОНА:
+        // Оставляем 20% запас для предотвращения клиппинга при флуктуациях сигнала.
+        // Максимальная амплитуда цифрового сигнала = ±1.0, целевая = 0.8 для лучшего SNR
+        let target_amplitude = 0.8; // 80% от максимальной амплитуды для оптимального SNR
 
         // РАСЧЕТ НАЧАЛЬНОГО КОЭФФИЦИЕНТА AGC:
         // agc_gain = target_amplitude / total_expected_amplitude
@@ -2442,8 +2442,8 @@ impl IFDataGen {
 
         // ОГРАНИЧЕНИЕ ДИАПАЗОНА AGC:
         // Минимум 0.01 (-40 дБ) - предотвращает полное подавление сигнала
-        // Максимум 1.0 (0 дБ) - предотвращает усиление выше номинального уровня
-        let mut agc_gain = initial_agc_gain.clamp(0.01, 1.0);
+        // Максимум 3.0 (+9.5 дБ) - позволяет усиление для слабых сигналов при малом количестве спутников
+        let mut agc_gain = initial_agc_gain.clamp(0.01, 3.0);
 
         // СЧЕТЧИКИ ДЛЯ СТАТИСТИКИ И АДАПТАЦИИ:
         let mut total_clipped_samples = 0i64; // Общее количество клиппированных отсчетов
@@ -2463,6 +2463,13 @@ impl IFDataGen {
 
         // ========== АДАПТИВНАЯ КАЛИБРОВКА AGC ПО ПЕРВОМУ БЛОКУ ==========
         let mut calibration_done = false;
+        
+        // Сохраняем целевые значения для быстрого восстановления AGC
+        let target_agc_for_recovery = if total_expected_amplitude > 0.0 {
+            (target_amplitude / total_expected_amplitude).clamp(0.01, 3.0)
+        } else {
+            1.0
+        };
 
         for block_idx in 0..num_blocks {
             let block_start_ms = block_idx * BLOCK_SIZE_MS;
@@ -2562,10 +2569,11 @@ impl IFDataGen {
                 let avg_amplitude = amplitude_sum / calibration_samples as f64;
 
                 // РАСЧЕТ КАЛИБРОВОЧНОГО КОЭФФИЦИЕНТА:
-                // Если максимальная реальная амплитуда превышает целевую,
-                // уменьшаем коэффициент для предотвращения клиппинга
-                let calibrated_gain = if max_amplitude > 0.0 {
-                    (target_amplitude / max_amplitude).clamp(0.001, 1.0)
+                // Используем средневзвешенную амплитуду (70% avg + 30% max) для более сбалансированной оценки
+                // Это предотвращает переоптимизацию по пиковым значениям
+                let effective_amplitude = 0.7 * avg_amplitude + 0.3 * max_amplitude;
+                let calibrated_gain = if effective_amplitude > 0.0 {
+                    (target_amplitude / effective_amplitude).clamp(0.001, 3.0)
                 } else {
                     agc_gain // Оставляем исходный коэффициент при нулевом сигнале
                 };
@@ -2575,8 +2583,8 @@ impl IFDataGen {
                 // для избежания излишних корректировок от шума
                 if (calibrated_gain - agc_gain).abs() > 0.1 {
                     println!(
-                        "🔧 КАЛИБРОВКА AGC: Реальная макс. амплитуда: {:.3}, средняя: {:.3}",
-                        max_amplitude, avg_amplitude
+                        "🔧 КАЛИБРОВКА AGC: Макс.: {:.3}, Средн.: {:.3}, Эфф.(70/30): {:.3}",
+                        max_amplitude, avg_amplitude, effective_amplitude
                     );
                     println!(
                         "🔧 AGC скорректирован: {:.3} → {:.3} (изменение {:.1}%)",
@@ -2702,21 +2710,36 @@ impl IFDataGen {
                     );
                     // НЕ сбрасываем счетчики для постепенного накопления статистики
 
-                    // ОПТИМАЛЬНЫЕ УСЛОВИЯ (<0.1%): Медленное восстановление с ограничениями
-                } else if agc_clipping_rate < 0.001 && agc_gain < 0.8 && (block_start_ms % 500) == 0
+                    // ОПТИМАЛЬНЫЕ УСЛОВИЯ (<0.1%): Адаптивное восстановление коэффициента усиления
+                } else if agc_clipping_rate < 0.001 
                 {
-                    // ОСОБЕННОСТИ ВОССТАНОВЛЕНИЯ:
-                    // - Только при очень низком клиппинге (<0.1%)
-                    // - Только если коэффициент сильно понижен (<0.8)
-                    // - Один раз в 500 мс для предотвращения частых коррекций
-                    agc_gain *= 1.05; // Увеличиваем на 5% (+0.4 дБ)
-                    if agc_gain > 1.0 {
-                        agc_gain = 1.0; // Никогда не превышаем номинальный уровень
+                    // БЫСТРОЕ ВОССТАНОВЛЕНИЕ: При отсутствии клиппинга агрессивно возвращаемся к оптимальному уровню
+                    
+                    // Если AGC значительно ниже целевого и нет клиппинга, быстро восстанавливаем
+                    if agc_gain < target_agc_for_recovery * 0.8 {
+                        // Быстрый скачок к 90% от целевого значения за 2-3 итерации
+                        let target_90_percent = target_agc_for_recovery * 0.9;
+                        agc_gain = (agc_gain + target_90_percent) / 2.0; // Средневзвешенное: быстрый переход
+                        agc_gain = agc_gain.clamp(0.01, 3.0);
+                    } else {
+                        // Тонкая настройка когда уже близко к цели
+                        agc_gain *= 1.05;
+                        if agc_gain > 3.0 {
+                            agc_gain = 3.0;
+                        }
                     }
+                    let recovery_info = if agc_gain < target_agc_for_recovery * 0.8 {
+                        "БЫСТРЫЙ СКАЧОК"
+                    } else {
+                        "тонкая настройка (+5%)"
+                    };
+                    
                     println!(
-                        "[AGC] 📈 Оптимальные условия ({:.3}%), медленное восстановление до {:.3}",
+                        "[AGC] 📈 Оптимальные условия ({:.3}%), {} до {:.3} (цель: {:.3})",
                         agc_clipping_rate * 100.0,
-                        agc_gain
+                        recovery_info,
+                        agc_gain,
+                        target_agc_for_recovery
                     );
                 }
 
