@@ -6,6 +6,9 @@
 //
 //----------------------------------------------------------------------
 
+use crate::constants::WGS_OMEGDOTE;
+use crate::types::GpsEphemeris;
+
 // Union for double/int conversion
 #[repr(C)]
 union DoubleIntUnion {
@@ -418,5 +421,31 @@ impl NavBit {
         }
 
         crc_result & 0xffffff
+    }
+
+    pub fn align_toe_300s(eph: &GpsEphemeris) -> GpsEphemeris {
+        let mut new_eph = *eph;
+        let new_toe = (eph.toe + 150) / 300 * 300;
+        let time_diff = new_toe - eph.toe;
+
+        if new_toe >= 604800 {
+            new_eph.toe = new_toe - 604800;
+            new_eph.week += 1;
+        } else {
+            new_eph.toe = new_toe;
+        }
+        new_eph.toc = new_eph.toe;
+        new_eph.top = new_eph.toe;
+
+        new_eph.axis += new_eph.axis_dot * time_diff as f64;
+        new_eph.sqrtA = new_eph.axis.sqrt();
+        new_eph.delta_n += new_eph.delta_n_dot * time_diff as f64;
+        new_eph.n += new_eph.delta_n_dot * time_diff as f64;
+        new_eph.M0 += new_eph.n * time_diff as f64;
+        new_eph.i0 += new_eph.idot * time_diff as f64;
+        new_eph.omega0 += new_eph.omega_dot * time_diff as f64;
+        new_eph.omega_t = new_eph.omega0 - WGS_OMEGDOTE * new_eph.toe as f64;
+
+        new_eph
     }
 }

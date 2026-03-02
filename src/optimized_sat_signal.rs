@@ -34,6 +34,7 @@ use crate::types::{GnssSystem, GnssTime, SatelliteParam};
 /// - Используется глобальный SharedCacheManager
 /// - Memory pooling для временных буферов
 /// - Компактные структуры данных
+#[allow(dead_code)]
 pub struct OptimizedSatIfSignal {
     // ОСНОВНЫЕ ПАРАМЕТРЫ (оптимизированы для размера)
     sample_number: i32,
@@ -54,7 +55,6 @@ pub struct OptimizedSatIfSignal {
     // ПАРАМЕТРЫ СИГНАЛА (компактные)
     data_length: i32,
     pilot_length: i32,
-    glonass_half_cycle: bool,
     
     // ФАЗОВЫЕ ПАРАМЕТРЫ
     start_carrier_phase: f64,
@@ -64,7 +64,6 @@ pub struct OptimizedSatIfSignal {
     end_transmit_time: GnssTime,
     data_signal: ComplexNumber,
     pilot_signal: ComplexNumber,
-    half_cycle_flag: i32,
     
     // КЭШИРОВАННЫЙ КЛЮЧ для быстрого доступа к SharedCacheManager
     cache_key: CacheKey,
@@ -75,7 +74,8 @@ pub struct OptimizedSatIfSignal {
 
 /// Флаги оптимизации для настройки поведения сигнала
 #[derive(Debug, Clone, Copy)]
-struct OptimizationFlags {
+#[allow(dead_code)]
+pub struct OptimizationFlags {
     /// Использовать тригонометрический кэш
     use_trig_cache: bool,
     /// Использовать PRN кэш
@@ -153,7 +153,6 @@ impl OptimizedSatIfSignal {
             sat_param: None,
             data_length: data_len,
             pilot_length: pilot_len,
-            glonass_half_cycle: (sat_if_freq % 1000) != 0,
             start_carrier_phase: 0.0,
             end_carrier_phase: 0.0,
             signal_time: GnssTime::default(),
@@ -161,7 +160,6 @@ impl OptimizedSatIfSignal {
             end_transmit_time: GnssTime::default(),
             data_signal: ComplexNumber::new(),
             pilot_signal: ComplexNumber::new(),
-            half_cycle_flag: 0,
             cache_key,
             optimization_flags: OptimizationFlags::default(),
         }
@@ -196,7 +194,6 @@ impl OptimizedSatIfSignal {
             &mut self.data_signal,
             &mut self.pilot_signal,
         );
-        self.half_cycle_flag = 0;
 
         // Обновляем cache_key с текущим временем
         self.cache_key.time_ms = cur_time.MilliSeconds;
@@ -331,7 +328,7 @@ impl OptimizedSatIfSignal {
         sin_table: &[f64],
         base_chip_offset: f64,
         code_step: f64,
-        phase_step: f64,
+        _phase_step: f64,
         amp: f64,
         nav_value: f64,
     ) {
@@ -344,7 +341,7 @@ impl OptimizedSatIfSignal {
         // Предвычисленные SIMD константы
         let amp_vec = f64x4::splat(amp);
         let nav_vec = f64x4::splat(nav_value);
-        let code_step_vec = f64x4::splat(code_step);
+        let _code_step_vec = f64x4::splat(code_step);
 
         // Векторизованная обработка групп
         for group in 0..full_groups {

@@ -26,7 +26,6 @@
 
 use std::fs::File;
 use std::io::{BufWriter, Write};
-use crate::vprintln;
 use std::time::Instant;
 
 use crate::complex_number::ComplexNumber;
@@ -166,7 +165,7 @@ impl NavData {
         _param: i32,
     ) -> Option<GpsEphemeris> {
         let mut best_eph: Option<GpsEphemeris> = None;
-        let mut best_time_diff = f64::INFINITY;
+        let mut best_time_diff = i32::MAX as f64;
 
         // Обработка разных систем отдельно из-за разных типов эфемерид
         match system {
@@ -179,7 +178,7 @@ impl NavData {
 
                         let abs_diff = diff.abs();
 
-                        if abs_diff <= 7200.0 && abs_diff < best_time_diff {
+                        if abs_diff <= 7200.0 && abs_diff <= best_time_diff {
                             best_time_diff = abs_diff;
                             best_eph = Some(*eph);
                         }
@@ -195,7 +194,7 @@ impl NavData {
 
                         let abs_diff = diff.abs();
 
-                        if abs_diff <= 7200.0 && abs_diff < best_time_diff {
+                        if abs_diff <= 7200.0 && abs_diff <= best_time_diff {
                             best_time_diff = abs_diff;
                             best_eph = Some(eph.to_gps_ephemeris()); // Конвертируем BeiDou в GPS формат
                         }
@@ -211,7 +210,7 @@ impl NavData {
 
                         let abs_diff = diff.abs();
 
-                        if abs_diff <= 7200.0 && abs_diff < best_time_diff {
+                        if abs_diff <= 7200.0 && abs_diff <= best_time_diff {
                             best_time_diff = abs_diff;
                             best_eph = Some(*eph);
                         }
@@ -227,7 +226,7 @@ impl NavData {
     /// Поиск эфемерид ГЛОНАСС по времени и номеру слота - упрощенная версия  
     pub fn find_glo_ephemeris(&self, time: GlonassTime, svid: i32) -> Option<GlonassEphemeris> {
         let mut best_eph: Option<GlonassEphemeris> = None;
-        let mut best_time_diff = f64::INFINITY;
+        let mut best_time_diff = i32::MAX as f64;
 
         // Простое сравнение по дню и времени в секундах
         let request_day = time.Day as f64;
@@ -250,7 +249,7 @@ impl NavData {
                 };
 
                 // GLONASS эфемериды действительны 30 минут (1800 секунд)
-                if total_diff < 1800.0 && total_diff < best_time_diff {
+                if total_diff < 1800.0 && total_diff <= best_time_diff {
                     best_time_diff = total_diff;
                     best_eph = Some(*eph);
                 }
@@ -1681,10 +1680,10 @@ impl IFDataGen {
 
 
         // Debug: check if we have ephemeris before calculating visibility
-        let mut total_gps_eph = 0;
+        let mut _total_gps_eph = 0;
         for i in 0..TOTAL_GPS_SAT {
             if self.gps_eph[i].is_some() {
-                total_gps_eph += 1;
+                _total_gps_eph += 1;
             }
         }
 
@@ -1694,7 +1693,7 @@ impl IFDataGen {
             let elevation_mask = self.output_param.ElevationMask;
 
             // КАК В C ВЕРСИИ: передаем только секунды недели, не полное время
-            let transmit_time = (self.cur_time.MilliSeconds as f64) / 1000.0;
+            let _transmit_time = (self.cur_time.MilliSeconds as f64) / 1000.0;
 
 
             for i in 0..TOTAL_GPS_SAT {
@@ -1720,7 +1719,7 @@ impl IFDataGen {
                     let mut eph_mut = *eph; // Копируем эфемериды для мутабельности
                                             // Для отладочного вывода используем секунды недели
                     let transmit_time_week_seconds = (self.cur_time.MilliSeconds as f64) / 1000.0;
-                    let delta_t_gps = transmit_time_week_seconds - eph.toe as f64;
+                    let _delta_t_gps = transmit_time_week_seconds - eph.toe as f64;
                     if crate::coordinate::gps_sat_pos_speed_eph(
                         GnssSystem::GpsSystem,
                         transmit_time,
@@ -1728,7 +1727,7 @@ impl IFDataGen {
                         &mut sat_pos,
                         None,
                     ) {
-                        let range = ((sat_pos.x - cur_pos.x).powi(2)
+                        let _range = ((sat_pos.x - cur_pos.x).powi(2)
                             + (sat_pos.y - cur_pos.y).powi(2)
                             + (sat_pos.z - cur_pos.z).powi(2))
                         .sqrt();
@@ -1803,10 +1802,10 @@ impl IFDataGen {
 
 
             // Проверим состояние массива bds_eph
-            let mut filled_slots = 0;
+            let mut _filled_slots = 0;
             for i in 0..TOTAL_BDS_SAT {
                 if self.bds_eph[i].is_some() {
-                    filled_slots += 1;
+                    _filled_slots += 1;
                 }
             }
 
@@ -1835,7 +1834,7 @@ impl IFDataGen {
                     );
                     if i < 5 {
                         // Логируем только первые 5 для отладки
-                        let delta_t_bds = transmit_time - eph.toe as f64;
+                        let _delta_t_bds = transmit_time - eph.toe as f64;
                     }
                     if pos_calc_success {
                         let mut elevation = 0.0;
@@ -1868,25 +1867,25 @@ impl IFDataGen {
         // Calculate visible Galileo satellites
         self.gal_sat_number = if self.output_param.CompactConfig.should_parse_galileo() {
             let mut sat_number = 0;
-            let mut total_checked = 0;
-            let mut valid_failed = 0;
-            let mut mask_failed = 0;
-            let mut pos_failed = 0;
-            let mut elev_failed = 0;
+            let mut _total_checked = 0;
+            let mut _valid_failed = 0;
+            let mut _mask_failed = 0;
+            let mut _pos_failed = 0;
+            let mut _elev_failed = 0;
             let elevation_mask = self.output_param.ElevationMask;
 
 
             for i in 0..TOTAL_GAL_SAT {
                 if let Some(eph) = &self.gal_eph[i] {
-                    total_checked += 1;
+                    _total_checked += 1;
 
                     if (eph.valid & 1) == 0 {
-                        valid_failed += 1;
+                        _valid_failed += 1;
                         continue;
                     }
 
                     if (self.output_param.GalileoMaskOut & (1u64 << i)) != 0 {
-                        mask_failed += 1;
+                        _mask_failed += 1;
                         continue;
                     }
 
@@ -1894,7 +1893,7 @@ impl IFDataGen {
                     let transmit_time = (self.cur_time.MilliSeconds as f64) / 1000.0;
                     let mut sat_pos = KinematicInfo::default();
                     let mut eph_mut = *eph; // Копируем эфемериды для мутабельности
-                    let delta_t = transmit_time - eph.toe as f64;
+                    let _delta_t = transmit_time - eph.toe as f64;
                     let pos_calc_success = crate::coordinate::gps_sat_pos_speed_eph(
                         GnssSystem::GalileoSystem,
                         transmit_time,
@@ -1918,10 +1917,10 @@ impl IFDataGen {
                                 sat_number += 1;
                             }
                         } else {
-                            elev_failed += 1;
+                            _elev_failed += 1;
                         }
                     } else {
-                        pos_failed += 1;
+                        _pos_failed += 1;
                     }
                 }
             }
@@ -2153,10 +2152,10 @@ impl IFDataGen {
             );
         }
 
-        let mut iteration_count = 0;
+        let mut _iteration_count = 0;
 
         while length < total_duration_ms {
-            iteration_count += 1;
+            _iteration_count += 1;
 
             // Step to next millisecond
             self.step_to_next_ms(&mut cur_pos)?;
@@ -2188,7 +2187,7 @@ impl IFDataGen {
                 // Full GNSS signal generation (slower but accurate)
                 let noise_start = std::time::Instant::now();
                 FastMath::generate_noise_block(&mut noise_array, 1.0);
-                let noise_duration = noise_start.elapsed();
+                let _noise_duration = noise_start.elapsed();
 
                 // CRITICAL OPTIMIZATION: Generate satellite signals more efficiently
                 let sat_start = std::time::Instant::now();
@@ -2249,7 +2248,7 @@ impl IFDataGen {
                             }
                         });
                 }
-                let sat_process_duration = sat_process_start.elapsed();
+                let _sat_process_duration = sat_process_start.elapsed();
 
                 // OPTIMIZED: Parallel signal accumulation with rayon + AVX-512 optimization
                 let accumulation_start = std::time::Instant::now();
@@ -2267,8 +2266,8 @@ impl IFDataGen {
                     sum.real *= agc_gain;
                     sum.imag *= agc_gain;
                 });
-                let accumulation_duration = accumulation_start.elapsed();
-                let sat_total_duration = sat_start.elapsed();
+                let _accumulation_duration = accumulation_start.elapsed();
+                let _sat_total_duration = sat_start.elapsed();
 
                 // Детальная статистика каждые 1000 миллисекунд
             }
@@ -2281,10 +2280,10 @@ impl IFDataGen {
                     &mut quant_array[..samples_per_ms],
                     &mut clipped_in_block,
                 );
-                let bytes_written = if_file.write(&quant_array[..samples_per_ms])?;
+                let _bytes_written = if_file.write(&quant_array[..samples_per_ms])?;
             } else {
                 Self::quant_samples_iq8(&noise_array, &mut quant_array, &mut clipped_in_block);
-                let bytes_written = if_file.write(&quant_array)?;
+                let _bytes_written = if_file.write(&quant_array)?;
             }
             let quant_duration = quant_start.elapsed();
 
@@ -5049,7 +5048,7 @@ impl IFDataGen {
         let bds_now = crate::gnsstime::utc_to_bds_time(utc_now);
         let gal_now = crate::gnsstime::utc_to_galileo_time(utc_now);
         let init_pos = cur_pos;
-        if let Some((sol_ecef, cb_s, _alt)) = pvt::solve_pvt_wls(
+        if let Some((sol_ecef, _cb_s, _alt)) = pvt::solve_pvt_wls(
             gps_now,
             bds_now,
             gal_now,
@@ -5058,12 +5057,12 @@ impl IFDataGen {
             &self.gal_eph_visible,
             init_pos,
         ) {
-            let sol_lla = ecef_to_lla(&sol_ecef);
-            let true_lla = ecef_to_lla(&cur_pos);
+            let _sol_lla = ecef_to_lla(&sol_ecef);
+            let _true_lla = ecef_to_lla(&cur_pos);
             let dx = sol_ecef.x - cur_pos.x;
             let dy = sol_ecef.y - cur_pos.y;
             let dz = sol_ecef.z - cur_pos.z;
-            let err = (dx * dx + dy * dy + dz * dz).sqrt();
+            let _err = (dx * dx + dy * dy + dz * dz).sqrt();
         } else {
         }
 

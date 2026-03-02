@@ -375,7 +375,7 @@ pub fn gps_sat_pos_speed_eph(
     //
     // ИСТОЧНИК: BeiDou Navigation Satellite System Signal In Space Interface Control Document
     //          (BDS-SIS-ICD), Version 2.1, Section 5.3.1.5
-    if system == GnssSystem::BdsSystem && eph.svid <= 5 {
+    if system == GnssSystem::BdsSystem && (eph.svid <= 5 || eph.svid >= 59) {
         // ШАГ 1: ПОВОРОТ НА -5° ВОКРУГ ОСИ X
         // Матрица поворота Rx(-5°) применяется к Y и Z компонентам:
         // | Y' |   |  cos(-5°)  -sin(-5°) | | Y |   |  cos(5°)   sin(5°) | | Y |

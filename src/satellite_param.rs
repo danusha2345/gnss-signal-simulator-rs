@@ -21,6 +21,7 @@
 
 use crate::constants::*;
 use crate::coordinate::*;
+use crate::delay_model::IonoDelay;
 use crate::powercontrol::{ElevationAdjust, SignalPower};
 use crate::types::*;
 
@@ -778,8 +779,8 @@ fn gps_sat_pos_speed_eph(
             + (yp * ik_dot2 + 2.0 * yp_dot * ik_dot) * cos_ik;
     }
 
-    // Специальная обработка для BeiDou GEO спутников (svid <= 5)
-    if system == GnssSystem::BdsSystem && eph.svid <= 5 {
+    // BeiDou GEO satellites: svid 1-5 and svid >= 59
+    if system == GnssSystem::BdsSystem && (eph.svid <= 5 || eph.svid >= 59) {
         // Поворот на -5 градусов
         let cos_5 = 0.996_194_698_091_745_5; // cos(5°)
         let sin_5 = 0.087_155_742_747_658_18; // sin(5°)
@@ -1367,5 +1368,434 @@ pub fn get_satellite_param_with_prediction(
     } else {
         satellite_param.RelativeSpeed =
             sat_relative_speed(position_ecef, &sat_position) - LIGHT_SPEED * eph.af1;
+    }
+}
+
+// ======================================================================
+// SatelliteParamCalculator - new struct with ephemeris transition support
+// Ported from C++ CSatelliteParam
+// ======================================================================
+
+const TRANSIT_PERIOD_MS: i32 = 600000;
+
+pub struct SatelliteParamCalculator {
+    // System and satellite identification
+    pub system: GnssSystem,
+    pub svid: i32,
+    pub freq_id: i32,
+
+    // Ephemeris (current and previous for smooth transition)
+    pub eph_cur: Option<GpsEphemeris>,
+    pub eph_prev: Option<GpsEphemeris>,
+    pub glo_eph_cur: Option<GlonassEphemeris>,
+    pub glo_eph_prev: Option<GlonassEphemeris>,
+
+    // Ionosphere delay model
+    iono_delay_model: Box<dyn IonoDelay>,
+
+    // CN0 configuration
+    pub cn0_default: f64,
+    pub cn0_adjust: ElevationAdjust,
+
+    // Ephemeris transition counter
+    pub eph_transition: i32,
+
+    // Calculated parameters
+    pub cn0: i32,
+    pub time_tag: i32,
+    pub pos_vel: KinematicInfo,
+    pub acc: [f64; 3],
+    pub travel_time: f64,
+    pub iono_delay_meter: f64,
+    pub tropo_delay_meter: f64,
+    pub clock_error: f64,
+    pub group_delay: [f64; 8],
+    pub elevation: f64,
+    pub azimuth: f64,
+    pub relative_speed: f64,
+    pub los_vector: [f64; 3],
+}
+
+impl SatelliteParamCalculator {
+    pub fn new(iono_model: Box<dyn IonoDelay>) -> Self {
+        SatelliteParamCalculator {
+            system: GnssSystem::GpsSystem,
+            svid: 0,
+            freq_id: 0,
+            eph_cur: None,
+            eph_prev: None,
+            glo_eph_cur: None,
+            glo_eph_prev: None,
+            iono_delay_model: iono_model,
+            cn0_default: 0.0,
+            cn0_adjust: ElevationAdjust::ElevationAdjustNone,
+            eph_transition: 0,
+            cn0: 0,
+            time_tag: -1,
+            pos_vel: KinematicInfo::default(),
+            acc: [0.0; 3],
+            travel_time: 0.0,
+            iono_delay_meter: 0.0,
+            tropo_delay_meter: 0.0,
+            clock_error: 0.0,
+            group_delay: [0.0; 8],
+            elevation: 0.0,
+            azimuth: 0.0,
+            relative_speed: 0.0,
+            los_vector: [0.0; 3],
+        }
+    }
+
+    pub fn initialize(
+        &mut self,
+        sat_system: GnssSystem,
+        eph: &GpsEphemeris,
+        init_cn0: f64,
+        adjust: ElevationAdjust,
+    ) {
+        self.system = sat_system;
+        self.eph_cur = Some(*eph);
+        self.eph_prev = Some(*eph);
+        self.svid = eph.svid as i32;
+        self.freq_id = 0;
+        self.cn0_default = init_cn0;
+        self.cn0_adjust = adjust;
+        self.cn0 = (init_cn0 * 100.0 + 0.5) as i32;
+        self.eph_transition = 0;
+    }
+
+    pub fn initialize_glonass(
+        &mut self,
+        glo_eph: &GlonassEphemeris,
+        init_cn0: f64,
+        adjust: ElevationAdjust,
+    ) {
+        self.system = GnssSystem::GlonassSystem;
+        self.glo_eph_cur = Some(*glo_eph);
+        self.glo_eph_prev = Some(*glo_eph);
+        self.svid = glo_eph.n as i32;
+        self.freq_id = glo_eph.freq as i32;
+        self.cn0_default = init_cn0;
+        self.cn0_adjust = adjust;
+        self.cn0 = (init_cn0 * 100.0 + 0.5) as i32;
+        self.eph_transition = 0;
+    }
+
+    pub fn update_ephemeris_gps(&mut self, eph: &GpsEphemeris) {
+        if let Some(ref cur) = self.eph_cur {
+            if cur.toe != eph.toe || cur.svid != eph.svid || cur.iode != eph.iode {
+                self.eph_prev = self.eph_cur;
+                self.eph_cur = Some(*eph);
+                if self.eph_prev.is_some() {
+                    self.eph_transition = TRANSIT_PERIOD_MS;
+                }
+            }
+        } else {
+            self.eph_cur = Some(*eph);
+        }
+    }
+
+    pub fn update_ephemeris_glonass(&mut self, eph: &GlonassEphemeris) {
+        if let Some(ref cur) = self.glo_eph_cur {
+            if cur.tb != eph.tb || cur.n != eph.n {
+                self.glo_eph_prev = self.glo_eph_cur;
+                self.glo_eph_cur = Some(*eph);
+                if self.glo_eph_prev.is_some() {
+                    self.eph_transition = TRANSIT_PERIOD_MS;
+                }
+            }
+        } else {
+            self.glo_eph_cur = Some(*eph);
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn calculate_param(
+        &mut self,
+        position_ecef: &KinematicInfo,
+        position_lla: &LlaPosition,
+        time: &GnssTime,
+    ) {
+        let mut adjusted_time = *time;
+        let time_step = if self.time_tag >= 0 {
+            let mut step = time.MilliSeconds - self.time_tag;
+            if step < 0 {
+                step += 604800000;
+            }
+            step
+        } else {
+            0
+        };
+        self.time_tag = time.MilliSeconds;
+
+        // Adjust time for system
+        match self.system {
+            GnssSystem::BdsSystem => {
+                adjusted_time.MilliSeconds -= 14000;
+            }
+            GnssSystem::GlonassSystem => {
+                let seconds =
+                    (time.Week as u32) * 604800 + (time.MilliSeconds / 1000) as u32;
+                let leap_second = get_leap_second(seconds);
+                adjusted_time.MilliSeconds =
+                    (time.MilliSeconds + 10800000 - leap_second * 1000) % 86400000;
+            }
+            _ => {}
+        }
+
+        let satellite_time = (adjusted_time.MilliSeconds as f64
+            + adjusted_time.SubMilliSeconds)
+            / 1000.0;
+
+        // First estimate: compute sat position at nominal time
+        if self.system == GnssSystem::GlonassSystem {
+            if let Some(ref glo_eph) = self.glo_eph_cur {
+                glonass_sat_pos_speed_eph(
+                    satellite_time,
+                    glo_eph,
+                    &mut self.pos_vel,
+                    None,
+                );
+            }
+        } else if let Some(ref eph) = self.eph_cur {
+            gps_sat_pos_speed_eph(
+                self.system,
+                satellite_time,
+                eph,
+                &mut self.pos_vel,
+                None,
+            );
+        }
+
+        self.travel_time = geometry_distance(
+            position_ecef,
+            &self.pos_vel,
+            Some(&mut self.los_vector),
+        ) / LIGHT_SPEED;
+
+        // Correct for satellite motion during signal travel
+        self.pos_vel.x -= self.travel_time * self.pos_vel.vx;
+        self.pos_vel.y -= self.travel_time * self.pos_vel.vy;
+        self.pos_vel.z -= self.travel_time * self.pos_vel.vz;
+
+        self.travel_time = geometry_distance(
+            position_ecef,
+            &self.pos_vel,
+            Some(&mut self.los_vector),
+        ) / LIGHT_SPEED;
+        let sat_time_corrected = satellite_time - self.travel_time;
+
+        // Calculate accurate position and clock correction
+        if self.system == GnssSystem::GlonassSystem {
+            if let Some(ref glo_eph) = self.glo_eph_cur {
+                glonass_sat_pos_speed_eph(
+                    sat_time_corrected,
+                    glo_eph,
+                    &mut self.pos_vel,
+                    None,
+                );
+                self.clock_error =
+                    glonass_clock_correction(glo_eph, sat_time_corrected);
+            }
+        } else if let Some(ref eph) = self.eph_cur {
+            gps_sat_pos_speed_eph(
+                self.system,
+                sat_time_corrected,
+                eph,
+                &mut self.pos_vel,
+                None,
+            );
+            self.clock_error = gps_clock_correction(eph, sat_time_corrected);
+        }
+
+        // Ephemeris transition blending
+        if self.eph_transition > 0 {
+            let mut pos_vel_prev = KinematicInfo::default();
+            let mut clock_error_prev = 0.0;
+
+            if self.system == GnssSystem::GlonassSystem {
+                if let Some(ref glo_eph_prev) = self.glo_eph_prev {
+                    glonass_sat_pos_speed_eph(
+                        sat_time_corrected,
+                        glo_eph_prev,
+                        &mut pos_vel_prev,
+                        None,
+                    );
+                    clock_error_prev =
+                        glonass_clock_correction(glo_eph_prev, sat_time_corrected);
+                }
+            } else if let Some(ref eph_prev) = self.eph_prev {
+                gps_sat_pos_speed_eph(
+                    self.system,
+                    sat_time_corrected,
+                    eph_prev,
+                    &mut pos_vel_prev,
+                    None,
+                );
+                clock_error_prev =
+                    gps_clock_correction(eph_prev, sat_time_corrected);
+            }
+
+            if self.eph_transition <= time_step {
+                self.eph_transition = 0;
+                self.eph_prev = self.eph_cur;
+                self.glo_eph_prev = self.glo_eph_cur;
+            } else {
+                self.eph_transition -= time_step;
+            }
+
+            let weight_prev =
+                self.eph_transition as f64 / TRANSIT_PERIOD_MS as f64;
+            self.pos_vel.x +=
+                (pos_vel_prev.x - self.pos_vel.x) * weight_prev;
+            self.pos_vel.y +=
+                (pos_vel_prev.y - self.pos_vel.y) * weight_prev;
+            self.pos_vel.z +=
+                (pos_vel_prev.z - self.pos_vel.z) * weight_prev;
+            self.pos_vel.vx +=
+                (pos_vel_prev.vx - self.pos_vel.vx) * weight_prev;
+            self.pos_vel.vy +=
+                (pos_vel_prev.vy - self.pos_vel.vy) * weight_prev;
+            self.pos_vel.vz +=
+                (pos_vel_prev.vz - self.pos_vel.vz) * weight_prev;
+            self.clock_error +=
+                (clock_error_prev - self.clock_error) * weight_prev;
+        }
+
+        let distance = geometry_distance(
+            position_ecef,
+            &self.pos_vel,
+            Some(&mut self.los_vector),
+        );
+        let (el, az) = sat_el_az_from_los(&self.los_vector);
+        self.elevation = el;
+        self.azimuth = az;
+
+        // Ionosphere delay via model
+        self.iono_delay_meter = self.iono_delay_model.get_delay(
+            sat_time_corrected,
+            position_lla.lat,
+            position_lla.lon,
+            self.elevation,
+            self.azimuth,
+        );
+        self.tropo_delay_meter =
+            tropo_delay(position_lla.lat, position_lla.alt, self.elevation);
+        let total_distance = distance + self.tropo_delay_meter;
+
+        if self.system == GnssSystem::GlonassSystem {
+            self.travel_time =
+                total_distance / LIGHT_SPEED - self.clock_error;
+            if let Some(ref glo_eph) = self.glo_eph_cur {
+                self.relative_speed = sat_relative_speed(
+                    position_ecef,
+                    &self.pos_vel,
+                ) - LIGHT_SPEED * glo_eph.gamma;
+            }
+        } else {
+            self.travel_time =
+                total_distance / LIGHT_SPEED - self.clock_error;
+            self.group_delay = [0.0; 8];
+            if let Some(ref eph) = self.eph_cur {
+                // Relativistic correction
+                self.travel_time -= WGS_F_GTR
+                    * eph.ecc
+                    * eph.sqrtA
+                    * eph.Ek.sin();
+
+                // Group delays per system
+                match self.system {
+                    GnssSystem::GpsSystem => {
+                        self.group_delay[SIGNAL_INDEX_L1CA] = eph.tgd;
+                        self.group_delay[SIGNAL_INDEX_L1C] = eph.tgd_ext[1];
+                        self.group_delay[SIGNAL_INDEX_L2C] = eph.tgd2;
+                        self.group_delay[SIGNAL_INDEX_L5] = eph.tgd_ext[3];
+                    }
+                    GnssSystem::BdsSystem => {
+                        self.group_delay[0] = eph.tgd_ext[1]; // B1C
+                        self.group_delay[1] = eph.tgd; // B1I
+                        self.group_delay[2] = eph.tgd2; // B2I
+                        self.group_delay[3] = 0.0; // B3I
+                        self.group_delay[4] = eph.tgd_ext[3]; // B2A
+                        self.group_delay[5] = eph.tgd_ext[4]; // B2B
+                        self.group_delay[6] =
+                            (eph.tgd_ext[3] + eph.tgd_ext[4]) / 2.0; // B2AB
+                    }
+                    GnssSystem::GalileoSystem => {
+                        self.group_delay[0] = eph.tgd; // E1
+                        self.group_delay[1] = eph.tgd_ext[2]; // E5A
+                        self.group_delay[2] = eph.tgd_ext[4]; // E5B
+                        self.group_delay[3] =
+                            (eph.tgd_ext[2] + eph.tgd_ext[4]) / 2.0; // E5
+                        self.group_delay[4] = eph.tgd_ext[4]; // E6
+                    }
+                    _ => {}
+                }
+
+                self.relative_speed = sat_relative_speed(
+                    position_ecef,
+                    &self.pos_vel,
+                ) - LIGHT_SPEED * eph.af1;
+            }
+        }
+    }
+
+    // Uses global signal index, maps to local array index for group_delay
+    pub fn get_travel_time_calc(&self, signal_index: usize) -> f64 {
+        let array_index =
+            map_signal_to_array_index(self.system, signal_index).unwrap_or(0);
+        self.travel_time
+            + self.group_delay[array_index]
+            + get_iono_delay(self.iono_delay_meter, self.system, signal_index)
+                / LIGHT_SPEED
+    }
+
+    pub fn get_carrier_phase_calc(&self, signal_index: usize) -> f64 {
+        let array_index =
+            map_signal_to_array_index(self.system, signal_index).unwrap_or(0);
+        let total_travel =
+            self.travel_time + self.group_delay[array_index];
+        let distance = total_travel * LIGHT_SPEED
+            - get_iono_delay(
+                self.iono_delay_meter,
+                self.system,
+                signal_index,
+            );
+        distance / self.get_wave_length_calc(signal_index)
+    }
+
+    pub fn get_doppler_calc(&self, signal_index: usize) -> f64 {
+        -self.relative_speed / self.get_wave_length_calc(signal_index)
+    }
+
+    pub fn get_wave_length_calc(&self, signal_index: usize) -> f64 {
+        get_wave_length(self.system, signal_index, self.freq_id)
+    }
+
+    pub fn get_iono_delay_calc(&self, signal_index: usize) -> f64 {
+        get_iono_delay(self.iono_delay_meter, self.system, signal_index)
+    }
+
+    pub fn update_cn0(&mut self, power_list: &[SignalPower]) {
+        for power in power_list {
+            if (power.svid == self.svid || power.svid == 0)
+                && power.system == self.system as i32
+            {
+                let new_cn0 = if power.cn0 < 0.0 {
+                    let mut cn0 = self.cn0_default;
+                    match self.cn0_adjust {
+                        ElevationAdjust::ElevationAdjustNone => {}
+                        ElevationAdjust::ElevationAdjustSinSqrtFade => {
+                            cn0 -= (1.0 - self.elevation.sin().sqrt()) * 25.0;
+                        }
+                    }
+                    cn0
+                } else {
+                    power.cn0
+                };
+                self.cn0 = (new_cn0 * 100.0 + 0.5) as i32;
+                return;
+            }
+        }
     }
 }

@@ -287,7 +287,7 @@ impl IFDataGenCacheOptimized for IFDataGen {
 
         // Симулируем создание сигналов для бенчмарка
         let samples_per_ms = (self.output_param.SampleFreq / 1000) as usize;
-        let test_duration_ms = 100; // 100ms тест
+        let _test_duration_ms = 100; // 100ms тест
         
         // Оценка памяти старой системы
         let estimated_satellites = self.gps_sat_number + self.bds_sat_number + 

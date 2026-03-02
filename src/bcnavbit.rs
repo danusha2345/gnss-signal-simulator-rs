@@ -69,6 +69,15 @@ pub struct BCNavBit {
 
     // Almanac time of applicability
     pub almanac_toa: u32,
+
+    // Almanac valid mask
+    pub almanac_valid_mask: u64,
+
+    // Current midi almanac index
+    pub cur_midi_alm_index: i32,
+
+    // Current reduced almanac index
+    pub cur_reduced_alm_index: i32,
 }
 
 impl Default for BCNavBit {
@@ -151,6 +160,9 @@ impl BCNavBit {
             bgto_param: [[0; 3]; 7],
             almanac_week: 0,
             almanac_toa: 0,
+            almanac_valid_mask: 0,
+            cur_midi_alm_index: -1,
+            cur_reduced_alm_index: -1,
         }
     }
 
@@ -324,8 +336,26 @@ impl BCNavBit {
         svid
     }
 
+    pub fn find_next_valid_index(valid_mask: u64, cur_index: i32) -> i32 {
+        if valid_mask == 0 {
+            return 0;
+        }
+        let mut idx = cur_index;
+        loop {
+            idx += 1;
+            if idx >= 64 {
+                idx = 0;
+            }
+            if valid_mask & (1u64 << idx) != 0 {
+                break;
+            }
+        }
+        idx
+    }
+
     pub fn set_almanac(&mut self, alm: &[GpsAlmanac]) -> i32 {
         // fill in almanac page
+        self.almanac_valid_mask = 0;
         for i in 0..63 {
             if i < alm.len() {
                 // Извлекаем данные перед вызовом метода, чтобы избежать конфликта заимствований
@@ -341,6 +371,7 @@ impl BCNavBit {
                 if (alm[i].valid & 1) != 0 {
                     self.almanac_toa = (alm[i].toa >> 12) as u32;
                     self.almanac_week = alm[i].week as u32;
+                    self.almanac_valid_mask |= 1u64 << i;
                 }
             } else {
                 // Заполняем нулями если альманахов недостаточно

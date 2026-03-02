@@ -44,12 +44,48 @@ pub struct BCNav2Bit {
 
     // Integrity flags for all satellites (63 satellites)
     pub integrity_flags: [u32; 63],
+
+    // TGS/ISC parameters (63 satellites, 3 parameters each)
+    pub tgs_isc_param: [[u32; 3]; 63],
+
+    // BDGIM ionosphere parameters
+    pub bd_gim_iono: [u32; 4],
+
+    // BDT-UTC parameters
+    pub bdt_utc_param: [u32; 5],
+
+    // EOP parameters
+    pub eop_param: [u32; 6],
+
+    // BGTO parameters
+    pub bgto_param: [[u32; 3]; 4],
+
+    // Reduced almanac (63 satellites, 2 parameters each)
+    pub reduced_almanac: [[u32; 2]; 63],
+
+    // Midi almanac (63 satellites, 7 parameters each)
+    pub midi_almanac: [[u32; 7]; 63],
+
+    // Almanac valid mask
+    pub almanac_valid_mask: u64,
+
+    // Almanac week
+    pub almanac_week: i32,
+
+    // Almanac time of applicability
+    pub almanac_toa: i32,
+
+    // Current midi almanac index
+    pub cur_midi_alm_index: i32,
+
+    // Current reduced almanac index
+    pub cur_reduced_alm_index: i32,
 }
 
 impl BCNav2Bit {
     // Message broadcast cycle is 60s (20 frames) with following MesType order
     const MESSAGE_ORDER: [i32; 20] = [
-        10, 11, 30, 34, 10, 11, 30, 34, 10, 11, 30, 34, 10, 11, 30, 34, 10, 11, 30, 34,
+        10, 11, 30, 40, 10, 11, 31, 40, 10, 11, 32, 40, 10, 11, 33, 40, 10, 11, 34, 40,
     ];
 
     const B2A_SYMBOL_LENGTH: usize = 48;
@@ -63,11 +99,23 @@ impl BCNav2Bit {
             ephemeris2: [[0; 10]; 63],
             clock_param: [[0; 4]; 63],
             integrity_flags: [0; 63],
+            tgs_isc_param: [[0; 3]; 63],
+            bd_gim_iono: [0; 4],
+            bdt_utc_param: [0; 5],
+            eop_param: [0; 6],
+            bgto_param: [[0; 3]; 4],
+            reduced_almanac: [[0; 2]; 63],
+            midi_almanac: [[0; 7]; 63],
+            almanac_valid_mask: 0,
+            almanac_week: 0,
+            almanac_toa: 0,
+            cur_midi_alm_index: -1,
+            cur_reduced_alm_index: -1,
         }
     }
 
     pub fn get_frame_data(
-        &self,
+        &mut self,
         start_time: GnssTime,
         svid: i32,
         _param: i32,
@@ -114,12 +162,29 @@ impl BCNav2Bit {
         svid
     }
 
+    fn find_next_valid_index(valid_mask: u64, cur_index: i32) -> i32 {
+        if valid_mask == 0 {
+            return 0;
+        }
+        let mut idx = cur_index;
+        loop {
+            idx += 1;
+            if idx >= 64 {
+                idx = 0;
+            }
+            if valid_mask & (1u64 << idx) != 0 {
+                break;
+            }
+        }
+        idx
+    }
+
     // 288 bits subframe information divided into 12 WORDs
     // each WORD has 24bits in 24LSB of unsigned int data in FrameData[]
     // bit order is MSB first (from bit23) and least index first
     // each 24bits divided into four 6bit symbols in LDPC encode
     fn compose_message(
-        &self,
+        &mut self,
         message_type: i32,
         week: i32,
         sow: i32,
@@ -158,26 +223,71 @@ impl BCNav2Bit {
                 Self::append_word(frame_data, 24 + 18, &self.clock_param[svid_idx], 69);
                 frame_data[4] |= COMPOSE_BITS!(self.clock_param[svid_idx][3] >> 1, 0, 9); // IODC
                 frame_data[5] = COMPOSE_BITS!(self.clock_param[svid_idx][3], 23, 1); // IODC
-                frame_data[6] = 0; // fill rest of 143bits with 0
-                frame_data[7] = 0;
-                frame_data[8] = 0;
-                frame_data[9] = 0;
-                frame_data[10] = 0;
+                Self::append_word(frame_data, 5 * 24 + 3, &self.bd_gim_iono, 96);
+                frame_data[5] |= COMPOSE_BITS!(self.tgs_isc_param[svid_idx][1], 11, 12); // TGD
+                frame_data[5] |= COMPOSE_BITS!(self.tgs_isc_param[svid_idx][1] >> 13, 0, 11); // ISC
+                frame_data[6] |= COMPOSE_BITS!(self.tgs_isc_param[svid_idx][1] >> 12, 0, 1); // ISC
+                frame_data[9] |= COMPOSE_BITS!(self.tgs_isc_param[svid_idx][0], 9, 12); // TGD
+                frame_data[10] = 0; // fill rest of 33bits with 0
+            }
+            31 => {
+                frame_data[1] |= COMPOSE_BITS!(self.integrity_flags[svid_idx] >> 5, 13, 3);
+                frame_data[1] |= COMPOSE_BITS!(self.integrity_flags[svid_idx] >> 11, 9, 4);
+                frame_data[1] |= COMPOSE_BITS!(self.integrity_flags[svid_idx] >> 2, 6, 3);
+                Self::append_word(frame_data, 24 + 18, &self.clock_param[svid_idx], 69);
+                frame_data[4] |= COMPOSE_BITS!(self.clock_param[svid_idx][3] >> 1, 0, 9);
+                frame_data[5] = COMPOSE_BITS!(self.clock_param[svid_idx][3], 23, 1);
+                frame_data[5] |= COMPOSE_BITS!(self.almanac_week, 10, 13);
+                frame_data[5] |= COMPOSE_BITS!(self.almanac_toa, 2, 8);
+                self.cur_reduced_alm_index = Self::find_next_valid_index(self.almanac_valid_mask, self.cur_reduced_alm_index);
+                Self::append_word(frame_data, 5 * 24 + 22, &self.reduced_almanac[self.cur_reduced_alm_index as usize], 38);
+                self.cur_reduced_alm_index = Self::find_next_valid_index(self.almanac_valid_mask, self.cur_reduced_alm_index);
+                Self::append_word(frame_data, 7 * 24 + 12, &self.reduced_almanac[self.cur_reduced_alm_index as usize], 38);
+                self.cur_reduced_alm_index = Self::find_next_valid_index(self.almanac_valid_mask, self.cur_reduced_alm_index);
+                Self::append_word(frame_data, 9 * 24 + 2, &self.reduced_almanac[self.cur_reduced_alm_index as usize], 38);
+            }
+            32 => {
+                frame_data[1] |= COMPOSE_BITS!(self.integrity_flags[svid_idx] >> 5, 13, 3);
+                frame_data[1] |= COMPOSE_BITS!(self.integrity_flags[svid_idx] >> 11, 9, 4);
+                frame_data[1] |= COMPOSE_BITS!(self.integrity_flags[svid_idx] >> 2, 6, 3);
+                Self::append_word(frame_data, 24 + 18, &self.clock_param[svid_idx], 69);
+                frame_data[4] |= COMPOSE_BITS!(self.clock_param[svid_idx][3] >> 1, 0, 9);
+                frame_data[5] = COMPOSE_BITS!(self.clock_param[svid_idx][3], 23, 1);
+                Self::append_word(frame_data, 5 * 24 + 1, &self.eop_param, 138);
+            }
+            33 => {
+                frame_data[1] |= COMPOSE_BITS!(self.integrity_flags[svid_idx] >> 5, 13, 3);
+                frame_data[1] |= COMPOSE_BITS!(self.integrity_flags[svid_idx] >> 11, 9, 4);
+                frame_data[1] |= COMPOSE_BITS!(self.integrity_flags[svid_idx] >> 2, 6, 3);
+                Self::append_word(frame_data, 24 + 18, &self.clock_param[svid_idx], 69);
+                Self::append_word(frame_data, 4 * 24 + 15, &self.bgto_param[0], 68);
+                self.cur_reduced_alm_index = Self::find_next_valid_index(self.almanac_valid_mask, self.cur_reduced_alm_index);
+                Self::append_word(frame_data, 7 * 24 + 11, &self.reduced_almanac[self.cur_reduced_alm_index as usize], 38);
+                frame_data[9] |= COMPOSE_BITS!(self.clock_param[svid_idx][3], 13, 10);
+                frame_data[9] |= COMPOSE_BITS!(self.almanac_week, 0, 13);
+                frame_data[10] = COMPOSE_BITS!(self.almanac_toa, 16, 8);
+            }
+            40 => {
+                frame_data[1] |= COMPOSE_BITS!(self.integrity_flags[svid_idx] >> 5, 13, 3);
+                frame_data[1] |= COMPOSE_BITS!(self.integrity_flags[svid_idx] >> 11, 9, 4);
+                frame_data[1] |= COMPOSE_BITS!(self.integrity_flags[svid_idx] >> 2, 6, 3);
+                // SISAIoe/SISAIoc filled with 27 zeros
+                frame_data[2] = 0;
+                self.cur_midi_alm_index = Self::find_next_valid_index(self.almanac_valid_mask, self.cur_midi_alm_index);
+                Self::append_word(frame_data, 2 * 24 + 21, &self.midi_almanac[self.cur_midi_alm_index as usize], 156);
+                frame_data[10] = 0; // fill rest of 39bits with 0
             }
             34 => {
                 // HS filled with 2 zeros
                 frame_data[1] |= COMPOSE_BITS!(self.integrity_flags[svid_idx] >> 5, 13, 3); // B2a DIF/SIF/AIF
                 frame_data[1] |= COMPOSE_BITS!(self.integrity_flags[svid_idx] >> 11, 9, 4); // SISMAI
                 frame_data[1] |= COMPOSE_BITS!(self.integrity_flags[svid_idx] >> 2, 6, 3); // B1C DIF/SIF/AIF
-                                                                                           // SISAI filled with 22 zeros
+                // SISAI filled with 22 zeros
                 frame_data[2] = 0;
                 Self::append_word(frame_data, 2 * 24 + 16, &self.clock_param[svid_idx], 69);
-                frame_data[4] |= COMPOSE_BITS!(self.clock_param[svid_idx][3], 1, 10); // IODC
-                frame_data[6] = 0; // fill rest of 121bits with 0
-                frame_data[7] = 0;
-                frame_data[8] = 0;
-                frame_data[9] = 0;
-                frame_data[10] = 0;
+                frame_data[5] |= COMPOSE_BITS!(self.clock_param[svid_idx][3], 1, 10); // IODC
+                Self::append_word(frame_data, 5 * 24 + 23, &self.bdt_utc_param, 97);
+                frame_data[10] = 0; // fill rest with 0
             }
             _ => {
                 // Unknown message type, fill with zeros

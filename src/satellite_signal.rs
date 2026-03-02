@@ -390,7 +390,7 @@ impl SatelliteSignal {
                     nav_data.get_frame_data(transmit_time, self.svid, param, &mut data_bits_i32);
 
                     // DEBUG: Проверка навигационных данных
-                    let non_zero_count = data_bits_i32.iter().filter(|&&x| x != 0).count();
+                    let _non_zero_count = data_bits_i32.iter().filter(|&&x| x != 0).count();
                     let _system_name = match self.sat_system {
                         GnssSystem::GpsSystem => "GPS",
                         GnssSystem::BdsSystem => "BDS",

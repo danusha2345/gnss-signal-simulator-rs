@@ -26,7 +26,6 @@ use std::time::Instant;
 const DEFAULT_CONFIG: &str = "config.json";
 
 use gnss_rust::logutil::{is_quiet, is_verbose, set_level, LogLevel};
-use gnss_rust::vprintln;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Обработка аргументов командной строки (до любых логов)

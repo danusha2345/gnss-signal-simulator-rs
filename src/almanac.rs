@@ -651,6 +651,10 @@ pub fn get_almanac_from_ephemeris_glonass(
     let v2 = pos_vel.vx * pos_vel.vx + pos_vel.vy * pos_vel.vy + pos_vel.vz * pos_vel.vz;
     let rv = pos_vel.x * pos_vel.vx + pos_vel.y * pos_vel.vy + pos_vel.z * pos_vel.vz;
     let a = 1.0 / (2.0 / r - v2 / PZ90_GM);
+    if a <= 0.0 {
+        alm.flag = 0;
+        return alm;
+    }
     let mut t = PI2 / (PZ90_GM / (a * a * a)).sqrt();
     let c20 = -PZ90_C20 * 1.5 * PZ90_AE2 / (p * p);
     t *= 1.0 + c20 * INCLINATION_FACTOR;
@@ -746,6 +750,10 @@ pub fn convert_almanac_from_ephemeris_geo(
     let v2 = pos_vel.vx * pos_vel.vx + pos_vel.vy * pos_vel.vy + pos_vel.vz * pos_vel.vz;
     let rv = pos_vel.x * pos_vel.vx + pos_vel.y * pos_vel.vy + pos_vel.z * pos_vel.vz;
     let a = 1.0 / (2.0 / r - v2 / (CGCS2000_SQRT_GM * CGCS2000_SQRT_GM));
+    if a <= 0.0 {
+        alm.valid = 0;
+        return false;
+    }
     alm.sqrtA = a.sqrt();
     alm.ecc = if a > p { (1.0 - p / a).sqrt() } else { 0.0 };
 

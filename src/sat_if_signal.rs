@@ -217,7 +217,6 @@ pub struct SatIfSignal {
     sat_param: Option<SatelliteParam>,
     data_length: i32,
     pilot_length: i32,
-    glonass_half_cycle: bool,
     start_carrier_phase: f64,
     end_carrier_phase: f64,
     signal_time: GnssTime,
@@ -225,7 +224,6 @@ pub struct SatIfSignal {
     end_transmit_time: GnssTime,
     data_signal: ComplexNumber,
     pilot_signal: ComplexNumber,
-    half_cycle_flag: i32,
     // НОВЫЕ КЭШИ ДЛЯ АГРЕССИВНОЙ ОПТИМИЗАЦИИ
     prn_cache: PrnCache,
     carrier_phase_cache: Option<CarrierPhaseCache>,
@@ -275,7 +273,6 @@ impl SatIfSignal {
             sat_param: None,
             data_length: data_len,
             pilot_length: pilot_len,
-            glonass_half_cycle: (sat_if_freq % 1000) != 0,
             start_carrier_phase: 0.0,
             end_carrier_phase: 0.0,
             signal_time: GnssTime::default(),
@@ -283,7 +280,6 @@ impl SatIfSignal {
             end_transmit_time: GnssTime::default(),
             data_signal: ComplexNumber::new(),
             pilot_signal: ComplexNumber::new(),
-            half_cycle_flag: 0,
             // Инициализация кэшей
             prn_cache: PrnCache::new(),
             carrier_phase_cache: None, // Будет инициализирован при первом использовании
@@ -326,7 +322,6 @@ impl SatIfSignal {
             &mut self.data_signal,
             &mut self.pilot_signal,
         );
-        self.half_cycle_flag = 0;
     }
 
     // SMART CACHING: Navigation bits change every 20ms, PRN codes every 1ms
@@ -432,9 +427,11 @@ impl SatIfSignal {
         cur_phase = 1.0 - cur_phase;
         self.start_carrier_phase = self.end_carrier_phase;
 
-        if self.glonass_half_cycle {
-            cur_phase += if self.half_cycle_flag != 0 { 0.5 } else { 0.0 };
-            self.half_cycle_flag = 1 - self.half_cycle_flag;
+        // GLONASS half cycle compensation for odd frequency satellites
+        if let Some(ref sat_param) = self.sat_param {
+            if sat_param.system == GnssSystem::GlonassSystem && (sat_param.FreqID & 1) != 0 && (cur_time.MilliSeconds & 1) != 0 {
+                cur_phase += 0.5;
+            }
         }
 
         let mut transmit_ms_diff =
