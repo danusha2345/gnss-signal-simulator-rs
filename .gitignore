@@ -28,3 +28,12 @@ generated_files/*.bin
 # Performance profiling
 perf.data*
 flamegraph.svg
+
+# Debug artifacts
+debug_output.txt
+spectrum.csv
+*.png
+*.o
+test_ephemeris_search_basic
+test_rinex
+test_rinex_validation_simple
