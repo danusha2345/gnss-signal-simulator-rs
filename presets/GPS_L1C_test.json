@@ -3,10 +3,10 @@
         "type": "UTC",
         "year": 2025,
         "month": 6,
-        "day": 29,
-        "hour": 12,
-        "minute": 0,
-        "second": 0
+        "day": 5,
+        "hour": 10,
+        "minute": 5,
+        "second": 30
     },
     "trajectory": {
         "name": "static",
@@ -25,41 +25,38 @@
         },
         "trajectoryList": [{
             "type": "Const",
-            "time": 90.0
+            "time": 10.0
         }]
     },
     "ephemeris": {
         "type": "RINEX",
-        "name": "EphData/rinex_v3_20251800000.rnx"
+        "name": "EphData/rinex_v3_20251560000.rnx"
     },
     "output": {
         "type": "IFdata",
         "format": "IQ8",
         "sampleFreq": 5.0,
         "centerFreq": 1575.42,
-        "name": "GPS_L1C_test.C8",
+        "name": "generated_files/GPS_L1C_test.C8",
         "config": {
-            "elevationMask": 4
-        }
+            "elevationMask": 5
+        },
+        "systemSelect": [
+            {"system": "GPS", "signal": "L1CA", "enable": false},
+            {"system": "GPS", "signal": "L1C", "enable": true},
+            {"system": "GPS", "signal": "L2C", "enable": false},
+            {"system": "GPS", "signal": "L2P", "enable": false},
+            {"system": "GPS", "signal": "L5", "enable": false},
+            {"system": "BDS", "signal": "B1C", "enable": false},
+            {"system": "Galileo", "signal": "E1", "enable": false}
+        ]
     },
-    "systemSelect": [
-        {"system": "GPS", "enable": true, "signalSelect": [
-            {"signal": "L1CA", "enable": false},
-            {"signal": "L1C", "enable": true},
-            {"signal": "L2C", "enable": false},
-            {"signal": "L2P", "enable": false},
-            {"signal": "L5", "enable": false}
-        ]},
-        {"system": "BDS", "enable": false},
-        {"system": "GAL", "enable": false},
-        {"system": "GLO", "enable": false}
-    ],
     "power": {
         "noiseFloor": -174,
         "initPower": {
             "unit": "dBHz",
             "value": 45
         },
-        "elevationAdjust": true
+        "elevationAdjust": false
     }
 }

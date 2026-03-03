@@ -71,6 +71,23 @@ GLO_CODE_PERIOD_MS = 1
 GLO_F_BASE = 1602.0e6       # G1 base frequency (Hz)
 GLO_F_STEP = 0.5625e6       # FDMA channel step (Hz)
 
+# GPS L5
+F_L5 = 1176.45e6
+GPS_L5_CODE_LENGTH = 10230
+GPS_L5_CODE_PERIOD_MS = 1      # 10.23 Mchip/s -> 10230/10.23e6 = 1 ms
+NON_COHERENT_L5 = 10
+
+# GPS L2C
+F_L2 = 1227.60e6
+GPS_L2C_CODE_LENGTH = 10230
+GPS_L2C_CODE_PERIOD_MS = 10    # 1.023 Mchip/s -> 10230/1.023e6 = 10 ms
+NON_COHERENT_L2C = 5
+
+# GPS L1C
+GPS_L1C_CODE_LENGTH = 10230
+GPS_L1C_CODE_PERIOD_MS = 10    # 1.023 Mchip/s -> 10230/1.023e6 = 10 ms
+NON_COHERENT_L1C = 5
+
 PI2 = 2.0 * math.pi
 
 
@@ -245,6 +262,137 @@ def generate_glonass_g1_code(svid=None):
 
 
 # ============================================================
+# Generic LFSR / Gold Code Generator
+# ============================================================
+
+def generate_gold_code(g1_init, g1_poly, g2_init, g2_poly, length, depth, reset_pos):
+    """Gold code: G1 XOR G2 Fibonacci LFSRs, with G2 reset at reset_pos.
+    If g2_init=0 and g2_poly=0, G2 always outputs 0 (single-LFSR mode)."""
+    output_mask = 1 << (depth - 1)
+    depth_mask = (1 << depth) - 1
+    g1 = g1_init
+    g2 = g2_init
+    code = np.zeros(length, dtype=np.int8)
+    for i in range(length):
+        if i == reset_pos:
+            g2 = g2_init
+        out1 = 1 if (g1 & output_mask) else 0
+        fb1 = bin(g1 & g1_poly).count('1') & 1
+        g1 = ((g1 << 1) | fb1) & depth_mask
+        out2 = 1 if (g2 & output_mask) else 0
+        fb2 = bin(g2 & g2_poly).count('1') & 1
+        g2 = ((g2 << 1) | fb2) & depth_mask
+        code[i] = out1 ^ out2
+    return code
+
+
+# ============================================================
+# GPS L5I Code Generation (Gold Code, 13-bit LFSRs)
+# ============================================================
+
+L5I_PRN_INIT = [
+    0x04ea, 0x1583, 0x0202, 0x0c8d, 0x1d77, 0x0be6, 0x1f25, 0x04bd,
+    0x1a9f, 0x0f7e, 0x0b90, 0x13e7, 0x0738, 0x1c82, 0x0b56, 0x1278,
+    0x1e32, 0x0f0f, 0x1f13, 0x16d6, 0x0204, 0x1ef7, 0x0fe1, 0x05a3,
+    0x16cb, 0x0d35, 0x0f6a, 0x0d5e, 0x10fa, 0x1da1, 0x0f28, 0x13a0,
+]
+
+
+def generate_l5i_code(svid):
+    """Generate GPS L5I code (10230 chips). Returns +/-1 array."""
+    if svid < 1 or svid > 32:
+        return None
+    code = generate_gold_code(
+        L5I_PRN_INIT[svid - 1], 0x18ed,   # G1: per-SV init, poly
+        0x1fff, 0x1b00,                     # G2: all-ones init, poly
+        10230, 13, 8190)                    # 10230 chips, 13-bit, G2 reset at 8190
+    return 1.0 - 2.0 * code.astype(np.float64)
+
+
+# ============================================================
+# GPS L2C CM Code Generation (single 27-bit LFSR)
+# ============================================================
+
+L2CM_PRN_INIT = [
+    0x15ef0f5, 0x50f811e, 0x10e553d, 0x16b0258, 0x416f3bc, 0x65bc21e, 0x0f5be58, 0x496777f,
+    0x4a5a8e2, 0x36e44d6, 0x5e84705, 0x345ea19, 0x6965b5b, 0x447fb02, 0x0043a6e, 0x35e5896,
+    0x3059ddd, 0x5c16d2a, 0x10c80db, 0x1c754b4, 0x650324e, 0x7fb4e14, 0x74e048f, 0x0663507,
+    0x1f887f9, 0x487c247, 0x5fd6d8c, 0x20818d1, 0x1ece400, 0x7aeb923, 0x656b597, 0x602e157,
+]
+
+
+def generate_l2c_cm_code(svid):
+    """Generate GPS L2C CM code (10230 chips). Returns +/-1 array.
+    Single LFSR (G2 disabled via init=0, poly=0)."""
+    if svid < 1 or svid > 32:
+        return None
+    code = generate_gold_code(
+        L2CM_PRN_INIT[svid - 1], 0x0494953c,  # G1: per-SV init, 27-bit poly
+        0x0, 0x0,                                # G2: disabled
+        10230, 27, 10230)                        # 10230 chips, 27-bit, no reset
+    return 1.0 - 2.0 * code.astype(np.float64)
+
+
+# ============================================================
+# GPS L1C Code Generation (Weil/Legendre + BOC(1,1))
+# ============================================================
+
+L1C_DATA_INSERT_INDEX = [
+    181, 359, 72, 1110, 1480, 5034, 4622, 1, 4547, 826,
+    6284, 4195, 368, 1, 4796, 523, 151, 713, 9850, 5734,
+    34, 6142, 190, 644, 467, 5384, 801, 594, 4450, 9437,
+    4307, 5906, 378, 9448, 9432, 5849, 5547, 9546, 9132, 403,
+    3766, 3, 684, 9711, 333, 6124, 10216, 4251, 9893, 9884,
+    4627, 4449, 9798, 985, 4272, 126, 10024, 434, 1029, 561,
+    289, 638, 4353,
+]
+
+L1C_DATA_PHASE_DIFF = [
+    5097, 5110, 5079, 4403, 4121, 5043, 5042, 5104, 4940, 5035,
+    4372, 5064, 5084, 5048, 4950, 5019, 5076, 3736, 4993, 5060,
+    5061, 5096, 4983, 4783, 4991, 4815, 4443, 4769, 4879, 4894,
+    4985, 5056, 4921, 5036, 4812, 4838, 4855, 4904, 4753, 4483,
+    4942, 4813, 4957, 4618, 4669, 4969, 5031, 5038, 4740, 4073,
+    4843, 4979, 4867, 4964, 5025, 4579, 4390, 4763, 4612, 4784,
+    3716, 4703, 4851,
+]
+
+
+def generate_l1c_weil(svid):
+    """Generate GPS L1C data code (Weil, 10230 chips, 0/1).
+    Legendre prime = 10223, 7-chip insertion sequence at insert_index."""
+    if svid < 1 or svid > 63:
+        return None
+    insert_index = L1C_DATA_INSERT_INDEX[svid - 1]
+    phase_diff = L1C_DATA_PHASE_DIFF[svid - 1]
+    legendre = generate_legendre_sequence(10223)
+    insert_seq = [0, 1, 1, 0, 1, 0, 0]
+    code = np.zeros(10230, dtype=np.int32)
+    idx1 = 0
+    idx2 = phase_diff
+    for i in range(10230):
+        if idx1 >= 10223:
+            idx1 -= 10223
+        if idx2 >= 10223:
+            idx2 -= 10223
+        if i >= insert_index - 1 and i < insert_index + 6:
+            code[i] = insert_seq[i - insert_index + 1]
+        else:
+            code[i] = legendre[idx1] ^ legendre[idx2]
+            idx1 += 1
+            idx2 += 1
+    return code
+
+
+def generate_l1c_boc(svid):
+    """Generate GPS L1C BOC(1,1) code. Returns +/-1 array."""
+    code = generate_l1c_weil(svid)
+    if code is None:
+        return None
+    return apply_boc11(code)
+
+
+# ============================================================
 # CLI & Preset Parser
 # ============================================================
 
@@ -294,19 +442,45 @@ def parse_preset(preset_path):
             config['rinex_path'] = os.path.normpath(candidate)
 
     enabled = set()
+
+    def _process_signal(sys_name, sig):
+        """Map (system, signal) pair to enabled set entry."""
+        if sys_name == 'GPS':
+            if sig == 'L1CA':
+                enabled.add('GPS')
+            elif sig == 'L5':
+                enabled.add('GPS_L5')
+            elif sig == 'L2C':
+                enabled.add('GPS_L2C')
+            elif sig == 'L1C':
+                enabled.add('GPS_L1C')
+        elif sys_name == 'BDS' and sig == 'B1C':
+            enabled.add('BDS')
+        elif sys_name == 'Galileo' and sig == 'E1':
+            enabled.add('GAL')
+        elif sys_name == 'GLONASS' and sig == 'G1':
+            enabled.add('GLO')
+
+    # Format 1: systemSelect inside output (flat list with system+signal)
     if 'output' in data and 'systemSelect' in data['output']:
         for entry in data['output']['systemSelect']:
             if entry.get('enable', False):
-                sys_name = entry.get('system', '')
-                sig = entry.get('signal', '')
-                if sys_name == 'GPS' and sig == 'L1CA':
-                    enabled.add('GPS')
-                elif sys_name == 'BDS' and sig == 'B1C':
-                    enabled.add('BDS')
-                elif sys_name == 'Galileo' and sig == 'E1':
-                    enabled.add('GAL')
-                elif sys_name == 'GLONASS' and sig == 'G1':
-                    enabled.add('GLO')
+                _process_signal(entry.get('system', ''), entry.get('signal', ''))
+
+    # Format 2: systemSelect at top level with nested signalSelect
+    if 'systemSelect' in data:
+        for sys_entry in data['systemSelect']:
+            sys_name = sys_entry.get('system', '')
+            if sys_name == 'GPS' and sys_entry.get('enable', False):
+                for sig_entry in sys_entry.get('signalSelect', []):
+                    if sig_entry.get('enable', False):
+                        _process_signal('GPS', sig_entry.get('signal', ''))
+            elif sys_entry.get('enable', False):
+                # Non-GPS systems with signalSelect
+                for sig_entry in sys_entry.get('signalSelect', []):
+                    if sig_entry.get('enable', False):
+                        _process_signal(sys_name, sig_entry.get('signal', ''))
+
     config['enabled_systems'] = enabled if enabled else {'GPS', 'BDS', 'GAL'}
 
     if 'output' in data and 'centerFreq' in data['output']:
@@ -634,7 +808,7 @@ def ecef_to_el_az(rx_ecef, sat_ecef, rx_lat_deg, rx_lon_deg):
     return el, az
 
 
-def compute_satellite_doppler(eph, target_time, rx_ecef, system='GPS'):
+def compute_satellite_doppler(eph, target_time, rx_ecef, system='GPS', carrier_freq=None):
     """Doppler via numerical velocity (central difference, dt=0.5s)."""
     dt = 0.5
     if system == 'GLO':
@@ -642,7 +816,7 @@ def compute_satellite_doppler(eph, target_time, rx_ecef, system='GPS'):
         freq = GLO_F_BASE + eph.get('freq_num', 0) * GLO_F_STEP
     else:
         propagate = lambda e, t: kepler_propagate(e, t, system)
-        freq = F_L1
+        freq = carrier_freq if carrier_freq is not None else F_L1
     pos1 = propagate(eph, target_time - dt)
     pos2 = propagate(eph, target_time + dt)
     vel = [(pos2[i] - pos1[i]) / (2 * dt) for i in range(3)]
@@ -654,7 +828,7 @@ def compute_satellite_doppler(eph, target_time, rx_ecef, system='GPS'):
     return -v_r / SPEED_OF_LIGHT * freq
 
 
-def compute_visible_satellites(best_eph, target_time, rx_lat, rx_lon, rx_alt, el_mask=5):
+def compute_visible_satellites(best_eph, target_time, rx_lat, rx_lon, rx_alt, el_mask=5, carrier_freq=None):
     """Propagate all SVs and compute elevation/azimuth/doppler."""
     rx_ecef = lla_to_ecef(rx_lat, rx_lon, rx_alt)
     visible = {}
@@ -667,7 +841,7 @@ def compute_visible_satellites(best_eph, target_time, rx_lat, rx_lon, rx_alt, el
                 else:
                     pos = kepler_propagate(eph, target_time, system)
                 el, az = ecef_to_el_az(rx_ecef, pos, rx_lat, rx_lon)
-                doppler = compute_satellite_doppler(eph, target_time, rx_ecef, system)
+                doppler = compute_satellite_doppler(eph, target_time, rx_ecef, system, carrier_freq)
                 info = {
                     'el': el, 'az': az, 'doppler': doppler,
                     'visible': el >= el_mask,
@@ -958,9 +1132,14 @@ def estimate_cn0(zscore, code_period_ms, non_coherent_count):
 # Report Generation (3 Pages)
 # ============================================================
 
-SYS_COLORS = {'GPS': '#2196F3', 'BDS': '#F44336', 'GAL': '#4CAF50', 'GLO': '#FF9800'}
+SYS_COLORS = {
+    'GPS': '#2196F3', 'GPS_L5': '#1565C0', 'GPS_L2C': '#42A5F5', 'GPS_L1C': '#0D47A1',
+    'BDS': '#F44336', 'GAL': '#4CAF50', 'GLO': '#FF9800',
+}
 SYS_PREFIX = {
-    'GPS L1CA': ('G', 'GPS'), 'BeiDou B1C': ('C', 'BDS'),
+    'GPS L1CA': ('G', 'GPS'), 'GPS L5': ('G', 'GPS_L5'),
+    'GPS L2C': ('G', 'GPS_L2C'), 'GPS L1C': ('G', 'GPS_L1C'),
+    'BeiDou B1C': ('C', 'BDS'),
     'Galileo E1': ('E', 'GAL'), 'GLONASS G1': ('R', 'GLO'),
 }
 
@@ -981,8 +1160,12 @@ def _all_found_bars(results_list, threshold):
 
 def _cn0_bars(results_list):
     """Collect CN0 estimations for all found sats."""
-    nc_map = {'GPS L1CA': NON_COHERENT_GPS, 'BeiDou B1C': NON_COHERENT_BDS,
-              'Galileo E1': NON_COHERENT_GAL, 'GLONASS G1': NON_COHERENT_GLO}
+    nc_map = {
+        'GPS L1CA': NON_COHERENT_GPS, 'GPS L5': NON_COHERENT_L5,
+        'GPS L2C': NON_COHERENT_L2C, 'GPS L1C': NON_COHERENT_L1C,
+        'BeiDou B1C': NON_COHERENT_BDS,
+        'Galileo E1': NON_COHERENT_GAL, 'GLONASS G1': NON_COHERENT_GLO,
+    }
     items = []
     for res in results_list:
         if not res:
@@ -1218,21 +1401,34 @@ def generate_report(iq_file, signal, sample_rate, rms_values,
         plt.close(fig)
 
         # ======================================================
-        # PAGE 3 — Correlation Details (2x4)
+        # PAGE 3 — Correlation Details (dynamic columns)
         # ======================================================
-        fig, axes = plt.subplots(2, 4, figsize=(22, 10))
-        fig.suptitle('Correlation Analysis', fontsize=14, fontweight='bold')
 
-        gps_res = results_list[0] if len(results_list) > 0 else None
-        bds_res = results_list[1] if len(results_list) > 1 else None
-        gal_res = results_list[2] if len(results_list) > 2 else None
-        glo_res = results_list[3] if len(results_list) > 3 else None
-        sys_plots = [
-            ('GPS L1CA', gps_res, GPS_CODE_LENGTH, 50, SYS_COLORS['GPS']),
-            ('BeiDou B1C', bds_res, BDS_CODE_LENGTH, 5, SYS_COLORS['BDS']),
-            ('Galileo E1', gal_res, GAL_CODE_LENGTH, 5, SYS_COLORS['GAL']),
-            ('GLONASS G1', glo_res, GLO_CODE_LENGTH, 50, SYS_COLORS['GLO']),
-        ]
+        # Code chip counts for correlation zoom
+        _CODE_CHIP_MAP = {
+            'GPS L1CA': (GPS_CODE_LENGTH, 50),
+            'GPS L5': (GPS_L5_CODE_LENGTH, 50),
+            'GPS L2C': (GPS_L2C_CODE_LENGTH, 50),
+            'GPS L1C': (GPS_L1C_CODE_LENGTH * 2, 5),  # BOC doubles subchips
+            'BeiDou B1C': (BDS_CODE_LENGTH, 5),
+            'Galileo E1': (GAL_CODE_LENGTH, 5),
+            'GLONASS G1': (GLO_CODE_LENGTH, 50),
+        }
+
+        # Build sys_plots from actual results
+        sys_plots = []
+        for res in results_list:
+            if res is None:
+                continue
+            sn = res['system']
+            _, sys_key = SYS_PREFIX.get(sn, ('?', 'GPS'))
+            color = SYS_COLORS.get(sys_key, '#2196F3')
+            chip_count, zoom_chips = _CODE_CHIP_MAP.get(sn, (1023, 50))
+            sys_plots.append((sn, res, chip_count, zoom_chips, color))
+
+        n_cols = max(len(sys_plots), 1)
+        fig, axes = plt.subplots(2, n_cols, figsize=(5.5 * n_cols, 10), squeeze=False)
+        fig.suptitle('Correlation Analysis', fontsize=14, fontweight='bold')
 
         for col, (sys_name, res, chip_count, zoom_chips, color) in enumerate(sys_plots):
             # Row 0: Correlation zoom around peak (circular roll to center)
@@ -1373,7 +1569,8 @@ def main():
             el_mask = config.get('elevation_mask', 5)
             sat_info = compute_visible_satellites(
                 best_eph, target_time,
-                config['rx_lat'], config['rx_lon'], config['rx_alt'], el_mask)
+                config['rx_lat'], config['rx_lon'], config['rx_alt'], el_mask,
+                carrier_freq=config.get('center_freq'))
             for system in ['GPS', 'BDS', 'GAL', 'GLO']:
                 if system in sat_info:
                     vis = sum(1 for s in sat_info[system].values() if s['visible'])
@@ -1405,7 +1602,8 @@ def main():
 
     # ---- Determine search ranges ----
     enabled = config.get('enabled_systems', {'GPS', 'BDS', 'GAL'})
-    gps_range = list(range(1, 33)) if 'GPS' in enabled else []
+    any_gps = any(s in enabled for s in ('GPS', 'GPS_L5', 'GPS_L2C', 'GPS_L1C'))
+    gps_range = list(range(1, 33)) if any_gps else []
     bds_range = list(range(1, 64)) if 'BDS' in enabled else []
     gal_range = list(range(1, 37)) if 'GAL' in enabled else []
 
@@ -1422,55 +1620,76 @@ def main():
             print(f"  GAL: {len(gal_range)} SVs")
 
     # ---- Acquisition ----
-    gps_res = bds_res = gal_res = glo_res = None
+    results_list = []
 
-    if gps_range:
-        gps_res = acquire_system(signal, 'GPS L1CA', gps_range, generate_ca_code,
-                                 GPS_CODE_PERIOD_MS, sample_rate, NON_COHERENT_GPS, threshold)
+    # GPS L1CA
+    if 'GPS' in enabled and gps_range:
+        res = acquire_system(signal, 'GPS L1CA', gps_range, generate_ca_code,
+                             GPS_CODE_PERIOD_MS, sample_rate, NON_COHERENT_GPS, threshold)
+        results_list.append(res)
+
+    # GPS L5
+    if 'GPS_L5' in enabled and gps_range:
+        res = acquire_system(signal, 'GPS L5', gps_range, generate_l5i_code,
+                             GPS_L5_CODE_PERIOD_MS, sample_rate, NON_COHERENT_L5, threshold)
+        results_list.append(res)
+
+    # GPS L2C
+    if 'GPS_L2C' in enabled and gps_range:
+        res = acquire_system(signal, 'GPS L2C', gps_range, generate_l2c_cm_code,
+                             GPS_L2C_CODE_PERIOD_MS, sample_rate, NON_COHERENT_L2C, threshold)
+        results_list.append(res)
+
+    # GPS L1C
+    if 'GPS_L1C' in enabled and gps_range:
+        res = acquire_system(signal, 'GPS L1C', gps_range, generate_l1c_boc,
+                             GPS_L1C_CODE_PERIOD_MS, sample_rate, NON_COHERENT_L1C, threshold)
+        results_list.append(res)
+
+    # BeiDou B1C
     if bds_range:
-        bds_res = acquire_system(signal, 'BeiDou B1C', bds_range, generate_b1c_boc,
-                                 BDS_CODE_PERIOD_MS, sample_rate, NON_COHERENT_BDS, threshold)
+        res = acquire_system(signal, 'BeiDou B1C', bds_range, generate_b1c_boc,
+                             BDS_CODE_PERIOD_MS, sample_rate, NON_COHERENT_BDS, threshold)
+        results_list.append(res)
+
+    # Galileo E1
     if gal_range:
-        gal_res = acquire_system(signal, 'Galileo E1', gal_range, generate_e1_boc,
-                                 GAL_CODE_PERIOD_MS, sample_rate, NON_COHERENT_GAL, threshold)
+        res = acquire_system(signal, 'Galileo E1', gal_range, generate_e1_boc,
+                             GAL_CODE_PERIOD_MS, sample_rate, NON_COHERENT_GAL, threshold)
+        results_list.append(res)
 
     # GLONASS FDMA acquisition (requires sat_info for frequency channels)
-    glo_enabled = 'GLO' in enabled
     center_freq = config.get('center_freq', F_L1)
-    if glo_enabled and sat_info and 'GLO' in sat_info:
+    if 'GLO' in enabled and sat_info and 'GLO' in sat_info:
         glo_visible = {sv: info for sv, info in sat_info['GLO'].items() if info['visible']}
         if glo_visible:
-            glo_res = acquire_glonass_system(signal, sat_info['GLO'], center_freq,
-                                             sample_rate, NON_COHERENT_GLO, threshold)
+            res = acquire_glonass_system(signal, sat_info['GLO'], center_freq,
+                                         sample_rate, NON_COHERENT_GLO, threshold)
+            results_list.append(res)
 
     # ---- Summary ----
-    gps_n = len(gps_res['found']) if gps_res else 0
-    bds_n = len(bds_res['found']) if bds_res else 0
-    gal_n = len(gal_res['found']) if gal_res else 0
-    glo_n = len(glo_res['found']) if glo_res else 0
-    total_found = gps_n + bds_n + gal_n + glo_n
+    total_found = sum(len(r['found']) for r in results_list)
 
     print(f"\n{'=' * 60}")
     print(f"  SUMMARY")
     print(f"{'=' * 60}")
-    print(f"  GPS L1CA:    {gps_n} satellites")
-    print(f"  BeiDou B1C:  {bds_n} satellites")
-    print(f"  Galileo E1:  {gal_n} satellites")
-    print(f"  GLONASS G1:  {glo_n} satellites")
-    print(f"  TOTAL:       {total_found} satellites")
+    for res in results_list:
+        n = len(res['found'])
+        print(f"  {res['system']:14s} {n} satellites")
+    print(f"  {'TOTAL':14s} {total_found} satellites")
 
-    if gps_res and gps_res['found']:
-        sats_str = ', '.join(f'G{s["svid"]:02d}(z={s["zscore"]:.0f})' for s in sorted(gps_res['found'], key=lambda x: -x['zscore']))
-        print(f"\n  GPS: {sats_str}")
-    if bds_res and bds_res['found']:
-        sats_str = ', '.join(f'C{s["svid"]:02d}(z={s["zscore"]:.0f})' for s in sorted(bds_res['found'], key=lambda x: -x['zscore']))
-        print(f"  BDS: {sats_str}")
-    if gal_res and gal_res['found']:
-        sats_str = ', '.join(f'E{s["svid"]:02d}(z={s["zscore"]:.0f})' for s in sorted(gal_res['found'], key=lambda x: -x['zscore']))
-        print(f"  GAL: {sats_str}")
-    if glo_res and glo_res['found']:
-        sats_str = ', '.join(f'R{s["svid"]:02d}(k={s.get("freq_num", 0):+d},z={s["zscore"]:.0f})' for s in sorted(glo_res['found'], key=lambda x: -x['zscore']))
-        print(f"  GLO: {sats_str}")
+    for res in results_list:
+        if res['found']:
+            prefix = SYS_PREFIX.get(res['system'], ('?', ''))[0]
+            if 'GLO' in res['system']:
+                sats_str = ', '.join(
+                    f'{prefix}{s["svid"]:02d}(k={s.get("freq_num", 0):+d},z={s["zscore"]:.0f})'
+                    for s in sorted(res['found'], key=lambda x: -x['zscore']))
+            else:
+                sats_str = ', '.join(
+                    f'{prefix}{s["svid"]:02d}(z={s["zscore"]:.0f})'
+                    for s in sorted(res['found'], key=lambda x: -x['zscore']))
+            print(f"\n  {res['system']}: {sats_str}")
 
     # ---- Generate report ----
     output_path = args.output or 'generated_files/verification_report.pdf'
@@ -1479,7 +1698,7 @@ def main():
     print(f"\nGenerating report: {output_path}")
     try:
         generate_report(args.iq_file, signal, sample_rate, rms_values,
-                        [gps_res, bds_res, gal_res, glo_res],
+                        results_list,
                         sat_info, config, output_path, threshold)
     except Exception as e:
         print(f"  Error: {e}")
