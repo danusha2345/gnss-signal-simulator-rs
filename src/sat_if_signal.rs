@@ -10,7 +10,7 @@ use crate::complex_number::ComplexNumber;
 use crate::constants::*;
 use crate::fastmath::FastMath;
 use crate::prngenerate::*;
-use crate::satellite_param::{get_carrier_phase, get_transmit_time, get_travel_time};
+use crate::satellite_param::{get_carrier_phase, get_doppler, get_transmit_time, get_travel_time};
 use crate::satellite_signal::SatelliteSignal;
 use crate::types::{GnssSystem, GnssTime, SatelliteParam};
 use wide::f64x4; // SIMD векторизация для 4 элементов за раз
@@ -140,6 +140,12 @@ impl ComputationCache {
             || sample_number != self.last_sample_number
     }
 
+    /// Invalidate cache to force recalculation on next access
+    pub fn invalidate(&mut self) {
+        self.is_valid = false;
+        self.last_cn0 = -9999.0;
+    }
+
     /// Обновляет кэш вычислений
     pub fn update(&mut self, cn0: f64, sample_number: i32, if_freq: f64, chip_rate: f64) {
         // ФИЗИЧЕСКИ КОРРЕКТНАЯ ФОРМУЛА АМПЛИТУДЫ
@@ -205,9 +211,9 @@ impl CarrierPhaseCache {
 pub struct SatIfSignal {
     sample_number: i32,
     if_freq: i32,
-    system: GnssSystem,
-    signal_index: i32,
-    svid: i32,
+    pub system: GnssSystem,
+    pub signal_index: i32,
+    pub svid: i32,
     pub sample_array: Vec<ComplexNumber>,
     /// Буфер для потоковой обработки блоков данных (память-эффективно)
     pub block_data: Option<Vec<ComplexNumber>>,
@@ -223,6 +229,7 @@ pub struct SatIfSignal {
     end_transmit_time: GnssTime,
     data_signal: ComplexNumber,
     pilot_signal: ComplexNumber,
+    last_nav_bit_index: i32,
     // НОВЫЕ КЭШИ ДЛЯ АГРЕССИВНОЙ ОПТИМИЗАЦИИ
     prn_cache: PrnCache,
     carrier_phase_cache: Option<CarrierPhaseCache>,
@@ -279,6 +286,7 @@ impl SatIfSignal {
             end_transmit_time: GnssTime::default(),
             data_signal: ComplexNumber::new(),
             pilot_signal: ComplexNumber::new(),
+            last_nav_bit_index: -1,
             // Инициализация кэшей
             prn_cache: PrnCache::new(),
             carrier_phase_cache: None, // Будет инициализирован при первом использовании
@@ -321,6 +329,73 @@ impl SatIfSignal {
             &mut self.data_signal,
             &mut self.pilot_signal,
         );
+    }
+
+    /// Update satellite parameters (position, velocity, doppler) from recalculated SatelliteParam.
+    /// Called periodically during signal generation to keep Doppler and code delay current.
+    /// Re-anchors carrier phase and transmit time like SignalSim's per-ms update.
+    pub fn update_satellite_params(&mut self, new_param: &SatelliteParam, output_center_freq: f64, cur_time: &GnssTime) {
+        // Update the stored satellite parameter
+        self.sat_param = Some(*new_param);
+
+        // if_freq — статический offset (без Допплера)
+        let signal_center_freq = self.get_signal_center_freq();
+        self.if_freq = (signal_center_freq - output_center_freq) as i32;
+
+        // Re-anchor carrier phase to true value (like SignalSim: StartCarrierPhase = EndCarrierPhase)
+        // This prevents carrier phase drift from accumulating across blocks
+        self.start_carrier_phase = get_carrier_phase(new_param, self.signal_index as usize);
+
+        // Re-anchor transmit time for correct code phase base
+        let travel_time = get_travel_time(new_param, self.signal_index as usize);
+        self.start_transmit_time = get_transmit_time(cur_time, travel_time);
+        self.signal_time = self.start_transmit_time;
+
+        // Reset nav bit index to force re-evaluation with new timing
+        self.last_nav_bit_index = -1;
+
+        // Invalidate computation cache to force recalculation with new amplitude
+        self.computation_cache.invalidate();
+    }
+
+    /// Get the RF center frequency for this signal (Hz), accounting for GLONASS FDMA offset.
+    fn get_signal_center_freq(&self) -> f64 {
+        match self.system {
+            GnssSystem::GlonassSystem => {
+                let freq_id = self.sat_param.as_ref().map(|p| p.FreqID).unwrap_or(0);
+                match self.signal_index as usize {
+                    SIGNAL_INDEX_G1 => FREQ_GLO_G1 + freq_id as f64 * 562500.0,
+                    SIGNAL_INDEX_G2 => FREQ_GLO_G2 + freq_id as f64 * 437500.0,
+                    _ => 0.0,
+                }
+            }
+            _ => {
+                // Map global signal_index to per-system freq_array_index
+                let freq_array_index = match self.signal_index as usize {
+                    // GPS: signal indices 0-4 map directly
+                    SIGNAL_INDEX_L1CA => 0,
+                    SIGNAL_INDEX_L1C => 1,
+                    SIGNAL_INDEX_L2C => 2,
+                    SIGNAL_INDEX_L2P => 3,
+                    SIGNAL_INDEX_L5 => 4,
+                    // BDS: signal indices 8-14 map to 0-6
+                    SIGNAL_INDEX_B1C => 0,
+                    SIGNAL_INDEX_B1I => 1,
+                    SIGNAL_INDEX_B2I => 2,
+                    SIGNAL_INDEX_B3I => 3,
+                    SIGNAL_INDEX_B2A => 4,
+                    SIGNAL_INDEX_B2B => 5,
+                    SIGNAL_INDEX_B2AB => 6,
+                    // GAL: signal indices 16-20 map to 0,1,2,_,4
+                    SIGNAL_INDEX_E1 => 0,
+                    SIGNAL_INDEX_E5A => 1,
+                    SIGNAL_INDEX_E5B => 2,
+                    SIGNAL_INDEX_E6 => 4,
+                    _ => 0,
+                };
+                SIGNAL_CENTER_FREQ[self.system as usize][freq_array_index.min(7)]
+            }
+        }
     }
 
     // SMART CACHING: Navigation bits change every 20ms, PRN codes every 1ms
@@ -419,6 +494,7 @@ impl SatIfSignal {
             get_travel_time(p_sat_param, self.signal_index as usize),
         );
 
+        // if_freq = статический offset (без Допплера). Допплер из get_carrier_phase().
         let mut phase_step =
             (self.start_carrier_phase - self.end_carrier_phase) / (self.sample_number as f64);
         phase_step += (self.if_freq as f64) / 1000.0 / (self.sample_number as f64);
@@ -748,8 +824,6 @@ impl SatIfSignal {
         cur_time: GnssTime,
         avx512_processor: &crate::avx512_intrinsics::SafeAvx512Processor,
     ) {
-        use crate::avx512_intrinsics::Avx512Accelerator;
-
         // Если AVX-512 недоступен, fallback на кэшированную версию.
         if !avx512_processor.is_available() {
             #[cfg(feature = "gpu")]
@@ -782,7 +856,28 @@ impl SatIfSignal {
             return;
         };
 
-        // СУПЕР-БЫСТРАЯ подготовка параметров (те же что и в кэшированной версии)
+        // Compute actual transmit time for nav bit indexing (MUST use transmit time, not receiver time!)
+        let travel_time = get_travel_time(p_sat_param, self.signal_index as usize);
+        let actual_transmit_time = get_transmit_time(&cur_time, travel_time);
+
+        // Update navigation bits at bit boundaries using TRANSMIT time (GPS L1CA: 20ms bit period)
+        {
+            let bit_period_ms = self.satellite_signal.attribute.code_length
+                * self.satellite_signal.attribute.nh_length;
+            if bit_period_ms > 0 {
+                let transmit_ms = actual_transmit_time.MilliSeconds;
+                let current_bit_idx = transmit_ms / bit_period_ms;
+                if current_bit_idx != self.last_nav_bit_index {
+                    self.satellite_signal.get_satellite_signal(
+                        actual_transmit_time,
+                        &mut self.data_signal,
+                        &mut self.pilot_signal,
+                    );
+                    self.last_nav_bit_index = current_bit_idx;
+                }
+            }
+        }
+
         let code_attribute = self.prn_sequence.attribute.as_ref().unwrap();
         let chip_rate = code_attribute.chip_rate as f64;
 
@@ -802,7 +897,6 @@ impl SatIfSignal {
         let base_chip_offset = (ms_offset as f64) * self.computation_cache.cached_chip_rate;
         let amp = self.computation_cache.cached_amp;
         let code_step = self.computation_cache.cached_code_step;
-        let phase_step = self.computation_cache.cached_phase_step;
         let nav_value = {
             let r = self.data_signal.real;
             let i = self.data_signal.imag;
@@ -813,125 +907,41 @@ impl SatIfSignal {
             }
         };
 
-        // Подготовка PRN и carrier кэшей
+        // Подготовка PRN кэша
         if let Some(data_prn) = &self.prn_sequence.data_prn {
             if self.prn_cache.needs_update(cur_time.MilliSeconds) {
                 self.prn_cache.update_cache(data_prn, cur_time.MilliSeconds);
             }
         }
 
-        // Инвалидируем carrier cache если phase_step изменился (смена Допплера)
-        let need_new_carrier_cache = match &self.carrier_phase_cache {
-            Some(cache) => (cache.phase_step - phase_step).abs() > 1e-15,
-            None => true,
-        };
-        if need_new_carrier_cache {
-            self.carrier_phase_cache = Some(CarrierPhaseCache::new(
-                self.sample_number as usize,
-                phase_step,
-            ));
-        }
+        // === НЕПРЕРЫВНАЯ ФАЗА НЕСУЩЕЙ ===
+        // Допплер из get_doppler() (а не из разницы get_carrier_phase())
+        let doppler_hz = get_doppler(p_sat_param, self.signal_index as usize);
+        let doppler_cycles_per_ms = doppler_hz / 1000.0;
+        let phase_step_continuous = (doppler_cycles_per_ms + (self.if_freq as f64) / 1000.0)
+            / (self.sample_number as f64);
+        let mut cur_phase = self.start_carrier_phase - self.start_carrier_phase.floor();
+        cur_phase = 1.0 - cur_phase;
+        self.start_carrier_phase -= doppler_cycles_per_ms;
 
-        // GPU OFFLOAD: Если доступен CUDA и включена фича `gpu`, выполняем всю миллисекунду на GPU
-        #[cfg(feature = "gpu")]
-        if CudaGnssAccelerator::is_available() {
-            if let Some(ref carrier_cache) = self.carrier_phase_cache {
-                let len = self.sample_number as usize;
-                // Подготовка входных векторов для GPU за один проход
-                let mut a_real = vec![0.0f32; len]; // PRN * NAV * AMP
-                let a_imag = vec![0.0f32; len]; // нули
-                let mut b_real = vec![0.0f32; len]; // cos
-                let mut b_imag = vec![0.0f32; len]; // sin
+        // Генерация сэмплов с непрерывной фазой несущей (GPS L1CA only path)
+        let two_pi = std::f64::consts::TAU;
+        for i in 0..self.sample_number as usize {
+            let chip_offset = base_chip_offset + (i as f64) * code_step;
+            let chip_index = (chip_offset as usize) & 0x3FF; // GPS L1CA: 1023 chips, & 0x3FF OK
 
-                let scale = (amp * nav_value) as f32;
-                for i in 0..len {
-                    let chip_offset = base_chip_offset + (i as f64) * code_step;
-                    let chip_index = (chip_offset as usize) & 0x3FF;
-                    a_real[i] = (self.prn_cache.get_prn_bit(chip_index) as f32) * scale;
-                    b_real[i] = carrier_cache.cached_cos[i] as f32;
-                    b_imag[i] = carrier_cache.cached_sin[i] as f32;
-                }
+            let prn_bit = self.prn_cache.get_prn_bit(chip_index);
 
-                if let Ok(cuda) = CudaGnssAccelerator::new() {
-                    if let Ok((out_i, out_q)) =
-                        cuda.complex_signal_processing_gpu(&a_real, &a_imag, &b_real, &b_imag)
-                    {
-                        for i in 0..len {
-                            self.sample_array[i].real = out_i[i] as f64;
-                            self.sample_array[i].imag = out_q[i] as f64;
-                        }
-                        return; // Успешно обработали на GPU, выходим
-                    }
-                }
-                // Если что-то пошло не так с GPU — продолжаем на AVX-512 ниже
-            }
-        }
+            // Carrier modulation with CONTINUOUS phase
+            let phase = cur_phase * two_pi;
+            let cos_val = phase.cos();
+            let sin_val = phase.sin();
+            cur_phase += phase_step_continuous;
 
-        // РЕВОЛЮЦИЯ AVX-512: Обрабатываем 16 сэмплов одновременно!
-        if let Some(ref carrier_cache) = self.carrier_phase_cache {
-            let samples_per_group = 16; // AVX-512 обрабатывает 16 float32 одновременно
-            let full_groups = (self.sample_number as usize) / samples_per_group;
-
-            // ОПТИМИЗАЦИЯ ПАМЯТИ: Предаллоцированные буферы для AVX-512 (устранение аллокаций в цикле)
-            let mut prn_data = vec![0.0f32; samples_per_group];
-            let mut carrier_cos = vec![0.0f32; samples_per_group];
-            let mut carrier_sin = vec![0.0f32; samples_per_group];
-            let mut output_i = vec![0.0f32; samples_per_group];
-            let mut output_q = vec![0.0f32; samples_per_group];
-
-            // МЕГА-УСКОРЕНИЕ: Векторизованная обработка групп по 16 элементов
-            for group in 0..full_groups {
-                let base_idx = group * samples_per_group;
-
-                // Подготовка данных для AVX-512 векторизации
-                for i in 0..samples_per_group {
-                    let sample_idx = base_idx + i;
-                    let chip_offset = base_chip_offset + (sample_idx as f64) * code_step;
-                    let chip_index = (chip_offset as usize) & 0x3FF; // Быстрая битовая операция
-
-                    prn_data[i] = self.prn_cache.get_prn_bit(chip_index) as f32;
-                    carrier_cos[i] = carrier_cache.cached_cos[sample_idx] as f32;
-                    carrier_sin[i] = carrier_cache.cached_sin[sample_idx] as f32;
-                }
-
-                // РЕВОЛЮЦИЯ! AVX-512 массовая обработка 16 сэмплов одновременно!
-                // Используем предаллоцированные буферы (убрали дублирование)
-
-                unsafe {
-                    // Используем наши супер-быстрые AVX-512 инструкции
-                    Avx512Accelerator::complex_multiply_prn_carrier_avx512(
-                        &prn_data,
-                        &carrier_cos,
-                        &carrier_sin,
-                        &mut output_i,
-                        &mut output_q,
-                        amp as f32 * nav_value as f32,
-                    );
-                }
-
-                // Записываем результаты обратно в массив сэмплов
-                for i in 0..samples_per_group {
-                    let sample_idx = base_idx + i;
-                    if sample_idx < self.sample_array.len() {
-                        self.sample_array[sample_idx].real = output_i[i] as f64;
-                        self.sample_array[sample_idx].imag = output_q[i] as f64;
-                    }
-                }
-            }
-
-            // Обрабатываем оставшиеся сэмплы обычным способом (если есть)
-            let remaining_start = full_groups * samples_per_group;
-            for i in remaining_start..(self.sample_number as usize) {
-                let chip_offset = base_chip_offset + (i as f64) * code_step;
-                let chip_index = (chip_offset as usize) & 0x3FF;
-
-                let prn_bit = self.prn_cache.get_prn_bit(chip_index);
-                let cos_val = carrier_cache.cached_cos[i];
-                let sin_val = carrier_cache.cached_sin[i];
-
-                self.sample_array[i].real = amp * prn_bit * cos_val * nav_value;
-                self.sample_array[i].imag = amp * prn_bit * sin_val * nav_value;
-            }
+            self.sample_array[i] = ComplexNumber {
+                real: prn_bit * nav_value * cos_val * amp,
+                imag: prn_bit * nav_value * sin_val * amp,
+            };
         }
     }
 
@@ -1143,6 +1153,29 @@ impl SatIfSignal {
             return;
         };
 
+        // Compute actual transmit time for nav bit indexing (MUST use transmit time, not receiver time!)
+        // SignalSim: nav bits keyed off StartTransmitTime (transmit time coordinates)
+        let travel_time = get_travel_time(p_sat_param, self.signal_index as usize);
+        let actual_transmit_time = get_transmit_time(&cur_time, travel_time);
+
+        // Update navigation bits at bit boundaries using TRANSMIT time
+        {
+            let bit_period_ms = self.satellite_signal.attribute.code_length
+                * self.satellite_signal.attribute.nh_length;
+            if bit_period_ms > 0 {
+                let transmit_ms = actual_transmit_time.MilliSeconds;
+                let current_bit_idx = transmit_ms / bit_period_ms;
+                if current_bit_idx != self.last_nav_bit_index {
+                    self.satellite_signal.get_satellite_signal(
+                        actual_transmit_time,
+                        &mut self.data_signal,
+                        &mut self.pilot_signal,
+                    );
+                    self.last_nav_bit_index = current_bit_idx;
+                }
+            }
+        }
+
         let code_attribute = self.prn_sequence.attribute.as_ref().unwrap();
         let chip_rate = code_attribute.chip_rate as f64;
 
@@ -1162,7 +1195,6 @@ impl SatIfSignal {
         let base_chip_offset = (ms_offset as f64) * self.computation_cache.cached_chip_rate;
         let amp = self.computation_cache.cached_amp;
         let code_step = self.computation_cache.cached_code_step;
-        let phase_step = self.computation_cache.cached_phase_step;
         let nav_value = {
             let r = self.data_signal.real;
             let i = self.data_signal.imag;
@@ -1176,110 +1208,114 @@ impl SatIfSignal {
         // BOC flag для обработки subchip модуляции
         let is_boc = (code_attribute.attribute & PRN_ATTRIBUTE_BOC) != 0;
 
-        // Обновляем/инициализируем carrier cache
-        let need_new_carrier_cache = match &self.carrier_phase_cache {
-            Some(cache) => (cache.phase_step - phase_step).abs() > 1e-15,
-            None => true,
-        };
-        if need_new_carrier_cache {
-            self.carrier_phase_cache = Some(CarrierPhaseCache::new(
-                self.sample_number as usize,
-                phase_step,
-            ));
+        // === НЕПРЕРЫВНАЯ ФАЗА НЕСУЩЕЙ ===
+        // Допплер из get_doppler() (RelativeSpeed/wavelength) — НЕ из разницы get_carrier_phase(),
+        // т.к. sat_param обновляется раз в 1000мс, а не каждую мс как в SignalSim.
+        // if_freq = статический offset (signal_center - output_center), без Допплера.
+        let doppler_hz = get_doppler(p_sat_param, self.signal_index as usize);
+        let doppler_cycles_per_ms = doppler_hz / 1000.0;
+        let phase_step = (doppler_cycles_per_ms + (self.if_freq as f64) / 1000.0)
+            / (self.sample_number as f64);
+
+        let mut cur_phase = self.start_carrier_phase - self.start_carrier_phase.floor();
+        cur_phase = 1.0 - cur_phase;
+        // Advance carrier phase for next ms (carrier_phase decreases for positive Doppler)
+        self.start_carrier_phase -= doppler_cycles_per_ms;
+
+        // GLONASS half cycle compensation for odd frequency satellites
+        if p_sat_param.system == GnssSystem::GlonassSystem
+            && (p_sat_param.FreqID & 1) != 0
+            && (cur_time.MilliSeconds & 1) != 0
+        {
+            cur_phase += 0.5;
         }
 
         {
             // === КОРРЕКТНЫЙ ПУТЬ для ВСЕХ сигналов ===
-            // Использует % data_length (корректный modulo) вместо & 0x3FF (modulo 1024)
-            // & 0x3FF ломал GPS L1CA (1023 чипов): дрейф 1 чип/мс → декорреляция за 5 мс
-            // Для BOC-сигналов обрабатывает subchip модуляцию и pilot channel
-
             let data_length = self.data_length;
             let pilot_length = self.pilot_length;
             let is_cboc = (code_attribute.attribute & PRN_ATTRIBUTE_CBOC) != 0;
             let is_qmboc = (code_attribute.attribute & PRN_ATTRIBUTE_QMBOC) != 0;
             let pilot_nav = if self.pilot_signal.real >= 0.0 { 1.0 } else { -1.0 };
 
-            if let Some(ref carrier_cache) = self.carrier_phase_cache {
-                for i in 0..self.sample_number as usize {
-                    let chip_raw = (base_chip_offset + (i as f64) * code_step) as i32;
+            let two_pi = std::f64::consts::TAU;
 
-                    // --- Data channel ---
-                    let chip_mod = chip_raw.rem_euclid(data_length);
-                    let data_chip = if is_boc { (chip_mod >> 1) as usize } else { chip_mod as usize };
+            for i in 0..self.sample_number as usize {
+                let chip_raw = (base_chip_offset + (i as f64) * code_step) as i32;
 
-                    let mut val = if let Some(data_prn) = &self.prn_sequence.data_prn {
-                        if data_chip < data_prn.len() && data_prn[data_chip] != 0 {
-                            -nav_value
-                        } else {
-                            nav_value
-                        }
+                // --- Data channel ---
+                let chip_mod = chip_raw.rem_euclid(data_length);
+                let data_chip = if is_boc { (chip_mod >> 1) as usize } else { chip_mod as usize };
+
+                let mut val = if let Some(data_prn) = &self.prn_sequence.data_prn {
+                    if data_chip < data_prn.len() && data_prn[data_chip] != 0 {
+                        -nav_value
                     } else {
                         nav_value
-                    };
-
-                    // BOC subchip sign flip: нечётный subchip → инвертируем
-                    if is_boc && (chip_mod & 1) != 0 {
-                        val = -val;
                     }
+                } else {
+                    nav_value
+                };
 
-                    // --- Pilot channel ---
-                    if let Some(pilot_prn) = &self.prn_sequence.pilot_prn {
-                        if pilot_length > 0 {
-                            let pilot_chip_mod = chip_raw.rem_euclid(pilot_length);
-                            let pilot_chip = if is_boc { (pilot_chip_mod >> 1) as usize } else { pilot_chip_mod as usize };
+                // BOC subchip sign flip
+                if is_boc && (chip_mod & 1) != 0 {
+                    val = -val;
+                }
 
-                            if pilot_chip < pilot_prn.len() {
-                                let mut pilot_val = if pilot_prn[pilot_chip] != 0 {
-                                    -pilot_nav
-                                } else {
-                                    pilot_nav
-                                };
+                // --- Pilot channel ---
+                if let Some(pilot_prn) = &self.prn_sequence.pilot_prn {
+                    if pilot_length > 0 {
+                        let pilot_chip_mod = chip_raw.rem_euclid(pilot_length);
+                        let pilot_chip = if is_boc { (pilot_chip_mod >> 1) as usize } else { pilot_chip_mod as usize };
 
-                                // BOC/QMBOC/CBOC pilot modulation
-                                if (is_qmboc || is_cboc) && is_boc {
-                                    // QMBOC/CBOC: в специальных позициях используется BOC(6,1),
-                                    // в остальных — BOC(1,1)
-                                    if is_qmboc {
-                                        let symbol_pos = (self.signal_time.MilliSeconds % 330) / 10;
-                                        if symbol_pos == 1 || symbol_pos == 5 || symbol_pos == 7 || symbol_pos == 30 {
-                                            let sub_chip_pos = chip_raw.rem_euclid(12);
-                                            if sub_chip_pos >= 6 {
-                                                pilot_val = -pilot_val;
-                                            }
-                                        } else if (pilot_chip_mod & 1) != 0 {
+                        if pilot_chip < pilot_prn.len() {
+                            let mut pilot_val = if pilot_prn[pilot_chip] != 0 {
+                                -pilot_nav
+                            } else {
+                                pilot_nav
+                            };
+
+                            if (is_qmboc || is_cboc) && is_boc {
+                                if is_qmboc {
+                                    let symbol_pos = (self.signal_time.MilliSeconds % 330) / 10;
+                                    if symbol_pos == 1 || symbol_pos == 5 || symbol_pos == 7 || symbol_pos == 30 {
+                                        let sub_chip_pos = chip_raw.rem_euclid(12);
+                                        if sub_chip_pos >= 6 {
                                             pilot_val = -pilot_val;
                                         }
-                                    } else {
-                                        // CBOC(6,1,1/11) for Galileo E1
-                                        let chip_in_code = chip_raw.rem_euclid(4092);
-                                        if (chip_in_code % 11) == 0 {
-                                            let boc6_phase = chip_raw.rem_euclid(12);
-                                            if boc6_phase >= 6 {
-                                                pilot_val = -pilot_val;
-                                            }
-                                        } else if (pilot_chip_mod & 1) != 0 {
-                                            pilot_val = -pilot_val;
-                                        }
+                                    } else if (pilot_chip_mod & 1) != 0 {
+                                        pilot_val = -pilot_val;
                                     }
-                                } else if is_boc && (pilot_chip_mod & 1) != 0 {
-                                    pilot_val = -pilot_val;
+                                } else {
+                                    let chip_in_code = chip_raw.rem_euclid(4092);
+                                    if (chip_in_code % 11) == 0 {
+                                        let boc6_phase = chip_raw.rem_euclid(12);
+                                        if boc6_phase >= 6 {
+                                            pilot_val = -pilot_val;
+                                        }
+                                    } else if (pilot_chip_mod & 1) != 0 {
+                                        pilot_val = -pilot_val;
+                                    }
                                 }
-
-                                val += pilot_val;
+                            } else if is_boc && (pilot_chip_mod & 1) != 0 {
+                                pilot_val = -pilot_val;
                             }
+
+                            val += pilot_val;
                         }
                     }
-
-                    // Carrier modulation
-                    let cos_val = carrier_cache.cached_cos[i];
-                    let sin_val = carrier_cache.cached_sin[i];
-
-                    self.sample_array[i] = ComplexNumber {
-                        real: val * cos_val * amp,
-                        imag: val * sin_val * amp,
-                    };
                 }
+
+                // Carrier modulation with CONTINUOUS phase
+                let phase = cur_phase * two_pi;
+                let cos_val = phase.cos();
+                let sin_val = phase.sin();
+                cur_phase += phase_step;
+
+                self.sample_array[i] = ComplexNumber {
+                    real: val * cos_val * amp,
+                    imag: val * sin_val * amp,
+                };
             }
         }
     }

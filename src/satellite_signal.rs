@@ -143,7 +143,7 @@ pub struct SatelliteSignal {
     secondary_code: u32,
     #[allow(dead_code)]
     secondary_length: i32,
-    attribute: &'static SignalAttribute,
+    pub attribute: &'static SignalAttribute,
 }
 
 impl Default for SatelliteSignal {
@@ -387,7 +387,7 @@ impl SatelliteSignal {
                         0
                     };
                     let mut data_bits_i32 = [0; 4096];
-                    nav_data.get_frame_data(transmit_time, self.svid, param, &mut data_bits_i32);
+                    nav_data.get_frame_data(transmit_time_adj, self.svid, param, &mut data_bits_i32);
 
                     // DEBUG: Проверка навигационных данных
                     let _non_zero_count = data_bits_i32.iter().filter(|&&x| x != 0).count();

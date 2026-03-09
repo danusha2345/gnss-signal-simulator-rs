@@ -47,7 +47,6 @@ use crate::nav_data::NavData as UnifiedNavData;
 use crate::navdata::NavDataType;
 use crate::powercontrol::{CPowerControl, SignalPower};
 use crate::pvt;
-use crate::satellite_param::get_doppler;
 use crate::trajectory::CTrajectory;
 use crate::types::SatelliteParam;
 use crate::{
@@ -2379,7 +2378,7 @@ impl IFDataGen {
         );
 
         // СТРАТЕГИЯ: Обрабатываем по блокам 1000ms (1 секунда)
-        const BLOCK_SIZE_MS: i32 = 1000;
+        const BLOCK_SIZE_MS: i32 = 50; // 50ms blocks for smooth carrier phase (SignalSim updates every 1ms)
         let estimated_mb_total =
             (total_duration_ms as f64 * samples_per_ms as f64 * 2.0) / (1024.0 * 1024.0);
         println!(
@@ -2459,8 +2458,47 @@ impl IFDataGen {
 
             let block_start_time = start_time_gnss.add_milliseconds(block_start_ms as f64);
 
-            // РЕВОЛЮЦИЯ! Каждый спутник работает параллельно на блок времени
-            // Убираем промежуточные сообщения для чистого вывода
+            // Dynamic satellite parameter update: recalculate positions, velocities,
+            // Doppler shifts every block (1000ms) to track orbital motion
+            if block_idx > 0 {
+                let position_ecef = lla_to_ecef(&self.start_pos);
+                self.update_sat_param_list(block_start_time, position_ecef, 0, &[], None);
+
+                // Push updated parameters into each SatIfSignal
+                let center_freq = self.output_param.CenterFreq as f64;
+                for sig_option in sat_if_signals.iter_mut() {
+                    if let Some(ref mut sig) = sig_option {
+                        let param_ref = match sig.system {
+                            GnssSystem::GpsSystem => {
+                                if sig.svid > 0 && (sig.svid as usize) <= TOTAL_GPS_SAT {
+                                    Some(&self.gps_sat_param[sig.svid as usize - 1])
+                                } else { None }
+                            }
+                            GnssSystem::BdsSystem => {
+                                if sig.svid > 0 && (sig.svid as usize) <= TOTAL_BDS_SAT {
+                                    Some(&self.bds_sat_param[sig.svid as usize - 1])
+                                } else { None }
+                            }
+                            GnssSystem::GalileoSystem => {
+                                if sig.svid > 0 && (sig.svid as usize) <= TOTAL_GAL_SAT {
+                                    Some(&self.gal_sat_param[sig.svid as usize - 1])
+                                } else { None }
+                            }
+                            GnssSystem::GlonassSystem => {
+                                if sig.svid > 0 && (sig.svid as usize) <= TOTAL_GLO_SAT {
+                                    Some(&self.glo_sat_param[sig.svid as usize - 1])
+                                } else { None }
+                            }
+                            _ => None,
+                        };
+                        if let Some(new_param) = param_ref {
+                            sig.update_satellite_params(new_param, center_freq, &block_start_time);
+                        }
+                    }
+                }
+            }
+
+            // Каждый спутник работает параллельно на блок времени
             let generation_start = std::time::Instant::now();
 
             // Используем Rayon для параллельной обработки каждого спутника
@@ -3525,58 +3563,95 @@ impl IFDataGen {
         sat_number
     }
 
+    /// Recalculate satellite positions, velocities, Doppler shifts, and ionospheric delays
+    /// for all visible satellites at the given time. This keeps parameters current as
+    /// satellites move along their orbits during signal generation.
     fn update_sat_param_list(
         &mut self,
         cur_time: GnssTime,
         _cur_pos: KinematicInfo,
-        list_count: usize,
-        power_list: &[SignalPower],
+        _list_count: usize,
+        _power_list: &[SignalPower],
         _iono_param: Option<&IonoParam>,
     ) {
-        // Обновление параметров спутников на основе текущего времени и позиции
+        // Convert receiver LLA position to ECEF for satellite parameter computation
+        let position_ecef = lla_to_ecef(&self.start_pos);
+        let position_lla = self.start_pos;
 
-        // Обновляем параметры GPS спутников
+        let default_iono = IonoParam {
+            a0: 0.0, a1: 0.0, a2: 0.0, a3: 0.0,
+            b0: 0.0, b1: 0.0, b2: 0.0, b3: 0.0,
+            flag: 0,
+        };
+
+        // Update GPS satellite parameters
+        let gps_iono = self.nav_data.get_gps_iono().cloned().unwrap_or(default_iono);
+        let gps_time = cur_time;
         for i in 0..self.gps_sat_number {
-            if let Some(ref mut _eph) = self.gps_eph_visible[i] {
-                // Обновляем орбитальные параметры
-                let _sat_pos = [0.0; 3];
-                let _sat_speed = [0.0; 3];
-                let _clock_correction = 0.0;
-
-                // Рассчитываем позицию и скорость спутника
-                // Вызов через публичные функции из satellite_param модуля
-                // (satellite_param::gps_sat_pos_speed_eph, satellite_param::gps_iono_delay)
-                // Для полной реализации необходимо сделать эти функции публичными
+            if let Some(ref eph) = self.gps_eph_visible[i] {
+                let svid = eph.svid as usize;
+                if svid > 0 && svid <= TOTAL_GPS_SAT {
+                    crate::satellite_param::get_satellite_param(
+                        &position_ecef, &position_lla, &gps_time,
+                        GnssSystem::GpsSystem, eph, &gps_iono,
+                        &mut self.gps_sat_param[svid - 1],
+                    );
+                }
             }
         }
 
-        // Обновляем параметры GLONASS спутников
+        // Update BeiDou satellite parameters (BDT time)
+        let bds_iono = self.nav_data.get_bds_iono()
+            .or(self.nav_data.get_gps_iono())
+            .cloned()
+            .unwrap_or(default_iono);
+        let utc_now = crate::gnsstime::gps_time_to_utc(cur_time, true);
+        let bds_time = crate::gnsstime::utc_to_bds_time(utc_now);
+        for i in 0..self.bds_sat_number {
+            if let Some(ref eph) = self.bds_eph_visible[i] {
+                let svid = eph.svid as usize;
+                if svid > 0 && svid <= TOTAL_BDS_SAT {
+                    crate::satellite_param::get_satellite_param(
+                        &position_ecef, &position_lla, &bds_time,
+                        GnssSystem::BdsSystem, eph, &bds_iono,
+                        &mut self.bds_sat_param[svid - 1],
+                    );
+                }
+            }
+        }
+
+        // Update Galileo satellite parameters (GST time)
+        let gal_iono = self.nav_data.get_galileo_iono()
+            .or(self.nav_data.get_gps_iono())
+            .cloned()
+            .unwrap_or(default_iono);
+        let gal_time = crate::gnsstime::utc_to_galileo_time(utc_now);
+        for i in 0..self.gal_sat_number {
+            if let Some(ref eph) = self.gal_eph_visible[i] {
+                let svid = eph.svid as usize;
+                if svid > 0 && svid <= TOTAL_GAL_SAT {
+                    crate::satellite_param::get_satellite_param(
+                        &position_ecef, &position_lla, &gal_time,
+                        GnssSystem::GalileoSystem, eph, &gal_iono,
+                        &mut self.gal_sat_param[svid - 1],
+                    );
+                }
+            }
+        }
+
+        // Update GLONASS satellite parameters (GLONASS time via UTC conversion)
+        let glo_iono = self.nav_data.get_gps_iono().cloned().unwrap_or(default_iono);
+        let glonass_time = crate::gnsstime::utc_to_glonass_time_corrected(utc_now);
         for i in 0..self.glo_sat_number {
-            if let Some(ref mut _eph) = self.glo_eph_visible[i] {
-                let _sat_pos = [0.0; 3];
-                let _sat_speed = [0.0; 3];
-                let _clock_correction = 0.0;
-
-                // Создаем GLONASS время из GPS времени
-                let _glonass_time = GlonassTime {
-                    LeapYear: 2023, // Placeholder год
-                    Day: cur_time.Week * 7 + (cur_time.MilliSeconds / (24 * 60 * 60 * 1000)),
-                    MilliSeconds: (cur_time.MilliSeconds % (24 * 60 * 60 * 1000)),
-                    SubMilliSeconds: 0.0,
-                };
-
-                // Рассчитываем позицию GLONASS спутника
-                // Вызов satellite_param::glonass_sat_pos_speed_eph для полной реализации
-            }
-        }
-
-        // Обновляем мощность сигналов из списка управления мощностью
-        if list_count > 0 && !power_list.is_empty() {
-            // Применяем настройки мощности к видимым спутникам
-            for i in 0..list_count.min(power_list.len()) {
-                let _power = &power_list[i];
-                // Обновляем мощности сигналов для соответствующих спутников
-                // (детальная реализация зависит от структуры PowerControl)
+            if let Some(ref eph) = self.glo_eph_visible[i] {
+                let n = eph.n as usize;
+                if n > 0 && n <= TOTAL_GLO_SAT {
+                    crate::satellite_param::get_glonass_satellite_param(
+                        &position_ecef, &position_lla, &glonass_time,
+                        eph, &glo_iono,
+                        &mut self.glo_sat_param[n - 1],
+                    );
+                }
             }
         }
     }
@@ -3707,11 +3782,9 @@ impl IFDataGen {
                     {
                         let center_freq =
                             SIGNAL_CENTER_FREQ[GnssSystem::GpsSystem as usize][signal_index.min(7)];
-                        // Добавляем Doppler для создания реальной IF частоты
-                        let doppler =
-                            get_doppler(&self.gps_sat_param[eph.svid as usize - 1], signal_index);
+                        // Статический IF offset (как в SignalSim), Допплер учитывается через carrier phase
                         let if_freq =
-                            ((center_freq + doppler) - self.output_param.CenterFreq as f64) as i32;
+                            (center_freq - self.output_param.CenterFreq as f64) as i32;
                         if eph.svid <= 3 {
                             // Отладка для первых 3 спутников
                         }
@@ -3809,11 +3882,9 @@ impl IFDataGen {
                     {
                         let center_freq =
                             SIGNAL_CENTER_FREQ[GnssSystem::BdsSystem as usize][freq_array_index];
-                        // Добавляем Doppler для создания реальной IF частоты
-                        let doppler =
-                            get_doppler(&self.bds_sat_param[eph.svid as usize - 1], signal_index);
+                        // Статический IF offset (как в SignalSim), Допплер учитывается через carrier phase
                         let if_freq =
-                            ((center_freq + doppler) - self.output_param.CenterFreq as f64) as i32;
+                            (center_freq - self.output_param.CenterFreq as f64) as i32;
                         if eph.svid <= 3 {
                             // Отладка для первых 3 спутников
                         }
@@ -3907,11 +3978,9 @@ impl IFDataGen {
                     {
                         let center_freq = SIGNAL_CENTER_FREQ[GnssSystem::GalileoSystem as usize]
                             [freq_array_index.min(7)];
-                        // Добавляем Doppler для создания реальной IF частоты
-                        let doppler =
-                            get_doppler(&self.gal_sat_param[eph.svid as usize - 1], signal_index);
+                        // Статический IF offset (как в SignalSim), Допплер учитывается через carrier phase
                         let if_freq =
-                            ((center_freq + doppler) - self.output_param.CenterFreq as f64) as i32;
+                            (center_freq - self.output_param.CenterFreq as f64) as i32;
                         if eph.svid <= 3 {
                             // Отладка для первых 3 спутников
                         }
@@ -4006,13 +4075,10 @@ impl IFDataGen {
                         };
                         let center_freq = base + eph.freq as f64 * step;
 
-                        // Добавляем Допплер для реалистичной IF частоты
-                        let doppler = crate::satellite_param::get_doppler(
-                            &self.glo_sat_param[eph.n as usize - 1],
-                            signal_index,
-                        );
+                        // Статический IF offset (как в SignalSim), Допплер учитывается через carrier phase
+                        // Для GLONASS FDMA: offset включает k×562.5 кГц
                         let if_freq =
-                            ((center_freq + doppler) - self.output_param.CenterFreq as f64) as i32;
+                            (center_freq - self.output_param.CenterFreq as f64) as i32;
                         // SatIfSignal expects number of samples per millisecond, not Hz
                         let samples_per_ms = self.output_param.SampleFreq / 1000;
                         let mut new_signal = SatIfSignal::new(

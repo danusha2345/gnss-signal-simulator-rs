@@ -274,58 +274,35 @@ impl LNavBit {
     // Word1/2 removed, parity not included
     // 24 information bits occupies bit0~23 of each DWORD in Stream[]
     fn compose_gps_stream123(ephemeris: &GpsEphemeris, stream: &mut [[u32; 8]; 3]) -> i32 {
-        // subframe 1, Stream[0]~Stream[7] - МАКСИМАЛЬНАЯ ЗАПОЛНЕННОСТЬ
-        let int_value = (ephemeris.flag & 3) as i32;
-        stream[0][0] = Self::compose_bits(int_value, 12, 2);
-        let ura_val = (ephemeris.ura & 0xf) as i32;
-        stream[0][0] |= Self::compose_bits(ura_val, 8, 4);
-        stream[0][0] |= Self::compose_bits(ephemeris.health as i32, 2, 6);
-        let iodc_high = (ephemeris.iodc >> 8) as i32;
-        stream[0][0] |= Self::compose_bits(iodc_high, 0, 2);
-        // Добавляем ещё данные в слово 0 (биты 14-23)
-        stream[0][0] |= Self::compose_bits((ephemeris.svid & 0x3f) as i32, 16, 6);
-        stream[0][0] |= Self::compose_bits((ephemeris.flag >> 6) as i32, 14, 2);
-        let int_value = (ephemeris.flag >> 2) as i32;
-        stream[0][1] = Self::compose_bits(int_value, 23, 1);
-        // Добавляем WN (номер недели)
-        stream[0][1] |= Self::compose_bits(ephemeris.week as i32, 13, 10);
-        // Добавляем L2 Code и URA
-        stream[0][1] |= Self::compose_bits((ephemeris.flag & 3) as i32, 11, 2);
-        stream[0][1] |= Self::compose_bits(ephemeris.ura as i32, 7, 4);
-        // Добавляем SV health
-        stream[0][1] |= Self::compose_bits(ephemeris.health as i32, 1, 6);
-        // Дозаполняем слово 1 остальными битами
-        stream[0][1] |= Self::compose_bits(0x3F, 0, 1); // заполнитель
+        // === Subframe 1: Words 3-10 (stream[0][0]..stream[0][7]) ===
+        // Per GPS ICD-200, Word 3 bits 14-23 are WN (inserted by get_frame_data)
 
-        // Слово 2: IODC (младшие 8 бит) + TGD
-        stream[0][2] = Self::compose_bits((ephemeris.iodc & 0xFF) as i32, 16, 8);
-        stream[0][2] |= Self::compose_bits(Self::unscale_int(ephemeris.tgd, -31), 8, 8);
-        // Добавляем дополнительные параметры из tgd_ext
-        stream[0][2] |= Self::compose_bits(Self::unscale_int(ephemeris.tgd_ext[0], -31), 0, 8); // L2P TGD
+        // Word 3 (stream[0][0]): bits 0-13 only (WN in bits 14-23 added elsewhere)
+        stream[0][0] = Self::compose_bits((ephemeris.flag & 3) as i32, 12, 2);    // L2 code flag
+        stream[0][0] |= Self::compose_bits((ephemeris.ura & 0xf) as i32, 8, 4);   // URA index
+        stream[0][0] |= Self::compose_bits(ephemeris.health as i32, 2, 6);         // SV health
+        stream[0][0] |= Self::compose_bits((ephemeris.iodc >> 8) as i32, 0, 2);    // IODC MSB (2 bits)
 
-        // Слово 3: Time of Clock (toc) + дополнительные параметры часов
-        stream[0][3] = Self::compose_bits((ephemeris.toc as i32) >> 4, 8, 16); // Time of Clock
-        stream[0][3] |= Self::compose_bits(Self::unscale_int(ephemeris.af2, -55), 0, 8); // Clock drift rate
+        // Word 4 (stream[0][1]): L2P flag + reserved
+        stream[0][1] = Self::compose_bits(((ephemeris.flag >> 2) & 1) as i32, 23, 1);
 
-        // Слово 4: Clock parameters
-        stream[0][4] = Self::compose_bits(Self::unscale_int(ephemeris.af1, -43), 6, 16); // Clock drift
-        stream[0][4] |= Self::compose_bits(Self::unscale_int(ephemeris.af0, -31) >> 16, 0, 6); // Clock bias (high)
+        // Words 5-6 (stream[0][2], stream[0][3]): reserved
+        stream[0][2] = 0;
+        stream[0][3] = 0;
 
-        // Слово 5: Продолжение af0 + дополнительные TGD параметры
-        stream[0][5] = Self::compose_bits(Self::unscale_int(ephemeris.af0, -31) & 0xFFFF, 8, 16);
-        stream[0][5] |= Self::compose_bits(Self::unscale_int(ephemeris.tgd_ext[1], -31), 0, 8); // L2C TGD
+        // Word 7 (stream[0][4]): reserved(16 bits, 8-23) + TGD(8 bits, 0-7)
+        stream[0][4] = Self::compose_bits(Self::unscale_int(ephemeris.tgd, -31), 0, 8);
 
-        // Слово 6: Time of Prediction + производные параметры
-        stream[0][6] = Self::compose_bits(ephemeris.top, 8, 16); // Time of Prediction
-        stream[0][6] |= Self::compose_bits(Self::unscale_int(ephemeris.tgd_ext[2], -31), 0, 8); // L5 TGD
+        // Word 8 (stream[0][5]): IODC_LSB(8 bits, 16-23) + toc(16 bits, 0-15)
+        stream[0][5] = Self::compose_bits((ephemeris.iodc & 0xFF) as i32, 16, 8);
+        stream[0][5] |= Self::compose_bits(ephemeris.toc >> 4, 0, 16);
 
-        // Слово 7: Производные орбитальных параметров
-        stream[0][7] = Self::compose_bits(Self::unscale_int(ephemeris.axis_dot, -21), 8, 16); // Rate of Semi-Major Axis
-        stream[0][7] |= Self::compose_bits(
-            Self::unscale_int(ephemeris.delta_n_dot / PI, -51) >> 16,
-            0,
-            8,
-        ); // Rate of Mean Motion (high)
+        // Word 9 (stream[0][6]): af2(8 bits, 16-23) + af1(16 bits, 0-15)
+        stream[0][6] = Self::compose_bits(Self::unscale_int(ephemeris.af2, -55), 16, 8);
+        stream[0][6] |= Self::compose_bits(Self::unscale_int(ephemeris.af1, -43), 0, 16);
+
+        // Word 10 (stream[0][7]): af0(22 bits, 2-23) + spare(2 bits, 0-1)
+        stream[0][7] = Self::compose_bits(Self::unscale_int(ephemeris.af0, -31), 2, 22);
 
         // subframe 2, Stream[8]~Stream[15]
         stream[1][0] = Self::compose_bits(ephemeris.iode as i32, 16, 8);
