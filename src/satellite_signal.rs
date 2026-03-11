@@ -436,11 +436,11 @@ impl SatelliteSignal {
             data_bit = 1; // Should be handled by the time marker logic above
         }
 
-        if let Some((secondary_code, _)) =
+        if let Some((secondary_code, secondary_code_length)) =
             get_pilot_bits(self.sat_system, self.sat_signal as usize, self.svid)
         {
             let secondary_position = (transmit_time.MilliSeconds / self.attribute.code_length)
-                % secondary_code.len() as i32;
+                % secondary_code_length as i32;
             pilot_bit = if (secondary_code[(secondary_position / 32) as usize]
                 & (1 << (secondary_position & 0x1f)))
                 != 0
@@ -504,10 +504,10 @@ impl SatelliteSignal {
                 B1C => {
                     *data_signal = ComplexNumber {
                         real: 0.0,
-                        imag: -data_bit as f64 * AMPLITUDE_1_2,
+                        imag: -data_bit as f64 * AMPLITUDE_1_4,
                     };
                     *pilot_signal = ComplexNumber {
-                        real: pilot_bit as f64 * AMPLITUDE_1_2,
+                        real: pilot_bit as f64 * AMPLITUDE_3_4,
                         imag: 0.0,
                     };
                 }

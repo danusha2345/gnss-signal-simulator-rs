@@ -2446,13 +2446,13 @@ impl IFDataGen {
             let block_end_ms = std::cmp::min(block_start_ms + BLOCK_SIZE_MS, total_duration_ms);
             let block_duration_ms = block_end_ms - block_start_ms;
 
+            let progress_pct = (block_idx + 1) as f64 / num_blocks as f64 * 100.0;
             print!(
-                "\r📦 Блок {}/{}: {} - {} ms ({} ms)...",
+                "\r📦 {}/{} ({:.0}%) {} ms   ",
                 block_idx + 1,
                 num_blocks,
-                block_start_ms,
+                progress_pct,
                 block_end_ms,
-                block_duration_ms
             );
             std::io::stdout().flush().unwrap();
 
@@ -2636,10 +2636,13 @@ impl IFDataGen {
 
             let clipping_rate = clipped_in_block as f64 / block_samples as f64;
             if block_idx < 3 || (block_idx + 1) % 10 == 0 || clipping_rate > 0.01 {
-                println!(
-                    "[AGC] Block {}: RMS={:.3}, gain={:.3}, clip={:.2}%",
-                    block_idx, rms, agc_gain, clipping_rate * 100.0
+                let progress_pct = (block_idx + 1) as f64 / num_blocks as f64 * 100.0;
+                print!(
+                    "\r📦 {}/{} ({:.0}%) RMS={:.3} gain={:.3} clip={:.2}%          ",
+                    block_idx + 1, num_blocks, progress_pct,
+                    rms, agc_gain, clipping_rate * 100.0
                 );
+                std::io::stdout().flush().unwrap();
             }
 
             let write_duration = write_start.elapsed();

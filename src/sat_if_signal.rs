@@ -355,19 +355,24 @@ impl SatIfSignal {
     }
 
     /// Update satellite parameters (position, velocity, doppler) from recalculated SatelliteParam.
-    /// Called periodically during signal generation to keep Doppler and code delay current.
-    /// Hard re-anchor carrier and code phase every block (~50ms). The re-anchor error is
-    /// ~0.001 cycles / ~0.001 chips — negligible for PLL/DLL tracking.
+    /// Called every block (~50ms) to keep Doppler and code delay current.
+    ///
+    /// Carrier phase: NO hard re-anchor — phase accumulates continuously via Doppler
+    /// between updates (like C++ SignalSim updates every 1ms). Re-anchoring every 50ms
+    /// caused ~0.003 cycle phase jumps at 20 Hz — comparable to PLL thermal noise at 45 dB-Hz.
+    ///
+    /// Code phase: re-anchored from true transmit time (~0.001 chip jump, filtered by DLL).
     pub fn update_satellite_params(&mut self, new_param: &SatelliteParam, output_center_freq: f64, cur_time: &GnssTime) {
         self.sat_param = Some(*new_param);
 
         let signal_center_freq = self.get_signal_center_freq();
         self.if_freq = (signal_center_freq - output_center_freq) as i32;
 
-        // Hard re-anchor carrier phase (jump ~0.001 cycles — negligible for PLL)
-        self.start_carrier_phase = get_carrier_phase(new_param, self.signal_index as usize);
+        // Carrier phase: NO re-anchor — continuous Doppler accumulation.
+        // Only Doppler (from new sat_param) changes at block boundary = smooth frequency step.
+        // Phase itself never jumps. Accumulated drift ~0.003 cycles/block is harmless.
 
-        // Re-anchor code phase from true transmit time
+        // Re-anchor code phase from true transmit time (DLL filters the ~0.001 chip jump)
         let travel_time = get_travel_time(new_param, self.signal_index as usize);
         let new_transmit_time = get_transmit_time(cur_time, travel_time);
         if let Some(attr) = &self.prn_sequence.attribute {

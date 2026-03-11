@@ -377,3 +377,50 @@ Options:
 | E6 | 1278.75 | BPSK(5), 5115 memory | 11 MHz | 7 SVs | 7 | 270–299 |
 
 All Galileo bands now verified: **E1 + E5a + E5b + E6 = 4/4 bands, 100% satellite detection.**
+
+### Code Phase Continuity Fix (March 2026)
+
+**Critical bug**: `base_chip_offset` recalculated from `ms_offset * cached_chip_rate` every ms, where `signal_time` was reset at 50ms block boundaries. This caused a **~0.3 chip code phase jump** every 50ms — fatal for DLL tracking on real receivers.
+
+**Fix** in `src/sat_if_signal.rs`: Added `start_code_phase: f64` field — continuous code phase tracker mirroring C++ `CurChip` pattern:
+- Initialized from transmit time: `(ms % pilot_period + SubMs) * chip_rate`
+- Re-anchored every 50ms from true transmit time (~0.001 chip error)
+- Advanced by `cached_chip_rate` per ms with `pilot_length` wrapping
+- Used as `base_chip_offset` in both `get_if_sample_cached()` and `get_if_sample_avx512_accelerated()`
+- Carrier phase reverted from soft threshold back to hard re-anchor (0.001 cycle error — negligible)
+- Restored `last_nav_bit_index = -1` and `computation_cache.invalidate()` on param update
+
+**Python verifier**: z-scores improved significantly (GPS L1CA: 236–308 vs prior 58–88).
+
+### Real Receiver Test Results (March 2026)
+
+**Test**: 300s signal, Moscow Red Square, GPS L1CA+L1C + BDS B1C + GAL E1, 5 MHz.
+
+| System | Status | Details |
+|--------|--------|---------|
+| Galileo E1 | Partial acquisition | Satellites appeared in acquisition but **no azimuth/elevation data** — tracking not sustained |
+| GPS L1CA | Intermittent | Satellites appeared and disappeared — **not stable tracking** |
+| BeiDou B1C | Not detected | Zero satellites acquired |
+| **Fix** | **None** | No position fix obtained |
+
+**Root causes identified and fixed (March 2026):**
+
+1. **Secondary code length bug** (`src/satellite_signal.rs:439-443`):
+   - `get_pilot_bits()` returns `(code_array, bit_length)` but `bit_length` was discarded with `_`
+   - Code used `.len()` (u32 word count) instead of actual bit count for modulo
+   - **Galileo E1**: `% 1 = 0` → pilot secondary code was CONSTANT (always bit 0)
+   - **GPS L1C**: `% 57` instead of `% 1800` → corrupted secondary code
+   - **BDS B1C**: `% 57` instead of `% 1800` → corrupted secondary code
+   - **Fix**: Use `secondary_code_length` from `get_pilot_bits()` return value
+
+2. **BDS B1C wrong data/pilot power ratio** (`src/satellite_signal.rs:505-511`):
+   - Both data and pilot used `AMPLITUDE_1_2` → 1:1 ratio
+   - BDS-SIS-ICD specifies 1:3 (data:pilot), same as GPS L1C
+   - **Fix**: `AMPLITUDE_1_4` (data) / `AMPLITUDE_3_4` (pilot)
+
+3. **Carrier phase discontinuity** (`src/sat_if_signal.rs:update_satellite_params`):
+   - Hard re-anchor `start_carrier_phase = get_carrier_phase()` every 50ms
+   - Created ~0.003 cycle phase jumps at 20 Hz — comparable to PLL thermal noise
+   - C++ SignalSim updates carrier phase every 1ms → no jumps
+   - **Fix**: Removed hard re-anchor; carrier phase accumulates continuously via Doppler
+   - Code phase re-anchor kept (DLL bandwidth is lower, filters 0.001 chip jumps)

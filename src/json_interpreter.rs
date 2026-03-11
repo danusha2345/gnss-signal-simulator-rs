@@ -3019,7 +3019,7 @@ where
     } else {
         data[3] as u16
     };
-    println!(
+    dprintln!(
         "[GAL-PARSE] SV{:02}: data[3]={:.0} (IODnav), iodc={}, toe={}",
         eph.svid, data[3], eph.iodc, eph.toe
     );
