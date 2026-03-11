@@ -97,11 +97,11 @@ impl PrnCache {
 pub struct ComputationCache {
     /// Кэшированная амплитуда (редко меняется)
     pub cached_amp: f64,
-    /// Кэшированный code_step (постоянная величина)
+    /// Кэшированный code_step (включает code Doppler!)
     pub cached_code_step: f64,
     /// Кэшированный phase_step (постоянная величина)
     pub cached_phase_step: f64,
-    /// Кэшированная chip_rate (постоянная величина)
+    /// Кэшированная chip_rate (включает code Doppler!)
     pub cached_chip_rate: f64,
     /// Предвычисленная константа 2*PI (избегает повторных вычислений!)
     pub cached_two_pi: f64,
@@ -109,6 +109,8 @@ pub struct ComputationCache {
     pub last_cn0: f64,
     /// Последний sample_number (для проверки сброса кэша)
     pub last_sample_number: i32,
+    /// Последний Doppler (для обновления code Doppler при смене скорости спутника)
+    pub last_doppler_hz: f64,
     /// Флаг валидности кэша
     pub is_valid: bool,
 }
@@ -126,18 +128,20 @@ impl ComputationCache {
             cached_code_step: 0.0,
             cached_phase_step: 0.0,
             cached_chip_rate: 0.0,
-            cached_two_pi: 2.0 * std::f64::consts::PI, // ОПТИМИЗАЦИЯ: предвычисленная константа!
-            last_cn0: -9999.0,                         // Невозможное значение
+            cached_two_pi: 2.0 * std::f64::consts::PI,
+            last_cn0: -9999.0,
             last_sample_number: -1,
+            last_doppler_hz: 0.0,
             is_valid: false,
         }
     }
 
-    /// Проверяет нужно ли обновить кэш
-    pub fn needs_update(&self, cn0: f64, sample_number: i32) -> bool {
+    /// Проверяет нужно ли обновить кэш (включая смену Doppler для code Doppler)
+    pub fn needs_update(&self, cn0: f64, sample_number: i32, doppler_hz: f64) -> bool {
         !self.is_valid
             || (cn0 - self.last_cn0).abs() > 0.1
             || sample_number != self.last_sample_number
+            || (doppler_hz - self.last_doppler_hz).abs() > 0.1
     }
 
     /// Invalidate cache to force recalculation on next access
@@ -146,21 +150,31 @@ impl ComputationCache {
         self.last_cn0 = -9999.0;
     }
 
-    /// Обновляет кэш вычислений
-    pub fn update(&mut self, cn0: f64, sample_number: i32, if_freq: f64, chip_rate: f64) {
+    /// Обновляет кэш вычислений с code Doppler коррекцией
+    /// code_rate = chip_rate * (1 + doppler_hz / carrier_freq_hz)
+    /// Это критично для DLL tracking — без code Doppler код дрейфует ~0.002 чипа/мс
+    pub fn update(&mut self, cn0: f64, sample_number: i32, if_freq: f64, chip_rate: f64, doppler_hz: f64, carrier_freq_hz: f64) {
         // ФИЗИЧЕСКИ КОРРЕКТНАЯ ФОРМУЛА АМПЛИТУДЫ
         // A = sqrt(2 * C/N0_linear / Fs)
-        // где Fs - частота дискретизации в Гц
         let cn0_db = cn0 / 100.0;
         let cn0_linear = 10.0_f64.powf(cn0_db / 10.0);
         let fs = sample_number as f64 * 1000.0;
         self.cached_amp = (2.0 * cn0_linear / fs).sqrt();
 
-        self.cached_code_step = chip_rate / (sample_number as f64);
+        // Code Doppler: code rate scales proportionally to carrier Doppler
+        // Real GNSS signal: code_rate = nominal_chip_rate * (1 + v/c)
+        // where v/c = doppler_hz / carrier_freq_hz
+        let code_doppler_factor = if carrier_freq_hz > 0.0 {
+            1.0 + doppler_hz / carrier_freq_hz
+        } else {
+            1.0
+        };
+        self.cached_chip_rate = chip_rate * code_doppler_factor;
+        self.cached_code_step = self.cached_chip_rate / (sample_number as f64);
         self.cached_phase_step = (if_freq / 1000.0) / (sample_number as f64);
-        self.cached_chip_rate = chip_rate;
         self.last_cn0 = cn0;
         self.last_sample_number = sample_number;
+        self.last_doppler_hz = doppler_hz;
         self.is_valid = true;
     }
 }
@@ -224,6 +238,7 @@ pub struct SatIfSignal {
     pilot_length: i32,
     start_carrier_phase: f64,
     end_carrier_phase: f64,
+    start_code_phase: f64,
     signal_time: GnssTime,
     start_transmit_time: GnssTime,
     end_transmit_time: GnssTime,
@@ -281,6 +296,7 @@ impl SatIfSignal {
             pilot_length: pilot_len,
             start_carrier_phase: 0.0,
             end_carrier_phase: 0.0,
+            start_code_phase: 0.0,
             signal_time: GnssTime::default(),
             start_transmit_time: GnssTime::default(),
             end_transmit_time: GnssTime::default(),
@@ -324,6 +340,13 @@ impl SatIfSignal {
             get_travel_time(p_sat_param, self.signal_index as usize),
         );
         self.start_transmit_time = self.signal_time;
+        // Initialize continuous code phase from transmit time (mirrors C++ CurChip formula)
+        if let Some(attr) = &self.prn_sequence.attribute {
+            self.start_code_phase = (self.start_transmit_time.MilliSeconds as f64
+                % attr.pilot_period as f64
+                + self.start_transmit_time.SubMilliSeconds)
+                * attr.chip_rate as f64;
+        }
         self.satellite_signal.get_satellite_signal(
             self.signal_time,
             &mut self.data_signal,
@@ -333,28 +356,31 @@ impl SatIfSignal {
 
     /// Update satellite parameters (position, velocity, doppler) from recalculated SatelliteParam.
     /// Called periodically during signal generation to keep Doppler and code delay current.
-    /// Re-anchors carrier phase and transmit time like SignalSim's per-ms update.
+    /// Hard re-anchor carrier and code phase every block (~50ms). The re-anchor error is
+    /// ~0.001 cycles / ~0.001 chips — negligible for PLL/DLL tracking.
     pub fn update_satellite_params(&mut self, new_param: &SatelliteParam, output_center_freq: f64, cur_time: &GnssTime) {
-        // Update the stored satellite parameter
         self.sat_param = Some(*new_param);
 
-        // if_freq — статический offset (без Допплера)
         let signal_center_freq = self.get_signal_center_freq();
         self.if_freq = (signal_center_freq - output_center_freq) as i32;
 
-        // Re-anchor carrier phase to true value (like SignalSim: StartCarrierPhase = EndCarrierPhase)
-        // This prevents carrier phase drift from accumulating across blocks
+        // Hard re-anchor carrier phase (jump ~0.001 cycles — negligible for PLL)
         self.start_carrier_phase = get_carrier_phase(new_param, self.signal_index as usize);
 
-        // Re-anchor transmit time for correct code phase base
+        // Re-anchor code phase from true transmit time
         let travel_time = get_travel_time(new_param, self.signal_index as usize);
-        self.start_transmit_time = get_transmit_time(cur_time, travel_time);
-        self.signal_time = self.start_transmit_time;
+        let new_transmit_time = get_transmit_time(cur_time, travel_time);
+        if let Some(attr) = &self.prn_sequence.attribute {
+            self.start_code_phase = (new_transmit_time.MilliSeconds as f64
+                % attr.pilot_period as f64
+                + new_transmit_time.SubMilliSeconds)
+                * attr.chip_rate as f64;
+        }
+        self.start_transmit_time = new_transmit_time;
+        self.signal_time = new_transmit_time;
 
-        // Reset nav bit index to force re-evaluation with new timing
+        // Restore safety resets
         self.last_nav_bit_index = -1;
-
-        // Invalidate computation cache to force recalculation with new amplitude
         self.computation_cache.invalidate();
     }
 
@@ -434,15 +460,18 @@ impl SatIfSignal {
         let base_chip_offset = (ms_offset as f64) * code_attribute.chip_rate as f64;
 
         // КЭШИРОВАННАЯ амплитуда - используем ComputationCache!
+        // Legacy path: code_step computed locally, doppler=0 (not used from cache here)
         if self
             .computation_cache
-            .needs_update(p_sat_param.CN0 as f64, self.sample_number)
+            .needs_update(p_sat_param.CN0 as f64, self.sample_number, 0.0)
         {
             self.computation_cache.update(
                 p_sat_param.CN0 as f64,
                 self.sample_number,
                 self.if_freq as f64,
                 code_attribute.chip_rate as f64,
+                0.0,
+                1.0,
             );
         }
         let amp = self.computation_cache.cached_amp;
@@ -527,15 +556,18 @@ impl SatIfSignal {
         self.start_transmit_time = self.end_transmit_time;
 
         // КЭШИРОВАННАЯ амплитуда - устранили избыточные вычисления!
+        // get_if_sample_full: code_step from transmit time diff (already includes Doppler naturally)
         if self
             .computation_cache
-            .needs_update(p_sat_param.CN0 as f64, self.sample_number)
+            .needs_update(p_sat_param.CN0 as f64, self.sample_number, 0.0)
         {
             self.computation_cache.update(
                 p_sat_param.CN0 as f64,
                 self.sample_number,
                 self.if_freq as f64,
                 code_attribute.chip_rate as f64,
+                0.0,
+                1.0,
             );
         }
         let amp = self.computation_cache.cached_amp;
@@ -574,16 +606,18 @@ impl SatIfSignal {
         let base_chip_offset = (ms_offset as f64) * code_attribute.chip_rate as f64;
 
         // Cache amplitude calculation (CN0 doesn't change per millisecond)
-        // КЭШИРОВАННАЯ амплитуда - устранили избыточные вычисления!
+        // Legacy path: doppler=0 (code_step computed locally)
         if self
             .computation_cache
-            .needs_update(p_sat_param.CN0 as f64, self.sample_number)
+            .needs_update(p_sat_param.CN0 as f64, self.sample_number, 0.0)
         {
             self.computation_cache.update(
                 p_sat_param.CN0 as f64,
                 self.sample_number,
                 self.if_freq as f64,
                 code_attribute.chip_rate as f64,
+                0.0,
+                1.0,
             );
         }
         let amp = self.computation_cache.cached_amp;
@@ -653,15 +687,18 @@ impl SatIfSignal {
         let code_step = chip_advance / (self.sample_number as f64);
         let base_chip_offset = (ms_offset as f64) * code_attribute.chip_rate as f64;
         // КЭШИРОВАННАЯ амплитуда - устранили избыточные вычисления!
+        // Legacy SIMD path: doppler=0 (code_step computed locally)
         if self
             .computation_cache
-            .needs_update(p_sat_param.CN0 as f64, self.sample_number)
+            .needs_update(p_sat_param.CN0 as f64, self.sample_number, 0.0)
         {
             self.computation_cache.update(
                 p_sat_param.CN0 as f64,
                 self.sample_number,
                 self.if_freq as f64,
                 code_attribute.chip_rate as f64,
+                0.0,
+                1.0,
             );
         }
         let amp = self.computation_cache.cached_amp;
@@ -881,20 +918,25 @@ impl SatIfSignal {
         let code_attribute = self.prn_sequence.attribute.as_ref().unwrap();
         let chip_rate = code_attribute.chip_rate as f64;
 
+        // Doppler MUST be computed BEFORE cache update — code Doppler depends on it
+        let doppler_hz = get_doppler(p_sat_param, self.signal_index as usize);
+        let carrier_freq_hz = self.get_signal_center_freq();
+
         if self
             .computation_cache
-            .needs_update(p_sat_param.CN0 as f64, self.sample_number)
+            .needs_update(p_sat_param.CN0 as f64, self.sample_number, doppler_hz)
         {
             self.computation_cache.update(
                 p_sat_param.CN0 as f64,
                 self.sample_number,
                 self.if_freq as f64,
                 chip_rate,
+                doppler_hz,
+                carrier_freq_hz,
             );
         }
 
-        let ms_offset = cur_time.MilliSeconds - self.signal_time.MilliSeconds;
-        let base_chip_offset = (ms_offset as f64) * self.computation_cache.cached_chip_rate;
+        let base_chip_offset = self.start_code_phase;
         let amp = self.computation_cache.cached_amp;
         let code_step = self.computation_cache.cached_code_step;
         let nav_value = {
@@ -915,8 +957,6 @@ impl SatIfSignal {
         }
 
         // === НЕПРЕРЫВНАЯ ФАЗА НЕСУЩЕЙ ===
-        // Допплер из get_doppler() (а не из разницы get_carrier_phase())
-        let doppler_hz = get_doppler(p_sat_param, self.signal_index as usize);
         let doppler_cycles_per_ms = doppler_hz / 1000.0;
         let phase_step_continuous = (doppler_cycles_per_ms + (self.if_freq as f64) / 1000.0)
             / (self.sample_number as f64);
@@ -942,6 +982,13 @@ impl SatIfSignal {
                 real: prn_bit * nav_value * cos_val * amp,
                 imag: prn_bit * nav_value * sin_val * amp,
             };
+        }
+
+        // Advance code phase by one ms (with code Doppler)
+        self.start_code_phase += self.computation_cache.cached_chip_rate;
+        let pilot_chips = self.pilot_length as f64;
+        if pilot_chips > 0.0 && self.start_code_phase >= pilot_chips {
+            self.start_code_phase %= pilot_chips;
         }
     }
 
@@ -1086,8 +1133,9 @@ impl SatIfSignal {
         };
 
         // Используем уже готовые вычисления из кэша
+        // Parallel path: doppler=0 (not critical for parallel mode)
         let computation_cache = &self.computation_cache;
-        if computation_cache.needs_update(p_sat_param.CN0 as f64, self.sample_number) {
+        if computation_cache.needs_update(p_sat_param.CN0 as f64, self.sample_number, 0.0) {
             // Обновляем кэш только если нужно
             let mut cache = computation_cache.clone();
             cache.update(
@@ -1095,6 +1143,8 @@ impl SatIfSignal {
                 self.sample_number,
                 self.if_freq as f64,
                 1.023e6,
+                0.0,
+                1.0,
             );
         }
 
@@ -1179,20 +1229,25 @@ impl SatIfSignal {
         let code_attribute = self.prn_sequence.attribute.as_ref().unwrap();
         let chip_rate = code_attribute.chip_rate as f64;
 
+        // Doppler MUST be computed BEFORE cache update — code Doppler depends on it
+        let doppler_hz = get_doppler(p_sat_param, self.signal_index as usize);
+        let carrier_freq_hz = self.get_signal_center_freq();
+
         if self
             .computation_cache
-            .needs_update(p_sat_param.CN0 as f64, self.sample_number)
+            .needs_update(p_sat_param.CN0 as f64, self.sample_number, doppler_hz)
         {
             self.computation_cache.update(
                 p_sat_param.CN0 as f64,
                 self.sample_number,
                 self.if_freq as f64,
                 chip_rate,
+                doppler_hz,
+                carrier_freq_hz,
             );
         }
 
-        let ms_offset = cur_time.MilliSeconds - self.signal_time.MilliSeconds;
-        let base_chip_offset = (ms_offset as f64) * self.computation_cache.cached_chip_rate;
+        let base_chip_offset = self.start_code_phase;
         let amp = self.computation_cache.cached_amp;
         let code_step = self.computation_cache.cached_code_step;
         let nav_value = {
@@ -1209,10 +1264,6 @@ impl SatIfSignal {
         let is_boc = (code_attribute.attribute & PRN_ATTRIBUTE_BOC) != 0;
 
         // === НЕПРЕРЫВНАЯ ФАЗА НЕСУЩЕЙ ===
-        // Допплер из get_doppler() (RelativeSpeed/wavelength) — НЕ из разницы get_carrier_phase(),
-        // т.к. sat_param обновляется раз в 1000мс, а не каждую мс как в SignalSim.
-        // if_freq = статический offset (signal_center - output_center), без Допплера.
-        let doppler_hz = get_doppler(p_sat_param, self.signal_index as usize);
         let doppler_cycles_per_ms = doppler_hz / 1000.0;
         let phase_step = (doppler_cycles_per_ms + (self.if_freq as f64) / 1000.0)
             / (self.sample_number as f64);
@@ -1317,6 +1368,13 @@ impl SatIfSignal {
                     imag: val * sin_val * amp,
                 };
             }
+        }
+
+        // Advance code phase by one ms (with code Doppler)
+        self.start_code_phase += self.computation_cache.cached_chip_rate;
+        let pilot_chips = self.pilot_length as f64;
+        if pilot_chips > 0.0 && self.start_code_phase >= pilot_chips {
+            self.start_code_phase %= pilot_chips;
         }
     }
 
