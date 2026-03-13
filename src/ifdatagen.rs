@@ -2478,6 +2478,10 @@ impl IFDataGen {
                     self.update_sat_param_list(ms_time, position_ecef, 0, &[], None);
 
                     // Push updated params to each satellite
+                    // At block boundaries (ms_offset==0): full update_satellite_params
+                    // with code phase re-anchor from transmit time + signal_time sync.
+                    // Between blocks: lightweight push_sat_param_for_ms (no re-anchor).
+                    let full_update = ms_offset == 0;
                     for sig_option in sat_if_signals.iter_mut() {
                         if let Some(ref mut sig) = sig_option {
                             let param_ref = match sig.system {
@@ -2504,7 +2508,11 @@ impl IFDataGen {
                                 _ => None,
                             };
                             if let Some(new_param) = param_ref {
-                                sig.push_sat_param_for_ms(new_param, center_freq);
+                                if full_update {
+                                    sig.update_satellite_params(new_param, center_freq, &ms_time);
+                                } else {
+                                    sig.push_sat_param_for_ms(new_param, center_freq);
+                                }
                             }
                         }
                     }

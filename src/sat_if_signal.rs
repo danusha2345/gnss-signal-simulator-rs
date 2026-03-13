@@ -384,6 +384,13 @@ impl SatIfSignal {
         self.start_transmit_time = new_transmit_time;
         self.signal_time = new_transmit_time;
 
+        // Refresh nav bits for the new signal_time (prevents stale bits after re-anchor)
+        self.satellite_signal.get_satellite_signal(
+            self.signal_time,
+            &mut self.data_signal,
+            &mut self.pilot_signal,
+        );
+
         // Restore safety resets
         self.last_nav_bit_index = -1;
         self.computation_cache.invalidate();
