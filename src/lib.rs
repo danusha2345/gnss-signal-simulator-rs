@@ -54,6 +54,7 @@ pub mod lnavbit;
 pub mod logutil;
 pub mod memory_code;
 pub mod nav_data; // NEW: Unified NavData enum for parallelization
+pub mod nav_decode;
 pub mod navbit;
 pub mod navdata;
 pub mod pilotbit;

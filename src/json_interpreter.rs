@@ -661,16 +661,14 @@ pub fn read_nav_file_limited(nav_data: &mut CNavData, filename: &str, max_per_sy
         match system_char {
             'G' | ' ' => {
                 if gps_count < max_per_system {
-                    // GPS ephemeris parsing - НЕ добавляем напрямую, только группируем по эпохам
-                    if let Some(_eph) = parse_gps_ephemeris(&line, &mut lines) {
-                        // Прямое добавление в nav_data УДАЛЕНО - будет добавлено в критической секции
+                    if let Some(eph) = parse_gps_ephemeris(&line, &mut lines) {
+                        nav_data.add_gps_ephemeris(eph);
                         gps_count += 1;
                     }
                 }
             }
             'R' => {
                 if glonass_count < max_per_system {
-                    // GLONASS ephemeris parsing...
                     if let Some(eph) = parse_glonass_ephemeris_correct(&line, &mut lines) {
                         nav_data.add_glonass_ephemeris(eph);
                         glonass_count += 1;
@@ -679,16 +677,14 @@ pub fn read_nav_file_limited(nav_data: &mut CNavData, filename: &str, max_per_sy
             }
             'C' => {
                 if beidou_count < max_per_system {
-                    // BeiDou ephemeris parsing - НЕ добавляем напрямую, только группируем по эпохам
-                    if let Some(_eph) = parse_beidou_ephemeris(&line, &mut lines) {
-                        // Прямое добавление в nav_data УДАЛЕНО - будет добавлено в критической секции
+                    if let Some(eph) = parse_beidou_ephemeris(&line, &mut lines) {
+                        nav_data.add_beidou_ephemeris(eph);
                         beidou_count += 1;
                     }
                 }
             }
             'E' => {
                 if galileo_count < max_per_system {
-                    // Galileo ephemeris parsing...
                     if let Some(eph) = parse_galileo_ephemeris(&line, &mut lines) {
                         nav_data.add_galileo_ephemeris(eph);
                         galileo_count += 1;

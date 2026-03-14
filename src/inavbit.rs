@@ -1012,6 +1012,7 @@ impl INavBit {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::nav_decode::*;
 
     #[test]
     fn test_inavbit_new() {
@@ -1029,5 +1030,98 @@ mod tests {
     fn test_word_allocation() {
         assert_eq!(WORD_ALLOCATION_E1[0], 2);
         assert_eq!(WORD_ALLOCATION_E5[0], 1);
+    }
+
+    /// Helper: create realistic Galileo ephemeris (stored in GpsEphemeris struct)
+    fn make_test_galileo_ephemeris() -> GpsEphemeris {
+        GpsEphemeris {
+            svid: 1,
+            valid: 1,
+            iode: 0,
+            iodc: 95,  // IODnav
+            ura: 3,    // SISA index
+            health: 0,
+            flag: 0,
+            toe: 345600,  // Must be divisible by 60 for I-NAV
+            toc: 345600,
+            top: 0,
+            week: 1241, // Galileo week
+            M0: 0.539_812_714_5,
+            delta_n: 3.187_632_149e-9,
+            delta_n_dot: 0.0,
+            ecc: 0.000_233_068_223,
+            sqrtA: 5440.602_539_062,
+            axis_dot: 0.0,
+            omega0: -0.956_297_181_5,
+            i0: 0.977_388_105_1,
+            w: -0.551_230_943_7,
+            omega_dot: -5.408_949_176e-9,
+            idot: -1.107_359_219e-10,
+            cuc: 1.303_851_604e-6,
+            cus: 8.348_375_559e-6,
+            crc: 159.46875,
+            crs: 14.28125,
+            cic: 3.725_290_298e-8,
+            cis: 2.048_909_664e-8,
+            af0: -7.249_878_253e-4,
+            af1: -7.560_174_980e-12,
+            af2: 0.0,
+            tgd: -3.259_629_011e-9,  // BGD E5a/E1
+            tgd2: -3.492_459_655e-9, // BGD E5b/E1
+            tgd_ext: [0.0; 5],
+            axis: 5440.602_539_062_f64.powi(2),
+            n: 0.0,
+            root_ecc: (1.0 - 0.000_233_068_223_f64.powi(2)).sqrt(),
+            omega_t: -0.956_297_181_5,
+            omega_delta: -5.408_949_176e-9,
+            Ek: 0.0,
+            Ek_dot: 0.0,
+            source: 0,
+        }
+    }
+
+    #[test]
+    fn test_inav_ephemeris_round_trip() {
+        let eph = make_test_galileo_ephemeris();
+        let mut inav = INavBit::new();
+        inav.set_ephemeris(1, &eph);
+
+        // Access gal_eph_data for SV1
+        let ephdata = &inav.gal_eph_data[0];
+        let decoded = decode_inav_eph_words(ephdata);
+
+        let diffs = decoded.compare_with_original(&eph);
+        for d in &diffs {
+            assert!(
+                d.ok,
+                "GAL I-NAV round-trip FAILED for {}: original={:.15e}, decoded={:.15e}, diff={:.6e}, tol={:.6e}",
+                d.name, d.original, d.decoded, d.diff, d.tolerance
+            );
+        }
+
+        // Specifically verify toe quantization (60s resolution)
+        let toe_err = (decoded.toe - eph.toe).abs();
+        assert!(
+            toe_err <= 30,
+            "Galileo toe error {} exceeds 30s (60s resolution / 2)",
+            toe_err
+        );
+    }
+
+    #[test]
+    fn test_inav_iodnav_consistency() {
+        let eph = make_test_galileo_ephemeris();
+        let mut inav = INavBit::new();
+        inav.set_ephemeris(1, &eph);
+
+        let ephdata = &inav.gal_eph_data[0];
+        let decoded = decode_inav_eph_words(ephdata);
+
+        // IODnav should match across all words
+        assert_eq!(
+            decoded.iod_nav, eph.iodc as u16,
+            "IODnav mismatch: decoded={}, original={}",
+            decoded.iod_nav, eph.iodc
+        );
     }
 }

@@ -649,3 +649,114 @@ impl BCNavBit {
         true
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::nav_decode::*;
+
+    /// Helper: create realistic BeiDou ephemeris (GpsEphemeris with BDS params)
+    fn make_test_beidou_ephemeris() -> GpsEphemeris {
+        // sat_type 3 → encoder uses reference axis 27906100.0 (MEO)
+        // sqrtA typical for BDS MEO: ~5282.6
+        let sqrtA = 5282.620_117_2_f64;
+        let axis = sqrtA * sqrtA;
+        GpsEphemeris {
+            svid: 23,
+            valid: 1,
+            iode: 5,
+            iodc: 5,
+            ura: 2,
+            health: 0,
+            flag: 3, // sat_type = 3 → encoder reference axis 27906100.0
+            toe: 345600,   // Must be multiple of 300
+            toc: 345600,
+            top: 0,
+            week: 1013, // BDT week
+            M0: -0.278_312_451_3,
+            delta_n: 4.361_281_720e-9,
+            delta_n_dot: 1.234e-18,
+            ecc: 0.002_581_358_5,
+            sqrtA,
+            axis_dot: -3.5e-10,
+            axis,
+            omega0: 1.852_641_093_2,
+            i0: 0.960_419_830_7,
+            w: -1.719_802_340_1,
+            omega_dot: -6.820_313_510e-9,
+            idot: -4.643_089_120e-11,
+            cuc: -1.229_345_798e-6,
+            cus: 4.522_502_422e-6,
+            crc: 216.59375,
+            crs: -18.84375,
+            cic: 2.048_909_664e-8,
+            cis: -5.587_935_448e-8,
+            af0: 1.993_218_809e-4,
+            af1: 4.888_534_390e-12,
+            af2: 0.0,
+            tgd: 0.0,
+            tgd2: 0.0,
+            tgd_ext: [0.0; 5],
+            n: 0.0,
+            root_ecc: (1.0 - 0.002_581_358_5_f64.powi(2)).sqrt(),
+            omega_t: 1.852_641_093_2,
+            omega_delta: -6.820_313_510e-9,
+            Ek: 0.0,
+            Ek_dot: 0.0,
+            source: 1, // B-CNAV1
+        }
+    }
+
+    #[test]
+    fn test_bcnav_ephemeris_round_trip() {
+        let eph = make_test_beidou_ephemeris();
+        let mut bcnav = BCNavBit::new();
+        bcnav.set_ephemeris(23, &eph);
+
+        let decoded = decode_bcnav_ephemeris(
+            &bcnav.ephemeris1[22],
+            &bcnav.ephemeris2[22],
+            &bcnav.clock_param[22],
+        );
+
+        let diffs = decoded.compare_with_original(&eph);
+        for d in &diffs {
+            assert!(
+                d.ok,
+                "BDS B-CNAV round-trip FAILED for {}: original={:.15e}, decoded={:.15e}, diff={:.6e}, tol={:.6e}",
+                d.name, d.original, d.decoded, d.diff, d.tolerance
+            );
+        }
+    }
+
+    #[test]
+    fn test_beidou_toe_encoding() {
+        let eph = make_test_beidou_ephemeris();
+        let mut bcnav = BCNavBit::new();
+        bcnav.set_ephemeris(23, &eph);
+
+        let decoded = decode_bcnav_ephemeris(
+            &bcnav.ephemeris1[22],
+            &bcnav.ephemeris2[22],
+            &bcnav.clock_param[22],
+        );
+
+        // BeiDou toe is encoded as toe/300, so quantized to 300s
+        // The original toe should survive if it's a multiple of 300
+        assert_eq!(
+            decoded.toe, eph.toe,
+            "BeiDou toe mismatch: decoded={}, original={}",
+            decoded.toe, eph.toe
+        );
+    }
+
+    #[test]
+    fn test_bcnav_toe_requires_multiple_of_300() {
+        // BCNavBit::set_ephemeris rejects toe that's not a multiple of 300
+        let mut eph = make_test_beidou_ephemeris();
+        eph.toe = 345601; // Not a multiple of 300
+        let mut bcnav = BCNavBit::new();
+        let result = bcnav.set_ephemeris(23, &eph);
+        assert_eq!(result, 0, "set_ephemeris should reject non-multiple-of-300 toe");
+    }
+}

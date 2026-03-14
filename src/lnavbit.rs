@@ -74,7 +74,7 @@ const PAGE_ID: [[i32; 25]; 2] = [
 // Main LNavBit structure
 #[derive(Clone)]
 pub struct LNavBit {
-    gps_stream123: [[[u32; 8]; 3]; 32], // 32 satellites, 3 subframes, 8 words each
+    pub gps_stream123: [[[u32; 8]; 3]; 32], // 32 satellites, 3 subframes, 8 words each
     gps_stream45: [[[u32; 8]; 25]; 2],  // 2 subframes (4&5), 25 pages, 8 words each
 }
 
@@ -567,5 +567,225 @@ impl LNavBit {
         }
 
         parity
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::nav_decode::*;
+
+    /// Helper: create a realistic GPS ephemeris for testing
+    fn make_test_gps_ephemeris() -> GpsEphemeris {
+        GpsEphemeris {
+            svid: 1,
+            valid: 1,
+            iode: 42,
+            iodc: 42,
+            ura: 2,
+            health: 0,
+            flag: 0x01, // L2 code
+            toe: 345600,
+            toc: 345600,
+            top: 0,
+            week: 2369,
+            M0: 0.539_812_714_5,
+            delta_n: 4.908_419_825e-9,
+            delta_n_dot: 0.0,
+            ecc: 0.012_190_744_280,
+            sqrtA: 5153.648_437_5,
+            axis_dot: 0.0,
+            omega0: -2.163_827_543_2,
+            i0: 0.952_716_246_8,
+            w: 0.687_462_195_1,
+            omega_dot: -8.157_320_451e-9,
+            idot: 2.535_843_151e-10,
+            cuc: -4.842_877_388e-6,
+            cus: 7.055_699_825e-6,
+            crc: 234.125,
+            crs: -44.84375,
+            cic: -1.862_645_149e-8,
+            cis: -6.332_993_507e-8,
+            af0: 3.210_194_408e-4,
+            af1: -2.046_363_078e-12,
+            af2: 0.0,
+            tgd: -1.117_587_089e-8,
+            tgd2: 0.0,
+            tgd_ext: [0.0; 5],
+            axis: 5153.648_437_5 * 5153.648_437_5,
+            n: 0.0,
+            root_ecc: (1.0 - 0.012_190_744_280_f64.powi(2)).sqrt(),
+            omega_t: -2.163_827_543_2,
+            omega_delta: -8.157_320_451e-9,
+            Ek: 0.0,
+            Ek_dot: 0.0,
+            source: 0,
+        }
+    }
+
+    #[test]
+    fn test_lnav_ephemeris_round_trip() {
+        let eph = make_test_gps_ephemeris();
+        let mut lnav = LNavBit::new();
+        lnav.set_ephemeris(1, &eph);
+
+        // Access stream123 for SV1
+        let stream = &lnav.gps_stream123[0];
+        let decoded = decode_lnav_stream123(stream);
+
+        let diffs = decoded.compare_with_original(&eph);
+        for d in &diffs {
+            assert!(
+                d.ok,
+                "GPS LNAV round-trip FAILED for {}: original={:.15e}, decoded={:.15e}, diff={:.6e}, tol={:.6e}",
+                d.name, d.original, d.decoded, d.diff, d.tolerance
+            );
+        }
+    }
+
+    #[test]
+    fn test_lnav_parity() {
+        let eph = make_test_gps_ephemeris();
+        let mut lnav = LNavBit::new();
+        lnav.set_ephemeris(1, &eph);
+
+        // Generate frame data for several TOW values
+        for tow_ms in [36330000i32, 42000000, 0, 600000] {
+            let start_time = GnssTime {
+                Week: 2369,
+                MilliSeconds: tow_ms,
+                SubMilliSeconds: 0.0,
+            };
+            let mut nav_bits = [0i32; 300];
+            lnav.get_frame_data(start_time, 1, 0, &mut nav_bits);
+
+            let results = verify_lnav_parity(&nav_bits);
+            for (word_idx, parity_ok) in &results {
+                assert!(
+                    *parity_ok,
+                    "GPS LNAV parity FAILED for word {} at TOW_ms={}",
+                    word_idx, tow_ms
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_nav_orbit_consistency_gps() {
+        let eph = make_test_gps_ephemeris();
+        let mut lnav = LNavBit::new();
+        lnav.set_ephemeris(1, &eph);
+
+        let stream = &lnav.gps_stream123[0];
+        let decoded = decode_lnav_stream123(stream);
+
+        // Build GpsEphemeris from decoded values
+        let mut dec_eph = GpsEphemeris::default();
+        dec_eph.valid = 1;
+        dec_eph.svid = 1;
+        dec_eph.M0 = decoded.M0;
+        dec_eph.delta_n = decoded.delta_n;
+        dec_eph.ecc = decoded.ecc;
+        dec_eph.sqrtA = decoded.sqrtA;
+        dec_eph.omega0 = decoded.omega0;
+        dec_eph.i0 = decoded.i0;
+        dec_eph.w = decoded.w;
+        dec_eph.omega_dot = decoded.omega_dot;
+        dec_eph.idot = decoded.idot;
+        dec_eph.cuc = decoded.cuc;
+        dec_eph.cus = decoded.cus;
+        dec_eph.crc = decoded.crc;
+        dec_eph.crs = decoded.crs;
+        dec_eph.cic = decoded.cic;
+        dec_eph.cis = decoded.cis;
+        dec_eph.toe = decoded.toe;
+        dec_eph.toc = decoded.toc;
+
+        // Compute derived fields
+        use crate::constants::EARTH_GM;
+        dec_eph.axis = dec_eph.sqrtA * dec_eph.sqrtA;
+        dec_eph.root_ecc = (1.0 - dec_eph.ecc * dec_eph.ecc).sqrt();
+        dec_eph.n = (EARTH_GM / (dec_eph.axis.powi(3))).sqrt() + dec_eph.delta_n;
+        dec_eph.omega_t = dec_eph.omega0;
+        dec_eph.omega_delta = dec_eph.omega_dot;
+
+        let mut orig_eph = eph;
+        orig_eph.axis = orig_eph.sqrtA * orig_eph.sqrtA;
+        orig_eph.root_ecc = (1.0 - orig_eph.ecc * orig_eph.ecc).sqrt();
+        orig_eph.n = (EARTH_GM / (orig_eph.axis.powi(3))).sqrt() + orig_eph.delta_n;
+        orig_eph.omega_t = orig_eph.omega0;
+        orig_eph.omega_delta = orig_eph.omega_dot;
+
+        // Propagate at toe + 1800s
+        use crate::coordinate::gps_sat_pos_speed_eph;
+        use crate::types::{GnssSystem, KinematicInfo};
+
+        let t = eph.toe as f64 + 1800.0;
+        let mut orig_pos = KinematicInfo::default();
+        let mut dec_pos = KinematicInfo::default();
+
+        gps_sat_pos_speed_eph(GnssSystem::GpsSystem, t, &mut orig_eph, &mut orig_pos, None);
+        gps_sat_pos_speed_eph(GnssSystem::GpsSystem, t, &mut dec_eph, &mut dec_pos, None);
+
+        let dx = orig_pos.x - dec_pos.x;
+        let dy = orig_pos.y - dec_pos.y;
+        let dz = orig_pos.z - dec_pos.z;
+        let dist = (dx * dx + dy * dy + dz * dz).sqrt();
+
+        assert!(
+            dist < 2.0,
+            "GPS orbit consistency: position difference {:.3} m exceeds 2.0 m threshold",
+            dist
+        );
+    }
+
+    #[test]
+    fn test_lnav_tow_encoding() {
+        let eph = make_test_gps_ephemeris();
+        let mut lnav = LNavBit::new();
+        lnav.set_ephemeris(1, &eph);
+
+        // Test several TOW values
+        let test_cases = [
+            (0, 1),             // TOW=0 ms -> tow_count=0, next=1
+            (6000, 2),          // TOW=6000 ms -> tow_count=1, next=2
+            (30000, 6),         // TOW=30000 ms -> tow_count=5, next=6
+            (600000, 101),      // TOW=600s -> tow_count=100, next=101
+        ];
+
+        for (tow_ms, expected_next_tow) in &test_cases {
+            let start_time = GnssTime {
+                Week: 2369,
+                MilliSeconds: *tow_ms,
+                SubMilliSeconds: 0.0,
+            };
+            let mut nav_bits = [0i32; 300];
+            lnav.get_frame_data(start_time, 1, 0, &mut nav_bits);
+
+            // Extract HOW word (bits 30-59)
+            // Bits 30-46 (17 bits) = TOW count (truncated count of next subframe)
+            let mut how_tow: u32 = 0;
+            for i in 0..17 {
+                how_tow = (how_tow << 1) | (nav_bits[30 + i] as u32);
+            }
+
+            assert_eq!(
+                how_tow, *expected_next_tow as u32,
+                "TOW encoding mismatch: tow_ms={}, expected next_tow={}, got={}",
+                tow_ms, expected_next_tow, how_tow
+            );
+
+            // Extract subframe number (bits 49-51, 3 bits)
+            let mut sf_num: u32 = 0;
+            for i in 0..3 {
+                sf_num = (sf_num << 1) | (nav_bits[49 + i] as u32);
+            }
+            let expected_sf = (((*tow_ms / 6000) % 5) + 1) as u32;
+            assert_eq!(
+                sf_num, expected_sf,
+                "Subframe number mismatch: tow_ms={}, expected sf={}, got={}",
+                tow_ms, expected_sf, sf_num
+            );
+        }
     }
 }

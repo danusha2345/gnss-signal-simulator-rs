@@ -10,6 +10,10 @@ doctest = false
 name = "spectrum_analyzer"
 path = "src/bin/spectrum_analyzer.rs"
 
+[[bin]]
+name = "nav_diagnostics"
+path = "src/bin/nav_diagnostics.rs"
+
 [dependencies]
 rand = "0.8"
 rayon = "1.8"

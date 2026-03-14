@@ -458,3 +458,43 @@ All Galileo bands now verified: **E1 + E5a + E5b + E6 = 4/4 bands, 100% satellit
    - **Impact**: Z-scores in verifier drop ~10-20x (expected — correct SNR is much lower); real receivers unaffected
 
 **New method**: `SatIfSignal::push_sat_param_for_ms()` — lightweight per-ms parameter push that updates `sat_param` and IF freq without re-anchoring code/carrier phase.
+
+### Navigation Message Diagnostics (March 2026)
+
+**New module**: `src/nav_decode.rs` (~1000 lines) — reverse decoders for GNSS navigation messages.
+
+**Decoders**:
+- `decode_lnav_stream123()` — GPS LNAV subframes 1-3 (inverse of `compose_gps_stream123`)
+- `decode_inav_eph_words()` — Galileo I-NAV words 1-5 (inverse of `compose_eph_words`)
+- `decode_bcnav_ephemeris()` — BeiDou B-CNAV eph1/eph2/clock (inverse of `set_ephemeris`)
+
+**Verifiers**:
+- `verify_lnav_parity()` — GPS ICD-200 parity check (10 words × 6 parity bits)
+- `verify_inav_crc24q()` — Galileo CRC24Q verification
+
+**Key implementation detail**: BeiDou B-CNAV uses two's complement (not sign+magnitude) for 33-bit values. The `sign_magnitude_33()` function reconstructs via `if sign { value - 2^32 } else { value }`.
+
+**Standalone binary**: `src/bin/nav_diagnostics.rs` — loads RINEX, runs encode→decode→compare for all systems.
+
+```bash
+cargo run --bin nav_diagnostics -- --rinex Rinex_Data/BRDC00IGS_R_20251560000_01D_MN.rnx
+```
+
+**Unit tests** (14 nav-related, 52 total):
+- `test_lnav_ephemeris_round_trip`, `test_lnav_parity`, `test_lnav_tow_encoding`, `test_nav_orbit_consistency_gps`
+- `test_inav_ephemeris_round_trip`, `test_inav_iodnav_consistency`
+- `test_bcnav_ephemeris_round_trip`, `test_beidou_toe_encoding`, `test_bcnav_toe_requires_multiple_of_300`
+
+**Verification results (real RINEX data, BRDC00IGS merged)**:
+
+| System | SVs tested | M0 err range | Orbit Δ | Status |
+|--------|-----------|--------------|---------|--------|
+| GPS LNAV | 32 | <5e-12 rad | 0.00 m | ✓ All pass |
+| GPS Parity | 32×3 SF | — | — | ✓ 10/10 words |
+| Galileo I-NAV | 28 | <5e-13 rad | 0.00 m | ✓ (2 SVs with invalid BGD) |
+| BeiDou B-CNAV (GEO/IGSO) | 15 | <4e-12 rad | ≤0.03 m | ✓ |
+| BeiDou B-CNAV (MEO) | 33 | <5e-12 rad | ~14760 km | ⚠ Encoder bug |
+
+**Known issue**: `bcnavbit.rs:186` — MEO reference axis wrong. Condition `if sat_type == 3` should be `if sat_type == 2` for MEO (27906100 m). Currently MEO satellites use GEO/IGSO reference (42162200 m), causing ~14760 km orbit error in encoded nav messages.
+
+**Bug fix in `json_interpreter.rs`**: `read_nav_file_limited()` was not adding GPS and BeiDou ephemerides to `nav_data` (results discarded with `_eph`). Fixed to call `add_gps_ephemeris()`/`add_beidou_ephemeris()`.
