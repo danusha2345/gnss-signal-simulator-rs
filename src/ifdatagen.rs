@@ -2466,7 +2466,7 @@ impl IFDataGen {
             // 2. Per-ms signal generation with periodic Kepler updates
             // Kepler propagation every PARAM_UPDATE_INTERVAL_MS (expensive),
             // but sample generation every 1ms (cheap) — matches C++ accuracy
-            const PARAM_UPDATE_INTERVAL_MS: i32 = 20;
+            const PARAM_UPDATE_INTERVAL_MS: i32 = 1; // C++ SignalSim updates every 1ms
             let center_freq = self.output_param.CenterFreq as f64;
             let position_ecef = lla_to_ecef(&self.start_pos);
             for ms_offset in 0..block_duration_ms {

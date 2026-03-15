@@ -507,3 +507,12 @@ cargo run --bin nav_diagnostics -- --rinex Rinex_Data/BRDC00IGS_R_20251560000_01
 - **ICD requirement**: Galileo OS SIS ICD specifies E1-B (data) on I and E1-C (pilot) on Q: `s_E1 = e_B × cos(ωt) - e_C × sin(ωt)`
 - **Fix**: Changed pilot to Q channel: `pilot_signal = { real: 0.0, imag: -pilot_bit * AMPLITUDE_1_2 }`
 - **Impact**: Real receivers couldn't acquire Galileo E1 signals at all (0 Galileo satellites visible on phone). After fix, receivers can track pilot on Q for acquisition and data on I for nav message decoding.
+
+### Per-ms Satellite Parameter Update Fix (March 2026)
+
+**CRITICAL FIX in `src/ifdatagen.rs`**: `PARAM_UPDATE_INTERVAL_MS` changed from 20 to 1.
+
+- **Issue**: Satellite parameters (Doppler, TravelTime, code Doppler factor) were updated only every 20ms, while C++ SignalSim updates every 1ms via `StepToNextMs → UpdateSatParamList`. Between updates, `travel_time` was stale → `actual_transmit_time` drifted by ~53μs → code phase sawtooth ~0.05 chips at 50 Hz → DLL tracking jitter + pseudorange error.
+- **Fix**: Set `PARAM_UPDATE_INTERVAL_MS = 1` to match C++ SignalSim behavior.
+- **Performance**: Generation time increases from ~24s to ~198s for 10s triple-L1 signal (Kepler propagation every 1ms instead of every 20ms). This matches C++ SignalSim timing accuracy.
+- **Impact**: Eliminates code/carrier phase discontinuities that prevented GPS receiver from obtaining position fix.
