@@ -516,3 +516,44 @@ cargo run --bin nav_diagnostics -- --rinex Rinex_Data/BRDC00IGS_R_20251560000_01
 - **Fix**: Set `PARAM_UPDATE_INTERVAL_MS = 1` to match C++ SignalSim behavior.
 - **Performance**: Generation time increases from ~24s to ~198s for 10s triple-L1 signal (Kepler propagation every 1ms instead of every 20ms). This matches C++ SignalSim timing accuracy.
 - **Impact**: Eliminates code/carrier phase discontinuities that prevented GPS receiver from obtaining position fix.
+
+### C++ SignalSim Compliance Round 3 (March 2026)
+
+**5 bugs fixed for full C++ phase model compliance:**
+
+1. **BUG A (Critical): `create_bds_signals` used BDT time** (`src/ifdatagen.rs`):
+   - **Issue**: `utc_to_bds_time()` then `get_satellite_param(&bds_time)` — double subtraction of -14s (BDS→GPS offset)
+   - **Fix**: Use `&self.cur_time` (GPS time), matching C++ which passes GPS time directly
+   - **Impact**: BDS initial carrier/code phase correct; C13 now detectable (z=31)
+
+2. **BUG B (High): `create_galileo_signals` used GST time** (`src/ifdatagen.rs`):
+   - **Issue**: `utc_to_galileo_time()` then `get_satellite_param(&gal_time)` — unnecessary conversion
+   - **Fix**: Use `&self.cur_time` (GPS time), matching C++ which has no time adjustment for Galileo
+   - **Impact**: GAL initial parameters now consistent with update_sat_param_list
+
+3. **BUG C (High): `update_sat_param_list` Galileo used GST time** (`src/ifdatagen.rs`):
+   - **Issue**: `utc_to_galileo_time()` called every update cycle for Galileo
+   - **Fix**: Use `&cur_time` (GPS time), matching C++ `CurTime` parameter
+   - **Impact**: E07 restored to detectable (z=44)
+
+4. **BUG D (High): Integer carrier phase model** (`src/sat_if_signal.rs`, `src/fastmath.rs`):
+   - **C++ model**: `CurPhase = 1 - frac(StartCarrierPhase)`, `CurIntPhase = floor(CurPhase * 2^32)`, `IntPhaseStep = round(PhaseStep * 2^32)`, per-sample: `CurIntPhase += IntPhaseStep` (wrapping_add), sin/cos from LUT[CurIntPhase >> 16]
+   - **PhaseStep**: `(StartCarrierPhase - EndCarrierPhase) / N + IF/1000/N` — Start/End model, not Doppler approximation
+   - **New function**: `FastMath::lut_sin_cos(u32) -> (f64, f64)` — direct LUT lookup from integer phase
+   - **Impact**: Eliminates precision loss from `frac(~1e8)` that previously broke GAL E1 with Start/End model
+
+5. **BUG E (High): Start/End code phase from transmit time** (`src/sat_if_signal.rs`):
+   - **C++ model**: `CodeDiff = (EndTransmitTime - StartTransmitTime) * ChipRate`, `CodeStep = CodeDiff / N`, `CurChip = (Start.ms % PilotPeriod + Start.SubMs) * ChipRate`
+   - **Old Rust**: `code_step = chip_rate * (1 + doppler/carrier) / N` — Doppler approximation
+   - **Fix**: Exact transmit time difference model; `start_transmit_time` updated by `get_if_sample_cached`, NOT by `update_satellite_params` (would cause code_step=0 at block boundaries)
+   - **Impact**: Accounts for clock correction, relativistic effects beyond Doppler
+
+**Verification results (triple-system, 10s, 5 MHz, Montana):**
+
+| System     | Visible | Found | z-score range | Change from Round 2 |
+|------------|---------|-------|---------------|---------------------|
+| GPS L1CA   | 10      | 8     | 33–48         | ≈ same (noise ±1) |
+| BeiDou B1C | 9       | 4     | 31–81         | +1 (C13 new) |
+| Galileo E1 | 6       | 6     | 32–90         | +1 (E07 restored) |
+| **Total**  | **25**  | **18**|               | **+1 from 17** |
+

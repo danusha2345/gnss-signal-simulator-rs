@@ -818,12 +818,11 @@ impl BCNav1Bit {
         // would convert time references and coordinate system parameters
         let mut bds_eph = *eph;
 
-        // Adjust for BDS time system (BDT = GPS time - 14 seconds as of launch)
-        bds_eph.toe -= 14;
-        bds_eph.top -= 14;
+        // Note: toe/top must stay as multiples of 300 for B-CNAV1 encoding
+        // (bcnavbit.rs requires toe % 300 == 0). Do NOT subtract 14 seconds here.
 
         // For BDS, satellite numbers > 32 are valid (up to 63 for BDS)
-        self.base.set_ephemeris(svid, &bds_eph) == 0
+        self.base.set_ephemeris(svid, &bds_eph) != 0
     }
 
     pub fn set_almanac(&mut self, alm: &[GpsAlmanac]) -> bool {

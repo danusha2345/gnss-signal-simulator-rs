@@ -407,7 +407,7 @@ impl BeiDouEphemeris {
             svid: self.svid,
             source: self.source,
             valid: self.valid,
-            flag: self.flag,
+            flag: (self.sat_type + 1) as u16, // B-CNAV1 sat_type: 1=GEO, 2=IGSO, 3=MEO
             health: self.health,
             toe: self.toe,
             toc: self.toc,

@@ -2429,8 +2429,9 @@ impl IFDataGen {
         // RMS суммы некоррелированных спутников: A_total = sqrt(N) * A_single
         let total_rms_amplitude = (active_satellites as f64).sqrt() * single_sat_amplitude;
 
-        // Учитываем шум (σ=0.1) в общей RMS
-        let noise_sigma = 1.0;
+        // Noise sigma: 0.1 for HackRF transmission (signal must dominate over noise in IQ file)
+        // C++ SignalSim uses 1.0 for digital simulation, but for HackRF the receiver adds its own noise
+        let noise_sigma = 0.1;
         let total_rms_with_noise = (total_rms_amplitude * total_rms_amplitude
             + noise_sigma * noise_sigma).sqrt();
 
@@ -2542,12 +2543,18 @@ impl IFDataGen {
                     }
                 }
 
-                // Generate 1ms of samples for each satellite and accumulate
-                for sig_option in sat_if_signals.iter_mut() {
+                // Phase 1: Generate 1ms of samples for each satellite IN PARALLEL (Rayon)
+                // Each satellite writes only to its own sample_array — no data races
+                sat_if_signals.par_iter_mut().for_each(|sig_option| {
                     if let Some(ref mut sig) = sig_option {
                         sig.get_if_sample_cached(ms_time);
+                    }
+                });
 
-                        let buf_offset = ms_offset as usize * samples_per_ms;
+                // Phase 2: Accumulate satellite signals into block buffer (sequential)
+                let buf_offset = ms_offset as usize * samples_per_ms;
+                for sig_option in sat_if_signals.iter() {
+                    if let Some(ref sig) = sig_option {
                         let n = sig.sample_array.len().min(samples_per_ms);
                         for i in 0..n {
                             block_signal[buf_offset + i].real += sig.sample_array[i].real;

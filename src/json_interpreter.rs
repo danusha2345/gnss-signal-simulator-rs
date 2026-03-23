@@ -661,10 +661,11 @@ pub fn read_nav_file_limited(nav_data: &mut CNavData, filename: &str, max_per_sy
                     // Update or create UTC param with leap seconds
                     if let Some(ref mut utc) = nav_data.utc_param {
                         utc.TLS = tls as i8;
+                        utc.flag |= 2; // bit 1 = GPUT parsed, bit 2 = LEAP SECONDS parsed
                     } else {
                         nav_data.utc_param = Some(UtcParam {
                             TLS: tls as i8,
-                            flag: 1,
+                            flag: 3, // both GPUT and LEAP SECONDS
                             ..UtcParam::default()
                         });
                     }
@@ -801,7 +802,7 @@ pub fn read_nav_file_filtered(
 
     // Временные рамки для фильтрации (±2 часа от целевого времени)
     // Широкое окно для первичной фильтрации эфемерид GNSS
-    let time_window_hours = 2.0;
+    let time_window_hours = 3.0;
 
     // Счетчики для статистики фильтрации
     let mut gps_parsed = 0;
@@ -879,10 +880,11 @@ pub fn read_nav_file_filtered(
                             nav_data.leap_seconds = Some(tls);
                             if let Some(ref mut utc) = nav_data.utc_param {
                                 utc.TLS = tls as i8;
+                                utc.flag |= 2;
                             } else {
                                 nav_data.utc_param = Some(UtcParam {
                                     TLS: tls as i8,
-                                    flag: 1,
+                                    flag: 3,
                                     ..UtcParam::default()
                                 });
                             }
@@ -1192,13 +1194,26 @@ pub fn read_nav_file_filtered(
                 }
             }
 
-            if !gps_available_epochs.is_empty() {
-                if let Some(epoch_ephemeris) = gps_ephemeris_by_epoch.get(&best_gps_epoch) {
-                    // GPS-specific epoch selected
-                    for eph in epoch_ephemeris.values() {
-                        nav_data.add_gps_ephemeris(*eph);
-                        gps_accepted += 1;
+            // Per-satellite best ephemeris selection (like C++):
+            // For each GPS SVID, find the closest toe across ALL epochs
+            {
+                let mut best_per_sv: std::collections::HashMap<u8, (f64, crate::types::GpsEphemeris)> = std::collections::HashMap::new();
+                for (_epoch, epoch_map) in &gps_ephemeris_by_epoch {
+                    for (&svid, &eph) in epoch_map {
+                        let toe_seconds = (target_gps.Week as f64) * 604800.0 + (eph.toe as f64);
+                        let diff = (toe_seconds - target_seconds).abs();
+                        if let Some((best_diff, _)) = best_per_sv.get(&svid) {
+                            if diff < *best_diff {
+                                best_per_sv.insert(svid, (diff, eph));
+                            }
+                        } else {
+                            best_per_sv.insert(svid, (diff, eph));
+                        }
                     }
+                }
+                for (_, (_, eph)) in &best_per_sv {
+                    nav_data.add_gps_ephemeris(*eph);
+                    gps_accepted += 1;
                 }
             }
 
@@ -1230,38 +1245,26 @@ pub fn read_nav_file_filtered(
                 }
             }
 
-            // Добавляем все BeiDou эфемериды с выбранной эпохи в nav_data
-            if !beidou_available_epochs.is_empty() {
-                if let Some(epoch_ephemeris) = beidou_ephemeris_by_epoch.get(&best_beidou_epoch) {
-                    dprintln!(
-                        "[EPOCH-SELECT] Selected BeiDou epoch: toe={} (diff={:.1}h)",
-                        best_beidou_epoch,
-                        best_beidou_diff / 3600.0
-                    );
-                    dprintln!(
-                        "[BEIDOU-DEBUG] BeiDou satellites in selected epoch: {} satellites",
-                        epoch_ephemeris.len()
-                    );
-                    dprintln!(
-                        "[BEIDOU-DEBUG] SVIDs: {:?}",
-                        epoch_ephemeris.keys().collect::<Vec<_>>()
-                    );
-                    // Check toe values in this epoch
-                    let mut toe_values = std::collections::HashMap::new();
-                    for eph in epoch_ephemeris.values() {
-                        *toe_values.entry(eph.toe).or_insert(0) += 1;
+            // Per-satellite best BeiDou ephemeris selection (like C++)
+            {
+                let mut best_per_sv: std::collections::HashMap<u8, (f64, crate::types::BeiDouEphemeris)> = std::collections::HashMap::new();
+                for (_epoch, epoch_map) in &beidou_ephemeris_by_epoch {
+                    for (&svid, &eph) in epoch_map {
+                        let bds_week_offset = 1356;
+                        let toe_seconds = ((eph.week + bds_week_offset) as f64) * 604800.0 + (eph.toe as f64);
+                        let diff = (toe_seconds - target_seconds).abs();
+                        if let Some((best_diff, _)) = best_per_sv.get(&svid) {
+                            if diff < *best_diff {
+                                best_per_sv.insert(svid, (diff, eph));
+                            }
+                        } else {
+                            best_per_sv.insert(svid, (diff, eph));
+                        }
                     }
-                    dprintln!(
-                        "[BEIDOU-DEBUG] TOE values in this 'epoch': {:?}",
-                        toe_values
-                    );
-
-                    // Adding BeiDou satellites from selected epoch
-                    for eph in epoch_ephemeris.values() {
-                        nav_data.add_beidou_ephemeris(*eph);
-                        beidou_accepted += 1;
-                        // Added BeiDou ephemeris
-                    }
+                }
+                for (_, (_, eph)) in &best_per_sv {
+                    nav_data.add_beidou_ephemeris(*eph);
+                    beidou_accepted += 1;
                 }
             }
 
@@ -1293,28 +1296,25 @@ pub fn read_nav_file_filtered(
                 }
             }
 
-            // Добавляем все Galileo эфемериды с выбранной эпохи в nav_data
-            if !galileo_available_epochs.is_empty() {
-                if let Some(epoch_ephemeris) = galileo_ephemeris_by_epoch.get(&best_galileo_epoch) {
-                    println!(
-                        "[EPOCH-SELECT] Selected Galileo epoch: toe={} (diff={:.1}h)",
-                        best_galileo_epoch,
-                        best_galileo_diff / 3600.0
-                    );
-                    // Adding Galileo satellites from selected epoch
-                    for (svid, eph) in epoch_ephemeris {
-                        nav_data.add_galileo_ephemeris(*eph);
-                        galileo_accepted += 1;
-                        if [14, 15, 29, 30, 34].contains(svid) {
-                            println!(
-                                "[EPOCH-DEBUG] Added target SVID {} from toe={}",
-                                svid, eph.toe
-                            );
+            // Per-satellite best Galileo ephemeris selection (like C++)
+            {
+                let mut best_per_sv: std::collections::HashMap<u8, (f64, crate::types::GpsEphemeris)> = std::collections::HashMap::new();
+                for (_epoch, epoch_map) in &galileo_ephemeris_by_epoch {
+                    for (&svid, &eph) in epoch_map {
+                        let toe_seconds = (target_gps.Week as f64) * 604800.0 + (eph.toe as f64);
+                        let diff = (toe_seconds - target_seconds).abs();
+                        if let Some((best_diff, _)) = best_per_sv.get(&svid) {
+                            if diff < *best_diff {
+                                best_per_sv.insert(svid, (diff, eph));
+                            }
+                        } else {
+                            best_per_sv.insert(svid, (diff, eph));
                         }
-                        // Added Galileo ephemeris
                     }
-                } else {
-                    // No Galileo ephemerides found for selected epoch
+                }
+                for (_, (_, eph)) in &best_per_sv {
+                    nav_data.add_galileo_ephemeris(*eph);
+                    galileo_accepted += 1;
                 }
             }
         } else {
@@ -3015,8 +3015,9 @@ where
         tgd_b2ap: gps_eph.tgd_ext.get(1).copied().unwrap_or(0.0),
         tgd_b2bp: gps_eph.tgd_ext.get(2).copied().unwrap_or(0.0),
 
-        // BeiDou специфические параметры (определяем из SVID)
-        sat_type: determine_beidou_satellite_type(gps_eph.svid),
+        // BeiDou специфические параметры (определяем из semi-major axis)
+        // MEO: a ≈ 27906 km, GEO/IGSO: a ≈ 42162 km. Threshold at 35000 km.
+        sat_type: determine_beidou_satellite_type_by_axis(gps_eph.axis),
         urai: (gps_eph.ura.clamp(0, 15)) as u8, // URA Index для BeiDou (0-15)
         integrity_flag: 0, // По умолчанию = 0 (будет определено из навигационного сообщения)
 
@@ -3041,15 +3042,15 @@ where
     Some(bds_eph)
 }
 
-/// Определяет тип спутника BeiDou по SVID
-fn determine_beidou_satellite_type(svid: u8) -> u8 {
+/// Определяет тип спутника BeiDou по semi-major axis (надёжнее чем SVID)
+/// MEO: a ≈ 27906 km, GEO/IGSO: a ≈ 42162 km
+fn determine_beidou_satellite_type_by_axis(axis: f64) -> u8 {
     use crate::types::*;
 
-    match svid {
-        1..=5 => BDS_SAT_GEO,   // C01-C05: Geostationary satellites
-        6..=17 => BDS_SAT_IGSO, // C06-C17: Inclined Geosynchronous Orbit
-        18..=63 => BDS_SAT_MEO, // C18-C63: Medium Earth Orbit satellites
-        _ => BDS_SAT_MEO,       // По умолчанию MEO для неизвестных SVID
+    if axis < 35_000_000.0 {
+        BDS_SAT_MEO  // a < 35000 km → Medium Earth Orbit
+    } else {
+        BDS_SAT_IGSO // a ≥ 35000 km → GEO or IGSO (same reference axis in B-CNAV1)
     }
 }
 

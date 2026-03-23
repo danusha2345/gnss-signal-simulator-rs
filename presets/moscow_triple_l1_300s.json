@@ -1,0 +1,148 @@
+{
+	"version": 1.0,
+	"description": "GPS L1CA + BeiDou B1C + Galileo E1 - Moscow - 5 MHz - 300 seconds",
+	"time": {
+		"type": "UTC",
+		"year": 2025,
+		"month": 6,
+		"day": 5,
+		"hour": 10,
+		"minute": 5,
+		"second": 30
+	},
+	"trajectory": {
+		"name": "Moscow Red Square - 300s static",
+		"initPosition": {
+			"type": "LLA",
+			"format": "d",
+			"longitude": 37.6208,
+			"latitude": 55.7539,
+			"altitude": 150.0
+		},
+		"initVelocity": {
+			"type": "SCU",
+			"speed": 0,
+			"course": 0
+		},
+		"trajectoryList": [
+			{
+				"type": "Const",
+				"time": 300.0
+			}
+		]
+	},
+	"ephemeris": {
+		"type": "RINEX",
+		"name": "Rinex_Data/BRDC00IGS_R_20251560000_01D_MN.rnx"
+	},
+	"output": {
+		"type": "IFdata",
+		"format": "IQ8",
+		"sampleFreq": 5.0,
+		"centerFreq": 1575.42,
+		"name": "generated_files/moscow_triple_l1_300s.C8",
+		"config": {
+			"elevationMask": 5
+		},
+		"systemSelect": [
+			{
+				"system": "GPS",
+				"signal": "L1CA",
+				"enable": true
+			},
+			{
+				"system": "GPS",
+				"signal": "L1C",
+				"enable": false
+			},
+			{
+				"system": "GPS",
+				"signal": "L2C",
+				"enable": false
+			},
+			{
+				"system": "GPS",
+				"signal": "L2P",
+				"enable": false
+			},
+			{
+				"system": "GPS",
+				"signal": "L5",
+				"enable": false
+			},
+			{
+				"system": "BDS",
+				"signal": "B1C",
+				"enable": true
+			},
+			{
+				"system": "BDS",
+				"signal": "B1I",
+				"enable": false
+			},
+			{
+				"system": "BDS",
+				"signal": "B2a",
+				"enable": false
+			},
+			{
+				"system": "BDS",
+				"signal": "B2I",
+				"enable": false
+			},
+			{
+				"system": "BDS",
+				"signal": "B2b",
+				"enable": false
+			},
+			{
+				"system": "BDS",
+				"signal": "B3I",
+				"enable": false
+			},
+			{
+				"system": "Galileo",
+				"signal": "E1",
+				"enable": true
+			},
+			{
+				"system": "Galileo",
+				"signal": "E5a",
+				"enable": false
+			},
+			{
+				"system": "Galileo",
+				"signal": "E5b",
+				"enable": false
+			},
+			{
+				"system": "Galileo",
+				"signal": "E6",
+				"enable": false
+			},
+			{
+				"system": "GLONASS",
+				"signal": "G1",
+				"enable": false
+			},
+			{
+				"system": "GLONASS",
+				"signal": "G2",
+				"enable": false
+			},
+			{
+				"system": "GLONASS",
+				"signal": "G3",
+				"enable": false
+			}
+		]
+	},
+	"power": {
+		"noiseFloor": -172,
+		"initPower": {
+			"unit": "dBHz",
+			"value": 45
+		},
+		"elevationAdjust": true
+	}
+}

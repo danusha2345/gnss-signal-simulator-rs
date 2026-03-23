@@ -286,6 +286,16 @@ impl FastMath {
         (cos_vals, sin_vals)
     }
 
+    /// Integer phase LUT lookup matching C++ SatIfSignal.cpp:73-78.
+    /// `int_phase` is a u32 where full 2^32 range represents one cycle [0, 2π).
+    /// Returns (cos, sin) from the 65536-entry LUT.
+    #[inline]
+    pub fn lut_sin_cos(int_phase: u32) -> (f64, f64) {
+        Self::initialize_lut();
+        let index = (int_phase >> 16) as usize; // top 16 bits → 0..65535
+        unsafe { (COS_LUT[index], SIN_LUT[index]) }
+    }
+
     // Batch noise generation — инлайн Box-Muller с локальным rng (без unsafe глобалов)
     // Каждый ComplexNumber = 2 гауссовых значения, Box-Muller генерирует ровно 2 за раз
     pub fn generate_noise_block(output: &mut [ComplexNumber], sigma: f64) {
