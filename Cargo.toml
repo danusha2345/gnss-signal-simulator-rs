@@ -18,6 +18,10 @@ path = "src/bin/nav_diagnostics.rs"
 name = "gps_pilot"
 path = "src/bin/gps_pilot.rs"
 
+[[bin]]
+name = "decode_iq"
+path = "src/bin/decode_iq.rs"
+
 [dependencies]
 rand = "0.8"
 rayon = "1.8"
