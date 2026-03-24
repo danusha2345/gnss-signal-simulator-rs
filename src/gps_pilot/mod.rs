@@ -1,11 +1,12 @@
 //! Clean GPS L1CA signal generator.
 //!
-//! Minimal module: PRN code × carrier, no nav data.
 //! Stateless code phase, continuous carrier phase accumulation.
+//! GPS LNAV navigation data modulation (±1 every 20ms).
 
 use crate::constants::*;
 use crate::coordinate::{ecef_to_lla, lla_to_ecef};
 use crate::json_interpreter::{read_nav_file_limited, CNavData};
+use crate::lnavbit::LNavBit;
 use crate::prngenerate::PrnGenerate;
 use crate::satellite_param::{get_doppler, get_satellite_param, get_travel_time};
 use crate::types::*;
@@ -49,6 +50,9 @@ struct SatelliteChannel {
     doppler_hz: f64,
     travel_time_s: f64,
     amplitude: f64,
+    lnav: LNavBit,
+    nav_bits: [i32; 300],
+    current_frame: i32,
 }
 
 fn find_best_ephemeris(nav_data: &CNavData, svid: u8, target_sow: f64) -> Option<GpsEphemeris> {
@@ -131,6 +135,22 @@ pub fn generate(config: &GpsPilotConfig) -> Result<GenerationResult, Box<dyn std
         let doppler = get_doppler(&sat_param, SIGNAL_INDEX_L1CA);
         let travel_time = get_travel_time(&sat_param, SIGNAL_INDEX_L1CA);
 
+        // Initialize LNAV encoder with ephemeris + iono/UTC
+        let mut lnav = LNavBit::new();
+        lnav.set_ephemeris(svid as i32, &eph);
+        if let (Some(alpha), Some(beta), Some(utc)) = (
+            nav_data.get_gps_iono_alpha(),
+            nav_data.get_gps_iono_beta(),
+            nav_data.utc_param.as_ref(),
+        ) {
+            let iono_param = IonoParam {
+                a0: alpha[0], a1: alpha[1], a2: alpha[2], a3: alpha[3],
+                b0: beta[0], b1: beta[1], b2: beta[2], b3: beta[3],
+                flag: 1,
+            };
+            lnav.set_iono_utc(&iono_param, utc);
+        }
+
         sat_infos.push(SatelliteInfo {
             svid,
             elevation_deg: sat_param.Elevation.to_degrees(),
@@ -146,6 +166,9 @@ pub fn generate(config: &GpsPilotConfig) -> Result<GenerationResult, Box<dyn std
             doppler_hz: doppler,
             travel_time_s: travel_time,
             amplitude,
+            lnav,
+            nav_bits: [0i32; 300],
+            current_frame: -1,
         });
     }
 
@@ -225,6 +248,22 @@ pub fn generate(config: &GpsPilotConfig) -> Result<GenerationResult, Box<dyn std
                     let rx_time_sow =
                         ms_time.MilliSeconds as f64 / 1000.0 + ms_time.SubMilliSeconds;
 
+                    // Nav bit: compute transmit time in ms for frame/bit lookup
+                    let tx_ms_f64 = rx_time_sow * 1000.0 - ch.travel_time_s * 1000.0;
+                    let tx_ms = tx_ms_f64 as i32;
+                    let frame_number = tx_ms / 6000;
+                    if frame_number != ch.current_frame {
+                        let tx_time_gnss = GnssTime {
+                            Week: ms_time.Week,
+                            MilliSeconds: tx_ms,
+                            SubMilliSeconds: 0.0,
+                        };
+                        ch.lnav.get_frame_data(tx_time_gnss, ch.svid as i32, 0, &mut ch.nav_bits);
+                        ch.current_frame = frame_number;
+                    }
+                    let bit_index = ((tx_ms % 6000) / 20) as usize;
+                    let nav_bit: f64 = if ch.nav_bits[bit_index.min(299)] != 0 { -1.0 } else { 1.0 };
+
                     let base_idx = ms_offset * samples_per_ms;
 
                     for s in 0..samples_per_ms {
@@ -245,8 +284,8 @@ pub fn generate(config: &GpsPilotConfig) -> Result<GenerationResult, Box<dyn std
                         ch.carrier_phase += freq * dt;
 
                         buf[base_idx + s] = (
-                            (prn * cos_v * ch.amplitude) as f32,
-                            (prn * sin_v * ch.amplitude) as f32,
+                            (prn * nav_bit * cos_v * ch.amplitude) as f32,
+                            (prn * nav_bit * sin_v * ch.amplitude) as f32,
                         );
                     }
                 }
