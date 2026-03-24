@@ -2536,7 +2536,7 @@ impl IFDataGen {
                                 if full_update {
                                     sig.update_satellite_params(new_param, center_freq, &ms_time);
                                 } else {
-                                    sig.push_sat_param_for_ms(new_param, center_freq);
+                                    sig.push_sat_param_for_ms(new_param, center_freq, &ms_time);
                                 }
                             }
                         }

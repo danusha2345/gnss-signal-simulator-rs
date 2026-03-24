@@ -990,20 +990,30 @@ impl INavBit {
     }
 
     fn convolution_encode(&self, state: u8) -> u8 {
-        // Galileo convolution encoder implementation
-        let input_bit = (state >> 6) & 1;
-        let g1 = input_bit
-            ^ ((state >> 2) & 1)
-            ^ ((state >> 3) & 1)
-            ^ ((state >> 5) & 1)
-            ^ ((state >> 6) & 1);
-        let g2 = input_bit
-            ^ (state & 1)
-            ^ ((state >> 1) & 1)
-            ^ ((state >> 2) & 1)
-            ^ ((state >> 5) & 1)
-            ^ ((state >> 6) & 1);
-        ((g1 & 1) << 1) | (g2 & 1)
+        // Galileo I-NAV convolutional encoder: K=7, rate 1/2
+        // Processes 2 input bits per call, returns 4 output bits (g1,g2 for each)
+        //
+        // State layout after gal_convolution_encode shift:
+        //   [bit7..bit2] = 6 memory elements (bit7=oldest)
+        //   [bit1, bit0] = 2 new input bits (bit1=first, bit0=second)
+        //
+        // Generator polynomials (octal → binary, K=7):
+        //   G1 = 171 = 0b1111001 → taps: s0, s1, s2, s3, s6  (s0=input/newest)
+        //   G2 = 133 = 0b1011011 → taps: s0, s2, s3, s5, s6
+        // G2 is inverted at output (done by caller via ^0x5)
+
+        let b = |pos: u8| -> u8 { (state >> pos) & 1 };
+
+        // First bit (bit1): register = [s0=bit1, s1=bit2, s2=bit3, s3=bit4, s4=bit5, s5=bit6, s6=bit7]
+        let g1_1 = b(1) ^ b(2) ^ b(3) ^ b(4) ^ b(7);
+        let g2_1 = b(1) ^ b(3) ^ b(4) ^ b(6) ^ b(7);
+
+        // Second bit (bit0): register = [s0=bit0, s1=bit1, s2=bit2, s3=bit3, s4=bit4, s5=bit5, s6=bit6]
+        let g1_2 = b(0) ^ b(1) ^ b(2) ^ b(3) ^ b(6);
+        let g2_2 = b(0) ^ b(2) ^ b(3) ^ b(5) ^ b(6);
+
+        // Pack 4 bits: [g1_1, g2_1, g1_2, g2_2] from MSB to LSB
+        (g1_1 << 3) | (g2_1 << 2) | (g1_2 << 1) | g2_2
     }
 }
 

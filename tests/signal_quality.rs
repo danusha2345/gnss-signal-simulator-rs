@@ -109,7 +109,7 @@ fn test_carrier_phase_continuity() {
             if ms == 0 {
                 sig.update_satellite_params(&sat_param, CENTER_FREQ, &ms_time);
             } else {
-                sig.push_sat_param_for_ms(&sat_param, CENTER_FREQ);
+                sig.push_sat_param_for_ms(&sat_param, CENTER_FREQ, &ms_time);
             }
 
             sig.get_if_sample_cached(ms_time);
@@ -198,7 +198,7 @@ fn test_code_phase_continuity() {
             if ms == 0 {
                 sig.update_satellite_params(&sat_param, CENTER_FREQ, &ms_time);
             } else {
-                sig.push_sat_param_for_ms(&sat_param, CENTER_FREQ);
+                sig.push_sat_param_for_ms(&sat_param, CENTER_FREQ, &ms_time);
             }
             sig.get_if_sample_cached(ms_time);
 
@@ -487,7 +487,7 @@ fn test_gps_prn_correlation() {
                 SubMilliSeconds: 0.0,
             };
             if ms > 0 {
-                sig.push_sat_param_for_ms(&sat_param, CENTER_FREQ);
+                sig.push_sat_param_for_ms(&sat_param, CENTER_FREQ, &ms_time);
             }
             sig.get_if_sample_cached(ms_time);
 
@@ -740,7 +740,7 @@ fn test_gps_lnav_end_to_end_decode() {
             if is_block_boundary {
                 sig.update_satellite_params(&sat_param, CENTER_FREQ, &ms_time);
             } else {
-                sig.push_sat_param_for_ms(&sat_param, CENTER_FREQ);
+                sig.push_sat_param_for_ms(&sat_param, CENTER_FREQ, &ms_time);
             }
 
             sig.get_if_sample_cached(ms_time);

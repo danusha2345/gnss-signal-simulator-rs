@@ -392,13 +392,18 @@ impl SatIfSignal {
     }
 
     /// Lightweight per-ms parameter push (for per-ms main loop, matching C++ StepToNextMs).
-    /// Only updates sat_param and IF freq. Does NOT re-anchor code/carrier phase.
-    /// Phase continuity is maintained by get_if_sample_cached's Start→End model.
-    pub fn push_sat_param_for_ms(&mut self, new_param: &SatelliteParam, output_center_freq: f64) {
+    /// Updates sat_param, IF freq, and signal_time. Does NOT re-anchor code/carrier phase.
+    pub fn push_sat_param_for_ms(&mut self, new_param: &SatelliteParam, output_center_freq: f64, cur_time: &GnssTime) {
         self.sat_param = Some(*new_param);
         let signal_center_freq = self.get_signal_center_freq();
         self.if_freq = (signal_center_freq - output_center_freq) as i32;
-        // Invalidate computation cache so amplitude/code_step are recalculated with new Doppler
+
+        // Sync signal_time with actual transmit time every ms.
+        // Without this, signal_time drifts when travel_time crosses integer ms boundary,
+        // causing BUG 4 mid-sample detection to load wrong nav bit for ~50% of satellites.
+        let travel_time = get_travel_time(new_param, self.signal_index as usize);
+        self.signal_time = get_transmit_time(cur_time, travel_time);
+
         self.computation_cache.invalidate();
     }
 
