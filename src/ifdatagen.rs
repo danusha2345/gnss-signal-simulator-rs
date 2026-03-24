@@ -2506,7 +2506,7 @@ impl IFDataGen {
                     // C++ SatIfSignal: code phase from Start→End transmit time (continuous)
                     // Full update (code re-anchor) only at block boundaries;
                     // between blocks: lightweight push (Doppler/IF only, no re-anchor)
-                    let full_update = true; // Full update every 1ms — matches C++ SignalSim
+                    let full_update = ms_offset == 0; // Full update only at 50ms block boundaries; push between
                     for sig_option in sat_if_signals.iter_mut() {
                         if let Some(ref mut sig) = sig_option {
                             let param_ref = match sig.system {

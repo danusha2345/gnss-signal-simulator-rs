@@ -370,20 +370,15 @@ impl SatIfSignal {
         let signal_center_freq = self.get_signal_center_freq();
         self.if_freq = (signal_center_freq - output_center_freq) as i32;
 
-        // Code phase: re-anchor from true transmit time (~0.001 chip jump, filtered by DLL)
-        // Carrier phase: NO re-anchor — accumulates continuously via Doppler
+        // Update signal_time for nav bit timing (needed for BUG 4 mid-sample transitions)
         let travel_time = get_travel_time(new_param, self.signal_index as usize);
         let new_transmit_time = get_transmit_time(cur_time, travel_time);
         self.signal_time = new_transmit_time;
-        self.start_transmit_time = new_transmit_time;
 
-        // Re-anchor code phase from transmit time
-        if let Some(attr) = &self.prn_sequence.attribute {
-            self.start_code_phase = (new_transmit_time.MilliSeconds as f64
-                % attr.pilot_period as f64
-                + new_transmit_time.SubMilliSeconds)
-                * attr.chip_rate as f64;
-        }
+        // Do NOT re-anchor start_code_phase — it accumulates continuously via Doppler model.
+        // Re-anchoring creates code phase jumps that break nav bit decode for ~50% of satellites.
+
+        // Do NOT re-anchor start_carrier_phase — it accumulates continuously via Doppler model.
 
         // Refresh nav bits for the new signal_time
         self.satellite_signal.get_satellite_signal(
@@ -392,7 +387,6 @@ impl SatIfSignal {
             &mut self.pilot_signal,
         );
 
-        // Safety resets
         self.last_nav_bit_index = -1;
         self.computation_cache.invalidate();
     }
