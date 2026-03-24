@@ -60,6 +60,8 @@ fn create_gps_signal(svid: u8, nav_data: &CNavData, cur_time: &GnssTime) -> Opti
         return None; // Below horizon
     }
 
+    sat_param.CN0 = 4500; // 45.0 dBHz * 100
+
     // Create LNavBit with ephemeris
     let mut lnav = LNavBit::new();
     lnav.set_ephemeris(svid as i32, eph);
@@ -178,6 +180,7 @@ fn test_code_phase_continuity() {
         let mut prev_peak_pos: Option<f64> = None;
         let mut max_code_jump = 0.0_f64;
         let samples_per_ms = SAMPLE_RATE as usize;
+        let chip_step = 1023.0 / samples_per_ms as f64;
 
         // Get PRN code for correlation
         let prn_code: Vec<f64> = {
@@ -188,6 +191,9 @@ fn test_code_phase_continuity() {
             }
         };
 
+        sig.update_satellite_params(&sat_param, CENTER_FREQ, &cur_time);
+        let doppler_hz = get_doppler(&sat_param, SIGNAL_INDEX_L1CA);
+
         for ms in 0..200 {
             let ms_time = GnssTime {
                 Week: 2369,
@@ -196,29 +202,33 @@ fn test_code_phase_continuity() {
             };
 
             if ms == 0 {
-                sig.update_satellite_params(&sat_param, CENTER_FREQ, &ms_time);
+                // already called update_satellite_params above
             } else {
                 sig.push_sat_param_for_ms(&sat_param, CENTER_FREQ, &ms_time);
             }
             sig.get_if_sample_cached(ms_time);
 
-            // Simple early-late code phase estimation
-            // Strip carrier (use I channel only since GPS L1CA is on I)
-            let chip_step = 1023.0 / samples_per_ms as f64;
-            let mut prompt_sum = 0.0;
+            // Strip carrier then correlate with PRN code
             let mut best_offset = 0.0;
-            let mut best_corr: f64 = 0.0;
+            let mut best_power: f64 = 0.0;
 
-            // Search around expected code phase (0 offset = aligned)
             for offset_idx in 0..1023 {
                 let offset = offset_idx as f64;
-                let mut corr = 0.0;
-                for s in 0..samples_per_ms.min(1000) {
+                let mut corr_i = 0.0;
+                let mut corr_q = 0.0;
+                for s in 0..samples_per_ms {
+                    let t = (ms as f64 + s as f64 / samples_per_ms as f64) / 1000.0;
+                    let phase = std::f64::consts::TAU * doppler_hz * t;
+                    let (sin_v, cos_v) = phase.sin_cos();
+                    let stripped_i = sig.sample_array[s].real * cos_v + sig.sample_array[s].imag * sin_v;
+                    let stripped_q = -sig.sample_array[s].real * sin_v + sig.sample_array[s].imag * cos_v;
                     let chip = ((s as f64 * chip_step + offset) as usize) % 1023;
-                    corr += sig.sample_array[s].real * prn_code[chip];
+                    corr_i += stripped_i * prn_code[chip];
+                    corr_q += stripped_q * prn_code[chip];
                 }
-                if corr.abs() > best_corr.abs() {
-                    best_corr = corr;
+                let power = corr_i * corr_i + corr_q * corr_q;
+                if power > best_power {
+                    best_power = power;
                     best_offset = offset;
                 }
             }
@@ -475,47 +485,47 @@ fn test_gps_prn_correlation() {
         let (mut sig, sat_param) = result.unwrap();
 
         sig.update_satellite_params(&sat_param, CENTER_FREQ, &cur_time);
+        let doppler_hz = get_doppler(&sat_param, SIGNAL_INDEX_L1CA);
 
-        // Generate 20ms of signal (one nav bit period) and correlate
-        let mut accumulated_i = vec![0.0f64; 1023];
-        let mut accumulated_q = vec![0.0f64; 1023];
-
-        for ms in 0..20 {
-            let ms_time = GnssTime {
-                Week: 2369,
-                MilliSeconds: 381948000 + ms,
-                SubMilliSeconds: 0.0,
-            };
-            if ms > 0 {
-                sig.push_sat_param_for_ms(&sat_param, CENTER_FREQ, &ms_time);
+        // Get PRN code
+        let prn_code: Vec<f64> = {
+            let prn = PrnGenerate::new(GnssSystem::GpsSystem, SIGNAL_INDEX_L1CA as i32, svid as i32);
+            match prn.get_data_prn() {
+                Some(code) => code.iter().map(|&v| if v != 0 { -1.0 } else { 1.0 }).collect(),
+                None => { println!("PRN {:02}: no PRN code — skipped", svid); continue; }
             }
-            sig.get_if_sample_cached(ms_time);
+        };
 
-            let samples_per_ms = SAMPLE_RATE as usize;
-            let chip_step = 1023.0 / samples_per_ms as f64;
+        // Generate 1ms and search all 1023 code offsets with carrier stripping
+        sig.get_if_sample_cached(cur_time);
+        let samples_per_ms = SAMPLE_RATE as usize;
+        let chip_step = 1023.0 / samples_per_ms as f64;
 
+        let mut powers = vec![0.0f64; 1023];
+        for offset in 0..1023 {
+            let mut corr_i = 0.0_f64;
+            let mut corr_q = 0.0_f64;
             for s in 0..samples_per_ms {
-                let chip = ((s as f64 * chip_step) as usize) % 1023;
-                accumulated_i[chip] += sig.sample_array[s].real;
-                accumulated_q[chip] += sig.sample_array[s].imag;
+                let t = s as f64 / (samples_per_ms as f64 * 1000.0);
+                let phase = std::f64::consts::TAU * doppler_hz * t;
+                let (sin_v, cos_v) = phase.sin_cos();
+                let stripped_i = sig.sample_array[s].real * cos_v + sig.sample_array[s].imag * sin_v;
+                let stripped_q = -sig.sample_array[s].real * sin_v + sig.sample_array[s].imag * cos_v;
+                let chip = ((s as f64 * chip_step + offset as f64) as usize) % 1023;
+                corr_i += stripped_i * prn_code[chip];
+                corr_q += stripped_q * prn_code[chip];
             }
+            powers[offset] = corr_i * corr_i + corr_q * corr_q;
         }
 
-        // Compute power per chip
-        let total_power: f64 = accumulated_i.iter().zip(accumulated_q.iter())
-            .map(|(i, q)| i * i + q * q)
-            .sum();
-        let mean_power = total_power / 1023.0;
-        let max_power = accumulated_i.iter().zip(accumulated_q.iter())
-            .map(|(i, q)| i * i + q * q)
-            .fold(0.0f64, |a, b| a.max(b));
-
+        let mean_power: f64 = powers.iter().sum::<f64>() / 1023.0;
+        let max_power = powers.iter().fold(0.0f64, |a, &b| a.max(b));
         let peak_ratio = max_power / mean_power.max(1e-20);
 
-        println!("PRN {:02}: peak/mean = {:.1}, mean_power = {:.2e}, max_power = {:.2e}",
-                 svid, peak_ratio, mean_power, max_power);
+        println!("PRN {:02}: peak/mean = {:.1}, mean_power = {:.2e}, max_power = {:.2e}, doppler = {:.0} Hz",
+                 svid, peak_ratio, mean_power, max_power, doppler_hz);
 
-        // With correct PRN code, the peak should be at least 10x the mean
+        // With correct PRN code and carrier stripping, peak should be >> mean
         assert!(
             peak_ratio > 5.0,
             "PRN {}: peak_ratio {:.1} too low — PRN code not correlating",
@@ -1006,4 +1016,386 @@ fn gps_lnav_check_parity(bits: &[u32; 300]) -> bool {
     }
 
     true
+}
+
+// =============================================================================
+// TEST 8: Galileo I-NAV Viterbi decode + CRC24Q verification
+//
+// This test verifies that get_frame_data() produces valid I-NAV pages by:
+//   1. Checking sync patterns in even/odd halves
+//   2. De-interleaving the 8x30 block interleaver
+//   3. Viterbi decoding (K=7, G1=171oct, G2=133oct, G2 inverted)
+//   4. Checking tail bits are zero
+//   5. Extracting data bits and verifying CRC24Q
+// =============================================================================
+#[test]
+fn test_galileo_inav_viterbi_decode() {
+    let nav_data = load_rinex();
+
+    let mut inav = INavBit::new();
+
+    // Load Galileo ephemeris for E27
+    let svid: u8 = 27;
+    let mut loaded = false;
+    for eph in &nav_data.galileo_ephemeris {
+        if eph.valid != 0 && eph.svid == svid {
+            let result = inav.set_ephemeris(svid as i32, eph);
+            if result != 0 {
+                loaded = true;
+                break;
+            }
+        }
+    }
+    assert!(loaded, "Failed to load Galileo ephemeris for E{:02}", svid);
+    println!("Loaded Galileo E{:02} ephemeris", svid);
+
+    // -------------------------------------------------------------------------
+    // Viterbi decoder structures
+    // -------------------------------------------------------------------------
+    // K=7, 64 states (2^6). G1=171oct=0b1111001, G2=133oct=0b1011011, G2 inverted.
+    const NUM_STATES: usize = 64; // 2^(K-1)
+
+    // Precompute expected output (g1, g2_inverted) for each state and input bit
+    // State is the 6 memory bits. Input bit shifts in from the left.
+    // After shift: new_state = (input << 5) | (old_state >> 1)
+    // The encoder register for that step: [input, s5..s0] where s5..s0 = old_state bits 5..0
+    // G1 = 171oct = 1_111_001 -> taps at positions 0,3,4,5,6 (from MSB of 7-bit pattern)
+    //   = bit6, bit5, bit4, bit3, bit0  where bit6=input
+    // G2 = 133oct = 1_011_011 -> taps at positions 0,1,3,4,6
+    //   = bit6, bit4, bit3, bit1, bit0  where bit6=input
+    // (numbering: bit6=newest=input, bit0=oldest=state bit 0)
+    fn encoder_output(state: u8, input: u8) -> (u8, u8) {
+        // Register: [input, s5, s4, s3, s2, s1, s0]
+        let reg = ((input as u16) << 6) | (state as u16);
+        // G1 = 1111001 = bit positions 6,5,4,3,0
+        let g1 = (((reg >> 6) ^ (reg >> 5) ^ (reg >> 4) ^ (reg >> 3) ^ reg) & 1) as u8;
+        // G2 = 1011011 = bit positions 6,4,3,1,0
+        let g2 = (((reg >> 6) ^ (reg >> 4) ^ (reg >> 3) ^ (reg >> 1) ^ reg) & 1) as u8;
+        (g1, g2 ^ 1) // G2 inverted
+    }
+
+    // Build transition table: for each (state, input), compute (next_state, expected_g1, expected_g2_inv)
+    let mut transitions: Vec<(usize, u8, u8)> = vec![(0, 0, 0); NUM_STATES * 2];
+    for state in 0..NUM_STATES {
+        for input in 0..2u8 {
+            let next_state = ((input as usize) << 5) | (state >> 1);
+            let (g1, g2_inv) = encoder_output(state as u8, input);
+            transitions[state * 2 + input as usize] = (next_state, g1, g2_inv);
+        }
+    }
+
+    /// Viterbi decode 240 symbols (120 pairs) into 120 bits.
+    /// Symbols are (g1, g2_inverted) pairs. Returns decoded bits.
+    fn viterbi_decode(symbols: &[u8; 240], transitions: &[(usize, u8, u8)]) -> [u8; 120] {
+        const INF: i32 = 1_000_000;
+        let num_states = 64usize;
+        let num_steps = 120usize; // 240 symbols / 2
+
+        // Path metrics
+        let mut pm = vec![INF; num_states];
+        pm[0] = 0; // Start in state 0
+
+        // Path memory: for each (step, state), store the previous state
+        let mut path: Vec<Vec<usize>> = vec![vec![0; num_states]; num_steps];
+
+        for step in 0..num_steps {
+            let sym_g1 = symbols[step * 2];
+            let sym_g2 = symbols[step * 2 + 1];
+
+            let mut new_pm = vec![INF; num_states];
+
+            for state in 0..num_states {
+                if pm[state] >= INF { continue; }
+                for input in 0..2u8 {
+                    let (next_state, exp_g1, exp_g2) = transitions[state * 2 + input as usize];
+                    // Branch metric: Hamming distance
+                    let bm = ((sym_g1 ^ exp_g1) + (sym_g2 ^ exp_g2)) as i32;
+                    let candidate = pm[state] + bm;
+                    if candidate < new_pm[next_state] {
+                        new_pm[next_state] = candidate;
+                        path[step][next_state] = state;
+                    }
+                }
+            }
+
+            pm = new_pm;
+        }
+
+        // Traceback from state 0 (tail forces encoder to state 0)
+        let mut decoded = [0u8; 120];
+        let mut state = 0usize; // Tail forces state to 0
+        for step in (0..num_steps).rev() {
+            let prev_state = path[step][state];
+            // The input bit that caused transition from prev_state to state
+            // next_state = (input << 5) | (prev_state >> 1)
+            // So input = state >> 5 (the MSB of the new state comes from input)
+            let input = (state >> 5) as u8;
+            decoded[step] = input;
+            state = prev_state;
+        }
+
+        decoded
+    }
+
+    /// De-interleave 240 nav_bits (after sync) back to sequential symbol order.
+    /// Interleaver writes symbols row-by-row into 30-byte array (8 symbols per byte),
+    /// then reads column-by-column: nav[i*30+j] = sym[j*8+i] for i=0..7, j=0..29.
+    /// So to recover: sym[j*8+i] = nav[i*30+j], or equivalently:
+    /// for nav position k: row i=k/30, col j=k%30, original index = j*8 + i.
+    fn deinterleave(interleaved: &[i32]) -> [u8; 240] {
+        let mut symbols = [0u8; 240];
+        for k in 0..240 {
+            let i = k / 30; // row (bit position)
+            let j = k % 30; // column (byte index)
+            let orig_idx = j * 8 + i;
+            symbols[orig_idx] = interleaved[k] as u8;
+        }
+        symbols
+    }
+
+    /// CRC24Q computation on u32 word array, MSB-first per word.
+    /// Matches inavbit.rs crc24q_encode exactly.
+    fn crc24q_u32(data: &[u32], length: usize) -> u32 {
+        let poly: u32 = 0x1864CFB;
+        let mut crc: u32 = 0;
+        for i in 0..(length / 32) {
+            let mut word = data[i];
+            for _ in 0..32 {
+                crc = (crc << 1)
+                    ^ if (crc & 0x800000) != 0 { poly } else { 0 }
+                    ^ ((word >> 31) & 1);
+                word <<= 1;
+            }
+        }
+        if (length % 32) != 0 {
+            let mut word = data[length / 32];
+            for _ in 0..(length % 32) {
+                crc = (crc << 1)
+                    ^ if (crc & 0x800000) != 0 { poly } else { 0 }
+                    ^ ((word >> 31) & 1);
+                word <<= 1;
+            }
+        }
+        crc & 0xFFFFFF
+    }
+
+    let expected_sync = [0i32, 1, 0, 1, 1, 0, 0, 0, 0, 0];
+
+    let mut pages_tested = 0;
+    let mut pages_crc_ok = 0;
+    let mut all_ok = true;
+
+    // Generate 15 I-NAV pages with different TOWs (odd values for E1)
+    for page_idx in 0..15 {
+        let tow = page_idx * 2 + 1; // 1, 3, 5, 7, ..., 29
+        let time = GnssTime {
+            Week: 2369,
+            MilliSeconds: tow * 1000,
+            SubMilliSeconds: 0.0,
+        };
+
+        let mut nav_bits = [0i32; 500];
+        inav.get_frame_data(time, svid as i32, 1, &mut nav_bits);
+        pages_tested += 1;
+
+        // --- Step 3a: Verify sync patterns ---
+        let sync_even = &nav_bits[0..10];
+        let sync_odd = &nav_bits[250..260];
+        assert_eq!(sync_even, &expected_sync, "Page tow={}: even sync mismatch", tow);
+        assert_eq!(sync_odd, &expected_sync, "Page tow={}: odd sync mismatch", tow);
+
+        // --- Step 3b: De-interleave even part (positions 10..250) ---
+        let even_symbols = deinterleave(&nav_bits[10..250]);
+
+        // --- Step 3c: Viterbi decode even part ---
+        let even_decoded = viterbi_decode(&even_symbols, &transitions);
+
+        // --- Step 3d: Check tail bits (last 6 of 120 decoded bits) ---
+        let even_tail = &even_decoded[114..120];
+        let even_tail_ok = even_tail.iter().all(|&b| b == 0);
+        if !even_tail_ok {
+            println!("  Page tow={}: EVEN tail bits not zero: {:?}", tow, even_tail);
+            all_ok = false;
+        }
+
+        // --- Step 3f: De-interleave and Viterbi decode odd part (positions 260..500) ---
+        let odd_symbols = deinterleave(&nav_bits[260..500]);
+        let odd_decoded = viterbi_decode(&odd_symbols, &transitions);
+
+        let odd_tail = &odd_decoded[114..120];
+        let odd_tail_ok = odd_tail.iter().all(|&b| b == 0);
+        if !odd_tail_ok {
+            println!("  Page tow={}: ODD tail bits not zero: {:?}", tow, odd_tail);
+            all_ok = false;
+        }
+
+        // --- Step 3g: Reconstruct encode_data[0..7] from decoded bits ---
+        //
+        // The encoder packs 196 bits into encode_data[0..6] and computes CRC24Q
+        // over these 7 words (196 bits MSB-first). But the convolutional encoder
+        // processes the data with shifts:
+        //
+        // Even part (114 decoded bits):
+        //   encode_data[0]<<28 (32 bits from MSB): even_decoded[0..31]
+        //   encode_data[1] (32 bits): even_decoded[32..63]
+        //   encode_data[2] (32 bits): even_decoded[64..95]
+        //   encode_data[3] upper 18 bits [31:14]: even_decoded[96..113]
+        //
+        // Odd part (first 82 decoded bits = data before CRC/SSP/tail):
+        //   encode_data[4]<<14 bits [17:0] (18 bits from MSB): odd_decoded[0..17]
+        //   encode_data[5] (32 bits): odd_decoded[18..49]
+        //   encode_data[6] (32 bits): odd_decoded[50..81]
+        //
+        // The CRC is computed over encode_data[0..6] as u32 words, 196 bits total.
+        // Missing from decoded: encode_data[3] lower 14 bits and encode_data[4] upper 14 bits.
+        // These 28 bits bridge the even/odd boundary and are NOT convolutionally encoded.
+        //
+        // However, encode_data[3] and [4] are deterministically constructed from the
+        // word data, so the decoded even/odd halves plus the structural constraints
+        // let us reconstruct encode_data exactly.
+
+        // Helper: pack decoded bits into a u32 (MSB-first)
+        fn bits_to_u32(bits: &[u8]) -> u32 {
+            let mut val: u32 = 0;
+            for &b in bits {
+                val = (val << 1) | (b as u32 & 1);
+            }
+            val
+        }
+
+        // --- Reconstruct reference encode_data from INavBit internal state ---
+        //
+        // The CRC covers encode_data[0..6] as 196 bits, but 28 "bridge bits"
+        // (encode_data[3] lower 14 + encode_data[4] upper 14) are NOT convolutionally
+        // encoded, so we cannot reconstruct the full CRC input purely from Viterbi output.
+        // Instead, we replicate the encoder's word selection and encode_data construction
+        // from INavBit internal arrays, then verify both decoded data and CRC match.
+        let mut tow_local = tow;
+        if (tow_local & 1) == 0 { tow_local -= 1; }
+        if tow_local < 0 { tow_local += 604800; }
+        let subframe = ((tow_local + 360) % 720) / 30;
+        let page = (tow_local % 30) / 2;
+        let word_allocation_e1: [i32; 15] = [2, 4, 6, 7, 8, 17, 19, 16, 0, 0, 1, 3, 5, 0, 16];
+        let mut word_sel = word_allocation_e1[page as usize];
+        if word_sel > 10 { word_sel = 63; }
+        if (subframe & 1) != 0 && (word_sel == 7 || word_sel == 8) { word_sel += 2; }
+        if (subframe & 1) != 0 && (word_sel == 17 || word_sel == 19) { word_sel += 1; }
+
+        // Now replicate the encode_data construction to get the reference CRC
+        // Get word data from INavBit fields
+        let data: Vec<u32> = match word_sel {
+            0 => inav.gal_spare_data.to_vec(),
+            1..=5 => {
+                let idx = (svid as usize - 1);
+                inav.gal_eph_data[idx][(word_sel as usize - 1) * 4..word_sel as usize * 4].to_vec()
+            }
+            6 => inav.gal_utc_data.to_vec(),
+            7..=10 => {
+                let sub_idx = (subframe / 2) as usize;
+                inav.gal_alm_data[sub_idx][(word_sel as usize - 7) * 4..(word_sel as usize - 6) * 4].to_vec()
+            }
+            17..=20 => {
+                let idx = (svid as usize - 1);
+                inav.gal_rs_vector[idx][(word_sel as usize - 17) * 4..(word_sel as usize - 16) * 4].to_vec()
+            }
+            63 => inav.gal_dummy_data.to_vec(),
+            _ => inav.gal_dummy_data.to_vec(),
+        };
+
+        let mut dv = data.clone();
+        // Add WN/tow for word 0/5/6
+        if word_sel == 0 {
+            dv[3] |= (((time.Week - 1024) as u32) << 20) + tow_local as u32;
+        } else if word_sel == 5 {
+            dv[2] &= 0xff800000;
+            dv[2] |= ((((time.Week - 1024) & 0xfff) as u32) << 11) + ((tow_local >> 9) as u32);
+            dv[3] |= (tow_local << 23) as u32;
+        } else if word_sel == 6 {
+            dv[3] &= 0xff800000;
+            dv[3] |= (tow_local << 3) as u32;
+        }
+
+        // Build reference encode_data
+        let mut ref_ed = [0u32; 7];
+        ref_ed[0] = dv[0] >> 30;
+        ref_ed[1] = (dv[0] << 2) | (dv[1] >> 30);
+        ref_ed[2] = (dv[1] << 2) | (dv[2] >> 30);
+        ref_ed[3] = (dv[2] << 2) | (dv[3] >> 30);
+        ref_ed[4] = ((dv[3] << 2) & 0xfffc0000) | (dv[3] & 0xffff) | 0x20000;
+        ref_ed[5] = 0;
+        ref_ed[6] = 0;
+
+        // Compute reference CRC
+        let ref_crc = crc24q_u32(&ref_ed, 196);
+
+        // Extract CRC from Viterbi-decoded odd part (bits 82..105 = 24 CRC bits)
+        let mut decoded_crc: u32 = 0;
+        for i in 82..106 {
+            decoded_crc = (decoded_crc << 1) | (odd_decoded[i] as u32);
+        }
+
+        let crc_ok = ref_crc == decoded_crc;
+        if crc_ok {
+            pages_crc_ok += 1;
+        } else {
+            println!("  Page tow={}: CRC MISMATCH ref=0x{:06X} decoded=0x{:06X}",
+                     tow, ref_crc, decoded_crc);
+            all_ok = false;
+        }
+
+        // Also verify decoded data bits match reference encode_data
+        // Even part: encode_data[0]<<28 (32 bits) + encode_data[1] (32) + encode_data[2] (32) + encode_data[3] upper 18
+        let ref_even0 = ref_ed[0] << 28;
+        let dec_even0 = bits_to_u32(&even_decoded[0..32]);
+        let ref_even1 = ref_ed[1];
+        let dec_even1 = bits_to_u32(&even_decoded[32..64]);
+        let ref_even2 = ref_ed[2];
+        let dec_even2 = bits_to_u32(&even_decoded[64..96]);
+        let ref_even3_upper = ref_ed[3] >> 14;
+        let dec_even3_upper = bits_to_u32(&even_decoded[96..114]);
+
+        let data_match = ref_even0 == dec_even0
+            && ref_even1 == dec_even1
+            && ref_even2 == dec_even2
+            && ref_even3_upper == dec_even3_upper;
+
+        // Odd part: encode_data[4] bits [17:0] (18 bits) + encode_data[5] (32) + encode_data[6] (32)
+        let ref_odd_ed4_lo = ref_ed[4] & 0x3FFFF;
+        let dec_odd_ed4_lo = bits_to_u32(&odd_decoded[0..18]);
+        let ref_odd_ed5 = ref_ed[5];
+        let dec_odd_ed5 = bits_to_u32(&odd_decoded[18..50]);
+        let ref_odd_ed6 = ref_ed[6];
+        let dec_odd_ed6 = bits_to_u32(&odd_decoded[50..82]);
+
+        let odd_data_match = ref_odd_ed4_lo == dec_odd_ed4_lo
+            && ref_odd_ed5 == dec_odd_ed5
+            && ref_odd_ed6 == dec_odd_ed6;
+
+        // Extract word type from the reference encode_data (6 bits after even/odd and page_type)
+        // Word type is in word data starting at bit position 26 of data_vec[0]
+        // encode_data[1] bits [31:26] contain the word type (6 MSBs of encode_data[1])
+        let word_type = ref_ed[1] >> 26;
+
+        let status = if even_tail_ok && odd_tail_ok && crc_ok && data_match && odd_data_match {
+            "OK"
+        } else {
+            "FAIL"
+        };
+        if !data_match || !odd_data_match {
+            println!("  Page tow={}: DATA MISMATCH even={} odd={}", tow, data_match, odd_data_match);
+            all_ok = false;
+        }
+        println!("  Page tow={:2}: word_type={:2}, tail_even={}, tail_odd={}, CRC={}, data={} — {}",
+                 tow,
+                 word_type,
+                 if even_tail_ok { "OK" } else { "FAIL" },
+                 if odd_tail_ok { "OK" } else { "FAIL" },
+                 if crc_ok { "OK" } else { "FAIL" },
+                 if data_match && odd_data_match { "OK" } else { "FAIL" },
+                 status);
+    }
+
+    println!("\nSummary: {}/{} pages CRC OK", pages_crc_ok, pages_tested);
+    assert!(all_ok, "Galileo I-NAV Viterbi decode/CRC verification failed for some pages");
+    assert_eq!(pages_crc_ok, pages_tested, "Not all pages passed CRC24Q verification");
 }

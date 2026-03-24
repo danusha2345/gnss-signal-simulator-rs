@@ -2429,9 +2429,7 @@ impl IFDataGen {
         // RMS суммы некоррелированных спутников: A_total = sqrt(N) * A_single
         let total_rms_amplitude = (active_satellites as f64).sqrt() * single_sat_amplitude;
 
-        // Noise sigma: 0.1 for HackRF transmission (signal must dominate over noise in IQ file)
-        // C++ SignalSim uses 1.0 for digital simulation, but for HackRF the receiver adds its own noise
-        let noise_sigma = 0.1;
+        let noise_sigma = 1.0;
         let total_rms_with_noise = (total_rms_amplitude * total_rms_amplitude
             + noise_sigma * noise_sigma).sqrt();
 

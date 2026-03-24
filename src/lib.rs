@@ -43,6 +43,7 @@ pub mod constants;
 pub mod coordinate;
 pub mod delay_model;
 pub mod gnavbit;
+pub mod gps_pilot;
 pub mod gnsstime;
 pub mod ifdatagen;
 pub mod inavbit;

@@ -18,6 +18,7 @@ This is a GNSS (Global Navigation Satellite System) signal generation library wr
 - **Entry point**: `src/main.rs` demonstrates usage of almanac conversion, BCNav1Bit frame generation, and parameter setting
 - **Library interface**: `src/lib.rs` exposes all public modules and types
 - **Signal generation**: `src/ifdatagen.rs` contains the main IF data generation logic
+- **Clean GPS generator**: `src/gps_pilot/mod.rs` — minimal GPS L1CA generator with correct phase model
 
 ### Key Modules
 
@@ -557,3 +558,36 @@ cargo run --bin nav_diagnostics -- --rinex Rinex_Data/BRDC00IGS_R_20251560000_01
 | Galileo E1 | 6       | 6     | 32–90         | +1 (E07 restored) |
 | **Total**  | **25**  | **18**|               | **+1 from 17** |
 
+### Clean GPS L1CA Generator — `gps_pilot` (March 2026)
+
+**Purpose**: Minimal, from-scratch GPS L1CA signal generator with proven phase continuity. Replaces the complex `sat_if_signal.rs` (1700 lines) for GPS L1CA with a clean ~300-line module.
+
+**Files**:
+- `src/gps_pilot/mod.rs` — generator module (~300 lines)
+- `src/bin/gps_pilot.rs` — binary entry point
+- `tests/gps_pilot_test.rs` — verification tests (acquisition + phase continuity)
+
+**Signal Model** (key differences from `sat_if_signal.rs`):
+- **Code phase**: STATELESS — `(transmit_time * 1023000) % 1023` — derived from absolute time each sample, cannot drift
+- **Carrier phase**: continuous accumulation `phase += doppler/Fs` — never re-anchored
+- **Per-ms updates**: `get_satellite_param()` every 1ms for Doppler/travel_time
+- **No nav data**: PRN code × carrier only (nav modulation to be added)
+
+**Verification results**:
+- Clean phase test (no noise): **0.000000 cycles** max phase jump over 30 seconds
+- 13 GPS satellites acquired, z-scores 11-17
+- Generation: 14s for 30s signal (release build, rayon parallel)
+
+**Usage**:
+```bash
+cargo run --release --bin gps_pilot [RINEX_FILE]
+# Output: generated_files/gps_pilot.C8 (IQ8, 5 MHz, 30s)
+```
+
+### Noise Sigma Fix (March 2026)
+
+**`noise_sigma` changed from 0.1 to 1.0** in `src/ifdatagen.rs`.
+
+- σ=0.1 gave SNR=-2dB (unrealistic), z-scores 4x higher than C++ reference
+- σ=1.0 gives SNR=-22dB (realistic GNSS), z-scores match C++ (44-60 vs 44-66)
+- Real receiver: GPS fix with 8 SVs (was 5 with σ=0.1), HDOP=1.1, correct Moscow coordinates

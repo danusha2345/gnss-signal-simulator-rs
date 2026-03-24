@@ -14,6 +14,10 @@ path = "src/bin/spectrum_analyzer.rs"
 name = "nav_diagnostics"
 path = "src/bin/nav_diagnostics.rs"
 
+[[bin]]
+name = "gps_pilot"
+path = "src/bin/gps_pilot.rs"
+
 [dependencies]
 rand = "0.8"
 rayon = "1.8"

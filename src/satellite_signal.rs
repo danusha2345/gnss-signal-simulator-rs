@@ -542,16 +542,15 @@ impl SatelliteSignal {
             },
             GnssSystem::GalileoSystem => match self.sat_signal {
                 E1 => {
-                    // Galileo OS SIS ICD: E1-B (data) on I, E1-C (pilot) on Q
-                    // s_E1 = e_B × cos(ωt) - e_C × sin(ωt)
-                    // Real receiver needs pilot on Q for acquisition/tracking
+                    // C++ SatelliteSignal.cpp: both data and pilot on I (real)
+                    // This matches the working C++ SignalSim reference
                     *data_signal = ComplexNumber {
                         real: -data_bit as f64 * AMPLITUDE_1_2,
                         imag: 0.0,
                     };
                     *pilot_signal = ComplexNumber {
-                        real: 0.0,
-                        imag: -pilot_bit as f64 * AMPLITUDE_1_2,
+                        real: pilot_bit as f64 * AMPLITUDE_1_2,
+                        imag: 0.0,
                     };
                 }
                 E5A | E5B => {

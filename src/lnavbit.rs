@@ -87,8 +87,8 @@ impl Default for LNavBit {
 impl LNavBit {
     pub fn new() -> Self {
         let mut lnav_bit = LNavBit {
-            gps_stream123: [[[0xaa; 8]; 3]; 32],
-            gps_stream45: [[[0x55; 8]; 25]; 2],
+            gps_stream123: [[[0x00; 8]; 3]; 32],
+            gps_stream45: [[[0x00; 8]; 25]; 2],
         };
 
         // Assign page id
