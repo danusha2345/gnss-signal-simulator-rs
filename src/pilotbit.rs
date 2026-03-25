@@ -47,7 +47,8 @@ static SECONDARY_CODE_L5: [u32; 1] = [0x72b20];
 
 /// Galileo E1 secondary code (25 bits)
 /// Источник: Galileo OS SIS ICD v2.1, Section 4.3.3
-/// Код: 1001101101010000000011100 (hex: 0x9b501c)
+/// Galileo E1 secondary code (25 bits) — matches C++ SignalSim
+/// Код: 0011100000001010110110010 (hex: 0x9b501c)
 static SECONDARY_CODE_E1: [u32; 1] = [0x9b501c];
 
 /// BDS B1C secondary codes (1800 bits per satellite, 63 satellites)
