@@ -43,3 +43,7 @@ panic = "abort"
 # КРИТИЧЕСКИЕ ФЛАГИ ДЛЯ МАКСИМАЛЬНОЙ ПРОИЗВОДИТЕЛЬНОСТИ
 [profile.release.build-override]
 opt-level = 3
+
+[[bin]]
+name = "nav_dump"
+path = "src/bin/nav_dump.rs"

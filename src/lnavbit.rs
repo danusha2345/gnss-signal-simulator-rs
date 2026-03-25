@@ -87,7 +87,7 @@ impl Default for LNavBit {
 impl LNavBit {
     pub fn new() -> Self {
         let mut lnav_bit = LNavBit {
-            gps_stream123: [[[0x00; 8]; 3]; 32],
+            gps_stream123: [[[0xaa; 8]; 3]; 32],
             gps_stream45: [[[0x00; 8]; 25]; 2],
         };
 
@@ -287,10 +287,10 @@ impl LNavBit {
         stream[0][1] = Self::compose_bits(((ephemeris.flag >> 2) & 1) as i32, 23, 1);
 
         // Words 5-6 (stream[0][2], stream[0][3]): reserved
-        stream[0][2] = 0;
-        stream[0][3] = 0;
+        // C++ leaves these at 0xaa (not written by ComposeGpsStream123)
+        // Do NOT overwrite — keep 0xaa from initialization
 
-        // Word 7 (stream[0][4]): reserved(16 bits, 8-23) + TGD(8 bits, 0-7)
+        // Word 7 (stream[0][4]): TGD(8 bits, 0-7) — C++ uses = COMPOSE_BITS(IntValue, 0, 8)
         stream[0][4] = Self::compose_bits(Self::unscale_int(ephemeris.tgd, -31), 0, 8);
 
         // Word 8 (stream[0][5]): IODC_LSB(8 bits, 16-23) + toc(16 bits, 0-15)

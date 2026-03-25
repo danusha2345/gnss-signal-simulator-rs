@@ -11,9 +11,9 @@ fn main() {
             .unwrap_or_else(|| "Rinex_Data/BRDC00IGS_R_20251560000_01D_MN.rnx".to_string()),
         output_path: "generated_files/gps_pilot.C8".to_string(),
         receiver_lla: LlaPosition {
-            lat: 48.4928_f64.to_radians(),
-            lon: (-114.2847_f64).to_radians(),
-            alt: 100.0,
+            lat: 55.7539_f64.to_radians(),
+            lon: 37.6208_f64.to_radians(),
+            alt: 150.0,
         },
         utc_time: UtcTime {
             Year: 2025,
@@ -23,10 +23,10 @@ fn main() {
             Minute: 5,
             Second: 30.0,
         },
-        duration_s: 30.0,
+        duration_s: 300.0,
         sample_rate_hz: 5_000_000.0,
         if_freq_hz: 0.0,
-        cn0_db: 45.0,
+        cn0_db: 50.0,
         elevation_mask_deg: 5.0,
     };
 

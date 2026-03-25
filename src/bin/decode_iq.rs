@@ -45,7 +45,7 @@ fn main() {
     let target_sow = gps_time.MilliSeconds as f64 / 1000.0;
 
     let receiver_lla = LlaPosition {
-        lat: 48.4928_f64.to_radians(), lon: (-114.2847_f64).to_radians(), alt: 100.0,
+        lat: 55.7539_f64.to_radians(), lon: 37.6208_f64.to_radians(), alt: 150.0,
     };
     let receiver_ecef = lla_to_ecef(&receiver_lla);
     let receiver_lla_conv = ecef_to_lla(&receiver_ecef);
