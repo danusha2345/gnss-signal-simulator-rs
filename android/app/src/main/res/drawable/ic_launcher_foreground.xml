@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Satellite body -->
+    <path
+        android:fillColor="#4CAF50"
+        android:pathData="M48,44 L60,44 L60,64 L48,64 Z" />
+
+    <!-- Left solar panel -->
+    <path
+        android:fillColor="#42A5F5"
+        android:pathData="M24,48 L46,48 L46,60 L24,60 Z" />
+    <!-- Left panel lines -->
+    <path
+        android:strokeColor="#1565C0"
+        android:strokeWidth="0.8"
+        android:pathData="M30,48 L30,60 M36,48 L36,60 M42,48 L42,60" />
+
+    <!-- Right solar panel -->
+    <path
+        android:fillColor="#42A5F5"
+        android:pathData="M62,48 L84,48 L84,60 L62,60 Z" />
+    <!-- Right panel lines -->
+    <path
+        android:strokeColor="#1565C0"
+        android:strokeWidth="0.8"
+        android:pathData="M68,48 L68,60 M74,48 L74,60 M80,48 L80,60" />
+
+    <!-- Antenna -->
+    <path
+        android:fillColor="#E0E0E0"
+        android:pathData="M52,38 L56,38 L56,44 L52,44 Z" />
+    <path
+        android:fillColor="#FFA726"
+        android:pathData="M54,32 m-4,0 a4,4 0 1,1 8,0 a4,4 0 1,1 -8,0" />
+
+    <!-- Signal waves -->
+    <path
+        android:strokeColor="#FFA726"
+        android:strokeWidth="1.5"
+        android:fillColor="#00000000"
+        android:pathData="M54,28 m-8,0 a8,6 0 0,1 16,0" />
+    <path
+        android:strokeColor="#FFA726"
+        android:strokeWidth="1.2"
+        android:fillColor="#00000000"
+        android:pathData="M54,25 m-12,0 a12,8 0 0,1 24,0" />
+
+    <!-- Bottom detail -->
+    <path
+        android:fillColor="#66BB6A"
+        android:pathData="M50,64 L58,64 L58,68 L50,68 Z" />
+
+    <!-- Orbit ring -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1"
+        android:fillColor="#00000000"
+        android:pathData="M54,54 m-28,0 a28,12 35 1,0 56,0 a28,12 35 1,0 -56,0" />
+</vector>
