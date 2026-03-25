@@ -3230,16 +3230,18 @@ fn read_contents_time(line: &str, data: &mut [f64]) -> Option<u8> {
 /// Парсит календарную эпоху из заголовочной строки RINEX (YYYY MM DD hh mm ss.s)
 /// Возвращает UtcTime (используем его как общий календарный контейнер)
 fn parse_epoch_from_header_line(line: &str) -> Option<UtcTime> {
-    // Формат: <Sys><SVID> YYYY MM DD hh mm ss.sssss ....
-    // Используем разбиение по пробелам для устойчивости к отступам
-    let mut parts = line.split_whitespace();
-    let _sys_svid = parts.next()?; // G07, E05, C13, ...
-    let year = parts.next()?.parse::<i32>().ok()?;
-    let month = parts.next()?.parse::<i32>().ok()?;
-    let day = parts.next()?.parse::<i32>().ok()?;
-    let hour = parts.next()?.parse::<i32>().ok()?;
-    let minute = parts.next()?.parse::<i32>().ok()?;
-    let second = parts.next()?.replace('D', "E").parse::<f64>().ok()?;
+    // RINEX 3.04 fixed-width format:
+    // Col 0-2: Sys+SVID (e.g. "G02")
+    // Col 4-7: Year, Col 9-10: Month, Col 12-13: Day
+    // Col 15-16: Hour, Col 18-19: Minute, Col 21-22: Second (integer part)
+    // Note: seconds and af0 may run together without space (e.g. "00-1.529...")
+    if line.len() < 23 { return None; }
+    let year = line.get(4..8)?.trim().parse::<i32>().ok()?;
+    let month = line.get(9..11)?.trim().parse::<i32>().ok()?;
+    let day = line.get(12..14)?.trim().parse::<i32>().ok()?;
+    let hour = line.get(15..17)?.trim().parse::<i32>().ok()?;
+    let minute = line.get(18..20)?.trim().parse::<i32>().ok()?;
+    let second = line.get(21..23)?.trim().parse::<f64>().unwrap_or(0.0);
     Some(UtcTime {
         Year: year,
         Month: month,
