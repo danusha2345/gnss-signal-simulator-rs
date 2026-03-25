@@ -2666,23 +2666,13 @@ where
     eph.cis = data[14];
     eph.toe = (data[11] + 0.5) as i32;
 
-    // Специфичные параметры для GPS и Galileo
-    // Определяем систему по значениям: у Galileo data[26] обычно близко к 0, у GPS - большие числа
-    if data.len() > 26 && data[26] > 10.0 {
-        // GPS: используем стандартный IODC из data[26]
-        eph.iodc = data[26] as u16;
-        // Убираем отладку GPS чтобы не засорять вывод
-    } else {
-        // GALILEO: используем IODnav (data[3]) или SVID если IODnav равен 0
-        eph.iodc = if data[3] == 0.0 {
-            eph.svid as u16
-        } else {
-            data[3] as u16
-        };
-        // DEBUG: Galileo IODC фикс отключен для уменьшения вывода
-        // println!("[GAL-IODC-FIX] SV{:02}: data[3]={:.0} (IODnav), data[26]={:.1} → iodc={}", eph.svid, data[3], if data.len() > 26 { data[26] } else { -1.0 }, eph.iodc);
-    }
+    // GPS RINEX: data[3]=IODE, data[26]=IODC
     eph.iode = data[3] as u8;
+    if data.len() > 26 {
+        eph.iodc = data[26] as u16;
+    } else {
+        eph.iodc = eph.iode as u16;
+    }
     if data.len() > 21 {
         eph.week = data[21] as i32;
     }
