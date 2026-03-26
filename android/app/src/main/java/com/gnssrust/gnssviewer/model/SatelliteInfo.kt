@@ -19,7 +19,7 @@ data class SatelliteInfo(
     val statusIndex: Int = 0
 ) {
     val key: String
-        get() = "${constellation.shortName}${svid}_${band?.name ?: statusIndex}"
+        get() = "${statusIndex}_${constellation.shortName}${svid}_${band?.name ?: "x"}"
 
     val multipathString: String
         get() = when (multipathIndicator) {

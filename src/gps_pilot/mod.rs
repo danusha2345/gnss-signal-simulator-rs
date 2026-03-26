@@ -189,7 +189,7 @@ pub fn generate(config: &GpsPilotConfig) -> Result<GenerationResult, Box<dyn std
     let total_samples = total_ms as usize * samples_per_ms;
     let dt = 1.0 / config.sample_rate_hz;
 
-    let noise_sigma = 0.5;
+    let noise_sigma = 1.0;
     let total_sig_rms = (channels.len() as f64).sqrt() * amplitude;
     let total_rms = (total_sig_rms * total_sig_rms + noise_sigma * noise_sigma).sqrt();
     let agc_gain = 0.25 / total_rms;
