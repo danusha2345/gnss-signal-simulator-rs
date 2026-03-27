@@ -189,7 +189,7 @@ pub fn generate(config: &GpsPilotConfig) -> Result<GenerationResult, Box<dyn std
     let total_samples = total_ms as usize * samples_per_ms;
     let dt = 1.0 / config.sample_rate_hz;
 
-    let noise_sigma = 1.0;
+    let noise_sigma = 0.5;
     let total_sig_rms = (channels.len() as f64).sqrt() * amplitude;
     let total_rms = (total_sig_rms * total_sig_rms + noise_sigma * noise_sigma).sqrt();
     let agc_gain = 0.25 / total_rms;
@@ -248,22 +248,6 @@ pub fn generate(config: &GpsPilotConfig) -> Result<GenerationResult, Box<dyn std
                     let rx_time_sow =
                         ms_time.MilliSeconds as f64 / 1000.0 + ms_time.SubMilliSeconds;
 
-                    // Nav bit: compute transmit time in ms for frame/bit lookup
-                    let tx_ms_f64 = rx_time_sow * 1000.0 - ch.travel_time_s * 1000.0;
-                    let tx_ms = tx_ms_f64 as i32;
-                    let frame_number = tx_ms / 6000;
-                    if frame_number != ch.current_frame {
-                        let tx_time_gnss = GnssTime {
-                            Week: ms_time.Week,
-                            MilliSeconds: tx_ms,
-                            SubMilliSeconds: 0.0,
-                        };
-                        ch.lnav.get_frame_data(tx_time_gnss, ch.svid as i32, 0, &mut ch.nav_bits);
-                        ch.current_frame = frame_number;
-                    }
-                    let bit_index = ((tx_ms % 6000) / 20) as usize;
-                    let nav_bit: f64 = if ch.nav_bits[bit_index.min(299)] != 0 { -1.0 } else { 1.0 };
-
                     let base_idx = ms_offset * samples_per_ms;
 
                     for s in 0..samples_per_ms {
@@ -277,6 +261,24 @@ pub fn generate(config: &GpsPilotConfig) -> Result<GenerationResult, Box<dyn std
                             ((chip_count % CODE_LEN as f64) + CODE_LEN as f64) as usize
                                 % CODE_LEN;
                         let prn = ch.prn_code[chip_index];
+
+                        // Nav bit: aligned to transmit time (code epoch), not receiver time
+                        let tx_ms_sample = (tx_time * 1000.0) as i32;
+                        let frame_number = tx_ms_sample / 6000;
+                        if frame_number != ch.current_frame {
+                            let tx_time_gnss = GnssTime {
+                                Week: ms_time.Week,
+                                MilliSeconds: tx_ms_sample,
+                                SubMilliSeconds: 0.0,
+                            };
+                            ch.lnav.get_frame_data(
+                                tx_time_gnss, ch.svid as i32, 0, &mut ch.nav_bits,
+                            );
+                            ch.current_frame = frame_number;
+                        }
+                        let bit_index = ((tx_ms_sample % 6000) / 20) as usize;
+                        let nav_bit: f64 =
+                            if ch.nav_bits[bit_index.min(299)] != 0 { -1.0 } else { 1.0 };
 
                         // Carrier phase: continuous accumulation
                         let angle = ch.carrier_phase * std::f64::consts::TAU;

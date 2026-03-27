@@ -26,7 +26,7 @@ fn main() {
         duration_s: 300.0,
         sample_rate_hz: 5_000_000.0,
         if_freq_hz: 0.0,
-        cn0_db: 45.0,
+        cn0_db: 55.0,
         elevation_mask_deg: 5.0,
     };
 
