@@ -434,7 +434,7 @@ impl INavBit {
         let mut tow: i32;
 
         let mut word: i32;
-        let mut bit_count: i32 = 0;
+        let mut bit_count: i32 = 28; // C++ starts at 28, not 0!
         // 128bit data
         let mut encode_data: [u32; 7] = [0; 7]; // 196bit to be encoded by CRC
 
@@ -496,48 +496,28 @@ impl INavBit {
         if word == 0 {
             data_vec[3] |= (((start_time.Week - 1024) as u32) << 20) + tow as u32;
         } else if word == 5 {
-            // ICD: bits 22-16 = spare(7), bits 15-4 = WN(12), bits 3-0 = TOW[19:16](4)
-            data_vec[2] &= 0xff800000; // clear bits 22-0 (preserve health at 31-23)
-            let wn = ((start_time.Week - 1024) & 0xfff) as u32;
-            data_vec[2] |= (wn << 4) | (((tow >> 16) as u32) & 0xF);
-            // ICD: data_vec[3] bits 31-16 = TOW[15:0](16), bits 15-0 = spare(odd part)
-            data_vec[3] = ((tow as u32) & 0xFFFF) << 16;
+            data_vec[2] &= 0xff800000; // clear 23LSB
+            data_vec[2] |=
+                ((((start_time.Week - 1024) & 0xfff) as u32) << 11) + ((tow >> 9) as u32);
+            data_vec[3] |= (tow << 23) as u32;
         } else if word == 6 {
             data_vec[3] &= 0xff800000; // clear 23LSB
             data_vec[3] |= (tow << 3) as u32;
         }
 
-        // Build encode_data: 196-bit CRC input packed MSB-first into u32 words.
-        // ICD: CRC covers e/o(1)+pt(1)+even_data(112) + odd_e/o(1)+pt(1)+odd_data(80) = 196 bits.
-        // We shift data_vec by 2 bits to insert e/o+pt prefix at MSB of encode_data[0].
-        // For even part: e/o=0, pt=0. For types 0-15, data_vec[0] bits 31-30 are already 00.
-        encode_data[0] = data_vec[0] >> 2;
-        encode_data[1] = (data_vec[0] << 30) | (data_vec[1] >> 2);
-        encode_data[2] = (data_vec[1] << 30) | (data_vec[2] >> 2);
-        encode_data[3] = (data_vec[2] << 30) | (data_vec[3] >> 2);
-        // Even/odd boundary: last 14 even bits at encode_data[3] bits 13-0 are data_vec[3] bits 15-2.
-        // Odd part: e/o=1(bit17 of original layout) → now at a different position.
-        // Odd e/o+pt: we need to place them after the 114th even bit.
-        // 114 bits = 3*32 + 18. So bit 114 = encode_data[3] bit 13.
-        // encode_data[3] bits 13-0: odd_e/o(1) + odd_pt(1) + odd_data_first_12(12)
-        encode_data[3] = (data_vec[2] << 30) | (data_vec[3] >> 2);
-        // Clear bits 13-0 and insert odd e/o+pt:
-        encode_data[3] &= 0xFFFFC000; // keep even part (bits 31-14)
-        encode_data[3] |= (1 << 13); // odd e/o = 1 at bit 13
-        // odd pt = 0 at bit 12 (already 0)
-        // odd data: data_vec[3] bits 15-0 = 16 bits, but only 12 fit here (bits 11-0)
-        encode_data[3] |= ((data_vec[3] & 0xFFFF) >> 4) & 0xFFF; // upper 12 of 16 odd data bits
-        encode_data[4] = ((data_vec[3] & 0xF) << 28); // remaining 4 odd data bits at MSB
-        // Reserved 1 (40 bits) + SAR (22 bits) + spare (2 bits) = 64 bits → encode_data[4] bits 27-0 + encode_data[5]
-        encode_data[4] |= 0; // reserved = 0
-        encode_data[5] = 0; // reserved + SAR + spare = 0
-        encode_data[6] = 0;
+        // put into encode_data to do CRC24Q encoding (totally 196 bits, leaving 28MSB of encode_data[0] as 0s)
+        encode_data[0] = data_vec[0] >> 30; // even/odd=0, page type=0, 2bit data
+        encode_data[1] = (data_vec[0] << 2) | (data_vec[1] >> 30); // 32bit data
+        encode_data[2] = (data_vec[1] << 2) | (data_vec[2] >> 30); // 32bit data
+        encode_data[3] = (data_vec[2] << 2) | (data_vec[3] >> 30); // 32bit data
+        encode_data[4] = ((data_vec[3] << 2) & 0xfffc0000) | (data_vec[3] & 0xffff) | 0x20000; // 14bit data, even/odd=1, page type=1, 16bit data
+        encode_data[5] = 0; // 32MSB of Reserved 1
+        encode_data[6] = 0; // 8LSB of Reserved 1, SAR and Spare bits are 0
         let crc_result: u32 = self.crc24q_encode(&encode_data, 196);
 
-        // Convolution encode even part: 114 bits from encode_data[0] bit31 through encode_data[3] bit14
+        // do convolution encode on even part (encode_data[0] bit3 through encode_data[4] bit18)
         let mut conv_bits_even: u8 = 0;
-        encode_word = encode_data[0];
-        bit_count = 0;
+        encode_word = encode_data[0] << 28; // move to MSB
         for i in 0..(114 / 2) {
             even_part[i / 2] = (even_part[i / 2] << 4)
                 + self.gal_convolution_encode(&mut conv_bits_even, &mut encode_word);
@@ -547,7 +527,7 @@ impl INavBit {
                 if index < encode_data.len() {
                     encode_word = encode_data[index];
                 } else {
-                    encode_word = 0;
+                    encode_word = 0; // Используем 0 для индексов вне границ
                 }
             }
         }
@@ -558,14 +538,10 @@ impl INavBit {
         even_part[29] = (even_part[29] << 4)
             + self.gal_convolution_encode(&mut conv_bits_even, &mut encode_word);
 
-        // do convolution encode on odd part
-        // Odd part starts at encode_data[3] bit 13 (after 114 even bits).
-        // bit_count continues from even part: 114.
-        // At bit_count=114, we're at encode_data[3] bit 13.
-        // Load encode_data[3] shifted to put bit 13 at MSB:
+        // do convolution encode on odd part (encode_data[4] bit17 through encode_data[6] bit0)
         let mut conv_bits_odd: u8 = 0;
-        encode_word = encode_data[3] << 18; // shift bit 13 to bit 31
-        bit_count = 114; // continue from even part
+        encode_word = encode_data[4] << 14; // move to MSB
+        bit_count = 142;
         for i in 0..(82 / 2) {
             odd_part[i / 2] = (odd_part[i / 2] << 4)
                 + self.gal_convolution_encode(&mut conv_bits_odd, &mut encode_word);
@@ -801,24 +777,62 @@ impl INavBit {
         ephdata[17] |= COMPOSE_BITS!(int_value >> 3, 0, 7);
         ephdata[18] = COMPOSE_BITS!(int_value, 29, 3);
 
-        // Per ICD Table 29 (Word Type 5), data_vec[2] layout:
-        //   bits 31-29: BGD_E5b LSB (3 bits, set above)
-        //   bits 28-27: E5b Signal Health Status (2 bits)
-        //   bit  26:    E1B Data Validity Status (1 bit)
-        //   bit  25:    E5b Data Validity Status (1 bit)
-        //   bits 24-23: E1B Signal Health Status (2 bits)
-        //   bits 22-16: Spare (7 zeros)
-        //   bits 15-4:  WN (set dynamically by get_frame_data)
-        //   bits 3-0:   TOW[19:16] (set dynamically by get_frame_data)
-        // NOTE: SISA is in Word 3, NOT Word 5.
+        // РЕАЛЬНЫЕ SISA ИНДЕКСЫ: Signal-In-Space Accuracy (8 bits)
+        let sisa_index = if ephemeris.ura <= 1 {
+            0
+        }
+        // < 1m: SISA=0
+        else if ephemeris.ura <= 2 {
+            10
+        }
+        // 1-2m: SISA=10
+        else if ephemeris.ura <= 5 {
+            25
+        }
+        // 2-5m: SISA=25
+        else if ephemeris.ura <= 10 {
+            75
+        }
+        // 5-10m: SISA=75
+        else {
+            255
+        }; // >10m: SISA=255 (No Accuracy Prediction Available)
+        ephdata[18] |= COMPOSE_BITS!(sisa_index, 15, 8);
+
+        // РЕАЛЬНЫЕ HEALTH STATUS: E5b Health Status (2 bits)
         let health_status = ephemeris.health;
         ephdata[18] |= COMPOSE_BITS!(health_status >> 7, 27, 2); // E5b HS
-        ephdata[18] |= COMPOSE_BITS!(health_status >> 1, 25, 2); // E1B DVS + E5b DVS
-        ephdata[18] |= COMPOSE_BITS!(health_status, 23, 2); // E1B HS
+        ephdata[18] |= COMPOSE_BITS!(health_status >> 1, 25, 2); // E1B HS
 
-        // WN and TOW are set dynamically by get_frame_data(), not here.
-        // ephdata[19] bits 31-23 = TOW[8:0], bits 22-0 = spare (zero per ICD)
-        ephdata[19] = 0;
+        // РЕАЛЬНЫЕ DATA VALIDITY STATUS: Data Validity Flags (1 bit each)
+        ephdata[18] |= COMPOSE_BITS!(health_status >> 5, 24, 1); // E5b DVS
+        ephdata[18] |= COMPOSE_BITS!(health_status, 23, 1); // E1B DVS
+
+        // ДОПОЛНИТЕЛЬНЫЕ INTEGRITY ПАРАМЕТРЫ
+        // WN (Week Number) - 12 bits from ephemeris week
+        let week_number = (ephemeris.week & 0xFFF) as u32;
+        ephdata[18] |= COMPOSE_BITS!(week_number >> 4, 11, 8);
+        ephdata[19] = COMPOSE_BITS!(week_number, 28, 4);
+
+        // IODnav (Issue of Data Navigation) - связываем с IOD ephemeris
+        let iod_nav = (ephemeris.iodc & 0x3FF) as u32; // 10 bits
+        ephdata[19] |= COMPOSE_BITS!(iod_nav, 18, 10);
+
+        // Заполняем оставшиеся биты реальными данными (исправляем типы)
+        let integrity_flags = ((ephemeris.valid as u32 & 1) << 7) |  // Data validity
+                             ((ephemeris.health as u32 & 1) << 6) |  // Satellite health
+                             (sisa_index as u32 & 0x3F); // SISA info
+        ephdata[19] |= COMPOSE_BITS!(integrity_flags, 10, 8);
+
+        // Дополнительные временные параметры для целостности
+        let time_params = ((ephemeris.toe as u32 / 7200) & 0x1F) << 3 | // Time of Ephemeris (5 bits)
+                         ((ephemeris.toc as u32 / 16) & 0x7); // Time of Clock (3 bits)
+        ephdata[19] |= COMPOSE_BITS!(time_params, 2, 8);
+
+        println!("[GALILEO-INTEGRITY-DEBUG] SV{:02} Word5 расширен: SISA={}, Health={:02x}, IODnav={}, Week={}", 
+                ephemeris.svid, sisa_index, health_status, iod_nav, week_number);
+
+        // Финальные integrity значения успешно композированы для каждого спутника
     }
 
     fn compose_almwords(almanac: &[GpsAlmanac], almdata: &mut [u32], week: i32) {
