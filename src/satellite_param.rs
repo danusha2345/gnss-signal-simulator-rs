@@ -314,7 +314,15 @@ pub fn get_satellite_param(
         &sat_position,
         Some(&mut satellite_param.LosVector),
     );
-    let (elevation, azimuth) = sat_el_az_from_los(&satellite_param.LosVector);
+    // Convert LOS from ECEF to local ENU for correct elevation/azimuth
+    let conv = calc_conv_matrix_lla(position_lla);
+    let los = &satellite_param.LosVector;
+    let e_enu = conv.x2e * los[0] + conv.y2e * los[1];
+    let n_enu = conv.x2n * los[0] + conv.y2n * los[1] + conv.z2n * los[2];
+    let u_enu = conv.x2u * los[0] + conv.y2u * los[1] + conv.z2u * los[2];
+    let elevation = u_enu.atan2((e_enu * e_enu + n_enu * n_enu).sqrt());
+    let mut azimuth = e_enu.atan2(n_enu);
+    if azimuth < 0.0 { azimuth += std::f64::consts::TAU; }
 
     // Calculate ionospheric delay
     satellite_param.IonoDelay = gps_iono_delay(
@@ -1298,7 +1306,15 @@ pub fn get_satellite_param_with_prediction(
         &sat_position,
         Some(&mut satellite_param.LosVector),
     );
-    let (elevation, azimuth) = sat_el_az_from_los(&satellite_param.LosVector);
+    // Convert LOS from ECEF to local ENU for correct elevation/azimuth
+    let conv = calc_conv_matrix_lla(position_lla);
+    let los = &satellite_param.LosVector;
+    let e_enu = conv.x2e * los[0] + conv.y2e * los[1];
+    let n_enu = conv.x2n * los[0] + conv.y2n * los[1] + conv.z2n * los[2];
+    let u_enu = conv.x2u * los[0] + conv.y2u * los[1] + conv.z2u * los[2];
+    let elevation = u_enu.atan2((e_enu * e_enu + n_enu * n_enu).sqrt());
+    let mut azimuth = e_enu.atan2(n_enu);
+    if azimuth < 0.0 { azimuth += std::f64::consts::TAU; }
 
     // Calculate ionospheric delay
     satellite_param.IonoDelay = gps_iono_delay(
