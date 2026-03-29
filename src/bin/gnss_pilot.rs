@@ -75,7 +75,7 @@ fn main() {
 
     // Load RINEX
     let mut nav_data = CNavData::new();
-    read_nav_file_limited(&mut nav_data, rinex, 10000);
+    read_nav_file_limited(&mut nav_data, rinex, 50000);
 
     let gps_time = gnss_rust::gnsstime::utc_to_gps_time(utc_time, true);
     let target_sow = gps_time.MilliSeconds as f64 / 1000.0;
