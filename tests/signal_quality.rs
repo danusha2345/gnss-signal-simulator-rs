@@ -1308,8 +1308,9 @@ fn test_galileo_inav_viterbi_decode() {
             dv[3] |= (((time.Week - 1024) as u32) << 20) + tow_local as u32;
         } else if word_sel == 5 {
             dv[2] &= 0xff800000;
-            dv[2] |= ((((time.Week - 1024) & 0xfff) as u32) << 11) + ((tow_local >> 9) as u32);
-            dv[3] |= (tow_local << 23) as u32;
+            let wn = ((time.Week - 1024) & 0xfff) as u32;
+            dv[2] |= (wn << 4) | (((tow_local >> 16) as u32) & 0xF);
+            dv[3] = ((tow_local as u32) & 0xFFFF) << 16;
         } else if word_sel == 6 {
             dv[3] &= 0xff800000;
             dv[3] |= (tow_local << 3) as u32;

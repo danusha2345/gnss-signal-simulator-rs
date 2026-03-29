@@ -3133,9 +3133,9 @@ where
     eph.health = data[24] as u16; // Health
 
     // BGD параметры Galileo (в отличие от TGD в GPS)
-    // data[24] = BGD_E5a_E1
-    // data[25] = BGD_E5b_E1
-    eph.tgd = data[24]; // Используем BGD_E5a_E1 как основной TGD
+    // data[25] = BGD_E5a_E1, data[26] = BGD_E5b_E1
+    eph.tgd = data[25]; // BGD(E1,E5a) — primary TGD for E1
+    eph.tgd2 = data[26]; // BGD(E1,E5b)
 
     // Вычисляем производные значения
     eph.axis = eph.sqrtA * eph.sqrtA;

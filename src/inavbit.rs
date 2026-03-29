@@ -496,10 +496,12 @@ impl INavBit {
         if word == 0 {
             data_vec[3] |= (((start_time.Week - 1024) as u32) << 20) + tow as u32;
         } else if word == 5 {
-            data_vec[2] &= 0xff800000; // clear 23LSB
-            data_vec[2] |=
-                ((((start_time.Week - 1024) & 0xfff) as u32) << 11) + ((tow >> 9) as u32);
-            data_vec[3] |= (tow << 23) as u32;
+            // ICD: bits 22-16 = spare(7), bits 15-4 = WN(12), bits 3-0 = TOW[19:16](4)
+            data_vec[2] &= 0xff800000; // clear bits 22-0 (preserve health at 31-23)
+            let wn = ((start_time.Week - 1024) & 0xfff) as u32;
+            data_vec[2] |= (wn << 4) | (((tow >> 16) as u32) & 0xF);
+            // ICD: data_vec[3] bits 31-16 = TOW[15:0](16), bits 15-0 = spare(odd part)
+            data_vec[3] = ((tow as u32) & 0xFFFF) << 16;
         } else if word == 6 {
             data_vec[3] &= 0xff800000; // clear 23LSB
             data_vec[3] |= (tow << 3) as u32;
@@ -777,62 +779,24 @@ impl INavBit {
         ephdata[17] |= COMPOSE_BITS!(int_value >> 3, 0, 7);
         ephdata[18] = COMPOSE_BITS!(int_value, 29, 3);
 
-        // РЕАЛЬНЫЕ SISA ИНДЕКСЫ: Signal-In-Space Accuracy (8 bits)
-        let sisa_index = if ephemeris.ura <= 1 {
-            0
-        }
-        // < 1m: SISA=0
-        else if ephemeris.ura <= 2 {
-            10
-        }
-        // 1-2m: SISA=10
-        else if ephemeris.ura <= 5 {
-            25
-        }
-        // 2-5m: SISA=25
-        else if ephemeris.ura <= 10 {
-            75
-        }
-        // 5-10m: SISA=75
-        else {
-            255
-        }; // >10m: SISA=255 (No Accuracy Prediction Available)
-        ephdata[18] |= COMPOSE_BITS!(sisa_index, 15, 8);
-
-        // РЕАЛЬНЫЕ HEALTH STATUS: E5b Health Status (2 bits)
+        // Per ICD Table 29 (Word Type 5), data_vec[2] layout:
+        //   bits 31-29: BGD_E5b LSB (3 bits, set above)
+        //   bits 28-27: E5b Signal Health Status (2 bits)
+        //   bit  26:    E1B Data Validity Status (1 bit)
+        //   bit  25:    E5b Data Validity Status (1 bit)
+        //   bits 24-23: E1B Signal Health Status (2 bits)
+        //   bits 22-16: Spare (7 zeros)
+        //   bits 15-4:  WN (set dynamically by get_frame_data)
+        //   bits 3-0:   TOW[19:16] (set dynamically by get_frame_data)
+        // NOTE: SISA is in Word 3, NOT Word 5.
         let health_status = ephemeris.health;
         ephdata[18] |= COMPOSE_BITS!(health_status >> 7, 27, 2); // E5b HS
-        ephdata[18] |= COMPOSE_BITS!(health_status >> 1, 25, 2); // E1B HS
+        ephdata[18] |= COMPOSE_BITS!(health_status >> 1, 25, 2); // E1B DVS + E5b DVS
+        ephdata[18] |= COMPOSE_BITS!(health_status, 23, 2); // E1B HS
 
-        // РЕАЛЬНЫЕ DATA VALIDITY STATUS: Data Validity Flags (1 bit each)
-        ephdata[18] |= COMPOSE_BITS!(health_status >> 5, 24, 1); // E5b DVS
-        ephdata[18] |= COMPOSE_BITS!(health_status, 23, 1); // E1B DVS
-
-        // ДОПОЛНИТЕЛЬНЫЕ INTEGRITY ПАРАМЕТРЫ
-        // WN (Week Number) - 12 bits from ephemeris week
-        let week_number = (ephemeris.week & 0xFFF) as u32;
-        ephdata[18] |= COMPOSE_BITS!(week_number >> 4, 11, 8);
-        ephdata[19] = COMPOSE_BITS!(week_number, 28, 4);
-
-        // IODnav (Issue of Data Navigation) - связываем с IOD ephemeris
-        let iod_nav = (ephemeris.iodc & 0x3FF) as u32; // 10 bits
-        ephdata[19] |= COMPOSE_BITS!(iod_nav, 18, 10);
-
-        // Заполняем оставшиеся биты реальными данными (исправляем типы)
-        let integrity_flags = ((ephemeris.valid as u32 & 1) << 7) |  // Data validity
-                             ((ephemeris.health as u32 & 1) << 6) |  // Satellite health
-                             (sisa_index as u32 & 0x3F); // SISA info
-        ephdata[19] |= COMPOSE_BITS!(integrity_flags, 10, 8);
-
-        // Дополнительные временные параметры для целостности
-        let time_params = ((ephemeris.toe as u32 / 7200) & 0x1F) << 3 | // Time of Ephemeris (5 bits)
-                         ((ephemeris.toc as u32 / 16) & 0x7); // Time of Clock (3 bits)
-        ephdata[19] |= COMPOSE_BITS!(time_params, 2, 8);
-
-        println!("[GALILEO-INTEGRITY-DEBUG] SV{:02} Word5 расширен: SISA={}, Health={:02x}, IODnav={}, Week={}", 
-                ephemeris.svid, sisa_index, health_status, iod_nav, week_number);
-
-        // Финальные integrity значения успешно композированы для каждого спутника
+        // WN and TOW are set dynamically by get_frame_data(), not here.
+        // ephdata[19] bits 31-23 = TOW[8:0], bits 22-0 = spare (zero per ICD)
+        ephdata[19] = 0;
     }
 
     fn compose_almwords(almanac: &[GpsAlmanac], almdata: &mut [u32], week: i32) {

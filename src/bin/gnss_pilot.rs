@@ -244,6 +244,24 @@ fn main() {
                         let rx_sow = ms_time.MilliSeconds as f64 / 1000.0;
                         let base = ms_off * spm;
 
+                        // Nav bit timing: use integer ms (matching C++ satellite_signal.rs)
+                        // tx_ms = receiver_ms - floor(travel_time_ms)
+                        // NOT floor((rx_time - travel_time) * 1000) which differs by ±1ms
+                        let travel_ms = (*travel_time_s * 1000.0) as i32;
+                        let tx_ms_int = ms_time.MilliSeconds - travel_ms;
+                        let tx_ms_offset_int = tx_ms_int + 1000;
+                        let fn_ = tx_ms_offset_int / GAL_FRAME_MS;
+                        if fn_ != *current_frame {
+                            inav.get_frame_data(GnssTime { Week: ms_time.Week, MilliSeconds: tx_ms_int, SubMilliSeconds: 0.0 }, *svid as i32, 1, nav_bits);
+                            *current_frame = fn_;
+                        }
+                        let bi = ((tx_ms_offset_int % GAL_FRAME_MS) / GAL_NAV_BIT_MS) as usize;
+                        let nav_bit: f64 = if nav_bits[bi.min(GAL_BITS_PER_FRAME - 1)] != 0 { -1.0 } else { 1.0 };
+
+                        let code_period_int = tx_ms_int / GAL_NAV_BIT_MS;
+                        let sec_idx = code_period_int.rem_euclid(CS25_LEN) as u32;
+                        let sec_bit: f64 = if (CS25 >> sec_idx) & 1 != 0 { -1.0 } else { 1.0 };
+
                         for s in 0..spm {
                             let rx_time = rx_sow + s as f64 * dt;
                             let tx_time = rx_time - *travel_time_s;
@@ -252,23 +270,6 @@ fn main() {
                             let logical_chip = ((chip_count % GAL_CODE_LEN as f64) + GAL_CODE_LEN as f64) as usize % GAL_CODE_LEN;
                             let subchip = (tx_time * GAL_SUBCHIP_RATE) as i64;
                             let lchip_i64 = (tx_time * GAL_CHIP_RATE) as i64;
-
-                            let tx_ms = (tx_time * 1000.0) as i32;
-                            // E1 I-NAV: +1000ms offset for even/odd part alignment
-                            // (matches C++ satellite_signal.rs:361)
-                            let tx_ms_offset = tx_ms + 1000;
-                            let fn_ = tx_ms_offset / GAL_FRAME_MS;
-                            if fn_ != *current_frame {
-                                // get_frame_data uses ORIGINAL time (no offset)
-                                inav.get_frame_data(GnssTime { Week: ms_time.Week, MilliSeconds: tx_ms, SubMilliSeconds: 0.0 }, *svid as i32, 1, nav_bits);
-                                *current_frame = fn_;
-                            }
-                            let bi = ((tx_ms_offset % GAL_FRAME_MS) / GAL_NAV_BIT_MS) as usize;
-                            let nav_bit: f64 = if nav_bits[bi.min(GAL_BITS_PER_FRAME - 1)] != 0 { -1.0 } else { 1.0 };
-
-                            let code_period = tx_ms / GAL_NAV_BIT_MS;
-                            let sec_idx = code_period.rem_euclid(CS25_LEN) as u32;
-                            let sec_bit: f64 = if (CS25 >> sec_idx) & 1 != 0 { -1.0 } else { 1.0 };
 
                             // BOC(1,1) sign
                             let boc11: f64 = if subchip & 1 != 0 { -1.0 } else { 1.0 };
