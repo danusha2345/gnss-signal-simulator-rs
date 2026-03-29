@@ -507,19 +507,37 @@ impl INavBit {
             data_vec[3] |= (tow << 3) as u32;
         }
 
-        // put into encode_data to do CRC24Q encoding (totally 196 bits, leaving 28MSB of encode_data[0] as 0s)
-        encode_data[0] = data_vec[0] >> 30; // even/odd=0, page type=0, 2bit data
-        encode_data[1] = (data_vec[0] << 2) | (data_vec[1] >> 30); // 32bit data
-        encode_data[2] = (data_vec[1] << 2) | (data_vec[2] >> 30); // 32bit data
-        encode_data[3] = (data_vec[2] << 2) | (data_vec[3] >> 30); // 32bit data
-        encode_data[4] = ((data_vec[3] << 2) & 0xfffc0000) | (data_vec[3] & 0xffff) | 0x20000; // 14bit data, even/odd=1, page type=1, 16bit data
-        encode_data[5] = 0; // 32MSB of Reserved 1
-        encode_data[6] = 0; // 8LSB of Reserved 1, SAR and Spare bits are 0
+        // Build encode_data: 196-bit CRC input packed MSB-first into u32 words.
+        // ICD: CRC covers e/o(1)+pt(1)+even_data(112) + odd_e/o(1)+pt(1)+odd_data(80) = 196 bits.
+        // We shift data_vec by 2 bits to insert e/o+pt prefix at MSB of encode_data[0].
+        // For even part: e/o=0, pt=0. For types 0-15, data_vec[0] bits 31-30 are already 00.
+        encode_data[0] = data_vec[0] >> 2;
+        encode_data[1] = (data_vec[0] << 30) | (data_vec[1] >> 2);
+        encode_data[2] = (data_vec[1] << 30) | (data_vec[2] >> 2);
+        encode_data[3] = (data_vec[2] << 30) | (data_vec[3] >> 2);
+        // Even/odd boundary: last 14 even bits at encode_data[3] bits 13-0 are data_vec[3] bits 15-2.
+        // Odd part: e/o=1(bit17 of original layout) → now at a different position.
+        // Odd e/o+pt: we need to place them after the 114th even bit.
+        // 114 bits = 3*32 + 18. So bit 114 = encode_data[3] bit 13.
+        // encode_data[3] bits 13-0: odd_e/o(1) + odd_pt(1) + odd_data_first_12(12)
+        encode_data[3] = (data_vec[2] << 30) | (data_vec[3] >> 2);
+        // Clear bits 13-0 and insert odd e/o+pt:
+        encode_data[3] &= 0xFFFFC000; // keep even part (bits 31-14)
+        encode_data[3] |= (1 << 13); // odd e/o = 1 at bit 13
+        // odd pt = 0 at bit 12 (already 0)
+        // odd data: data_vec[3] bits 15-0 = 16 bits, but only 12 fit here (bits 11-0)
+        encode_data[3] |= ((data_vec[3] & 0xFFFF) >> 4) & 0xFFF; // upper 12 of 16 odd data bits
+        encode_data[4] = ((data_vec[3] & 0xF) << 28); // remaining 4 odd data bits at MSB
+        // Reserved 1 (40 bits) + SAR (22 bits) + spare (2 bits) = 64 bits → encode_data[4] bits 27-0 + encode_data[5]
+        encode_data[4] |= 0; // reserved = 0
+        encode_data[5] = 0; // reserved + SAR + spare = 0
+        encode_data[6] = 0;
         let crc_result: u32 = self.crc24q_encode(&encode_data, 196);
 
-        // do convolution encode on even part (encode_data[0] bit3 through encode_data[4] bit18)
+        // Convolution encode even part: 114 bits from encode_data[0] bit31 through encode_data[3] bit14
         let mut conv_bits_even: u8 = 0;
-        encode_word = encode_data[0] << 28; // move to MSB
+        encode_word = encode_data[0];
+        bit_count = 0;
         for i in 0..(114 / 2) {
             even_part[i / 2] = (even_part[i / 2] << 4)
                 + self.gal_convolution_encode(&mut conv_bits_even, &mut encode_word);
@@ -529,7 +547,7 @@ impl INavBit {
                 if index < encode_data.len() {
                     encode_word = encode_data[index];
                 } else {
-                    encode_word = 0; // Используем 0 для индексов вне границ
+                    encode_word = 0;
                 }
             }
         }
@@ -540,10 +558,14 @@ impl INavBit {
         even_part[29] = (even_part[29] << 4)
             + self.gal_convolution_encode(&mut conv_bits_even, &mut encode_word);
 
-        // do convolution encode on odd part (encode_data[4] bit17 through encode_data[6] bit0)
+        // do convolution encode on odd part
+        // Odd part starts at encode_data[3] bit 13 (after 114 even bits).
+        // bit_count continues from even part: 114.
+        // At bit_count=114, we're at encode_data[3] bit 13.
+        // Load encode_data[3] shifted to put bit 13 at MSB:
         let mut conv_bits_odd: u8 = 0;
-        encode_word = encode_data[4] << 14; // move to MSB
-        bit_count = 142;
+        encode_word = encode_data[3] << 18; // shift bit 13 to bit 31
+        bit_count = 114; // continue from even part
         for i in 0..(82 / 2) {
             odd_part[i / 2] = (odd_part[i / 2] << 4)
                 + self.gal_convolution_encode(&mut conv_bits_odd, &mut encode_word);
