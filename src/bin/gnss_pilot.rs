@@ -5,6 +5,7 @@
 use gnss_rust::bcnav1bit::BCNav1Bit;
 use gnss_rust::constants::*;
 use gnss_rust::coordinate::{ecef_to_lla, lla_to_ecef};
+use gnss_rust::d1d2navbit::D1D2NavBit;
 use gnss_rust::inavbit::INavBit;
 use gnss_rust::json_interpreter::{read_nav_file_limited, CNavData};
 use gnss_rust::lnavbit::LNavBit;
@@ -41,6 +42,15 @@ const BDS_BITS_PER_FRAME: usize = 1800;
 const BDS_SEC_CODE_LEN: i32 = 1800;
 const AMP_1_4: f64 = 0.25;
 const AMP_29_44: f64 = 0.811844396954584; // sqrt(29.0/44.0)
+
+// BeiDou B1I constants
+const B1I_CHIP_RATE: f64 = 2_046_000.0;
+const B1I_CODE_LEN: usize = 2046;
+const B1I_NAV_BIT_MS: i32 = 20; // 50 bps = 20ms per bit
+const B1I_FRAME_MS: i32 = 6000;
+const B1I_BITS_PER_FRAME: usize = 300;
+const B1I_NH_CODE: u32 = 0x72b20; // 20-bit Neumann-Hoffman code
+const B1I_NH_LEN: i32 = 20;
 
 enum SatChannel {
     Gps {
@@ -82,6 +92,18 @@ enum SatChannel {
         nav_bits: Vec<i32>,
         current_frame: i32,
     },
+    BeiDouB1I {
+        svid: u8,
+        eph: GpsEphemeris,
+        prn_code: Vec<f64>,
+        carrier_phase: f64,
+        doppler_hz: f64,
+        travel_time_s: f64,
+        amplitude: f64,
+        d1nav: D1D2NavBit,
+        nav_bits: Vec<i32>,
+        current_frame: i32,
+    },
 }
 
 fn main() {
@@ -115,6 +137,7 @@ fn main() {
     let mut gps_count = 0u32;
     let mut gal_count = 0u32;
     let mut bds_count = 0u32;
+    let mut b1i_count = 0u32;
 
     // === GPS satellites ===
     for svid in 1u8..=32 {
@@ -181,7 +204,6 @@ fn main() {
     }
 
     // === BeiDou B1C satellites (BDS-3 only, SVID 19-58) ===
-    // BDS-2 (SVID 1-18, 59-63) does not transmit B1C
     for svid in 19u8..=58 {
         let bds_eph = match nav_data.beidou_ephemeris.iter()
             .filter(|e| e.svid == svid && e.valid != 0)
@@ -218,7 +240,37 @@ fn main() {
         bds_count += 1;
     }
 
-    println!("[gnss_pilot] {} GPS + {} Galileo + {} BeiDou = {} total satellites", gps_count, gal_count, bds_count, channels.len());
+    // === BeiDou B1I satellites (D1: MEO/IGSO, SVID 6-58) ===
+    for svid in 6u8..=58 {
+        let bds_eph = match nav_data.beidou_ephemeris.iter()
+            .filter(|e| e.svid == svid && e.valid != 0)
+            .min_by(|a, b| (a.toe as f64 - target_sow).abs().partial_cmp(&(b.toe as f64 - target_sow).abs()).unwrap())
+            { Some(e) => e, None => continue };
+
+        let gps_eph = bds_eph.to_gps_ephemeris();
+        let mut sp = SatelliteParam::default();
+        sp.system = GnssSystem::BdsSystem;
+        get_satellite_param(&receiver_ecef, &receiver_lla_c, &gps_time, GnssSystem::BdsSystem, &gps_eph, &iono, &mut sp);
+        if sp.Elevation < el_mask { continue; }
+
+        let prn_gen = PrnGenerate::new(GnssSystem::BdsSystem, SIGNAL_INDEX_B1I as i32, svid as i32);
+        let prn_code: Vec<f64> = match prn_gen.get_data_prn() { Some(c) => c, None => continue }
+            .iter().map(|&v| if v != 0 { -1.0 } else { 1.0 }).collect();
+
+        let mut d1nav = D1D2NavBit::new();
+        d1nav.set_ephemeris(svid as i32, &gps_eph);
+
+        println!("  B1I {:02}: el={:.1}\u{00b0} az={:.1}\u{00b0} dop={:.0}", svid, sp.Elevation.to_degrees(), sp.Azimuth.to_degrees(), get_doppler(&sp, SIGNAL_INDEX_B1I));
+        channels.push(SatChannel::BeiDouB1I {
+            svid, eph: gps_eph, prn_code, carrier_phase: 0.0,
+            doppler_hz: get_doppler(&sp, SIGNAL_INDEX_B1I),
+            travel_time_s: get_travel_time(&sp, SIGNAL_INDEX_B1I),
+            amplitude, d1nav, nav_bits: vec![0; B1I_BITS_PER_FRAME], current_frame: -1,
+        });
+        b1i_count += 1;
+    }
+
+    println!("[gnss_pilot] {} GPS + {} GAL + {} B1C + {} B1I = {} total", gps_count, gal_count, bds_count, b1i_count, channels.len());
 
     // Diagnostic: dump first Galileo I-NAV frame
     for ch in &mut channels {
@@ -428,6 +480,54 @@ fn main() {
                         }
                     }
                 },
+                SatChannel::BeiDouB1I { svid, eph, prn_code, carrier_phase, doppler_hz, travel_time_s, amplitude: amp, d1nav, nav_bits, current_frame } => {
+                    for ms_off in 0..chunk_dur {
+                        let global_ms = chunk_start + ms_off as i32;
+                        let ms_time = GnssTime { Week: gps_time.Week, MilliSeconds: gps_time.MilliSeconds + global_ms, SubMilliSeconds: 0.0 };
+                        let mut sp = SatelliteParam::default();
+                        sp.system = GnssSystem::BdsSystem;
+                        let re = lla_to_ecef(&receiver_lla);
+                        let rl = ecef_to_lla(&re);
+                        get_satellite_param(&re, &rl, &ms_time, GnssSystem::BdsSystem, eph, &iono, &mut sp);
+                        *doppler_hz = get_doppler(&sp, SIGNAL_INDEX_B1I);
+                        *travel_time_s = get_travel_time(&sp, SIGNAL_INDEX_B1I);
+                        let freq = if_freq + *doppler_hz;
+                        let rx_sow = ms_time.MilliSeconds as f64 / 1000.0;
+                        let base = ms_off * spm;
+
+                        // Nav bit timing (D1: 50 bps = 20ms per bit, frame = 6s = 300 bits)
+                        let tx_ms = (ms_time.MilliSeconds as f64 / 1000.0 - *travel_time_s) * 1000.0;
+                        let tx_ms_int = tx_ms as i32;
+                        let fn_ = tx_ms_int / B1I_FRAME_MS;
+                        if fn_ != *current_frame {
+                            d1nav.get_frame_data(GnssTime { Week: ms_time.Week, MilliSeconds: tx_ms_int, SubMilliSeconds: 0.0 }, *svid as i32, 0, nav_bits);
+                            *current_frame = fn_;
+                        }
+                        let bi = ((tx_ms_int % B1I_FRAME_MS).max(0) / B1I_NAV_BIT_MS) as usize;
+                        let nav_bit: f64 = if nav_bits[bi.min(B1I_BITS_PER_FRAME - 1)] != 0 { -1.0 } else { 1.0 };
+
+                        // Neumann-Hoffman secondary code (20 bits, LSB-first as in satellite_signal.rs)
+                        let nh_idx = (tx_ms_int.rem_euclid(B1I_NH_LEN)) as u32;
+                        let nh_bit: f64 = if (B1I_NH_CODE >> nh_idx) & 1 != 0 { -1.0 } else { 1.0 };
+
+                        for s in 0..spm {
+                            let rx_time = rx_sow + s as f64 * dt;
+                            let tx_time = rx_time - *travel_time_s;
+
+                            let chip_count = tx_time * B1I_CHIP_RATE;
+                            let chip_idx = ((chip_count % B1I_CODE_LEN as f64) + B1I_CODE_LEN as f64) as usize % B1I_CODE_LEN;
+
+                            // BPSK: PRN * nav_bit * NH code
+                            let sig = prn_code[chip_idx] * nav_bit * nh_bit * *amp;
+
+                            let angle = *carrier_phase * std::f64::consts::TAU;
+                            let (sv, cv) = angle.sin_cos();
+                            *carrier_phase += freq * dt;
+
+                            buf[base + s] = ((sig * cv) as f32, (sig * sv) as f32);
+                        }
+                    }
+                },
             }
             buf
         }).collect();
@@ -463,6 +563,6 @@ fn main() {
 
     file.flush().unwrap();
     let total_samples = total_ms as usize * spm;
-    println!("\r[gnss_pilot] Done! {} GPS + {} GAL + {} BDS, {} samples, {:.1}s → {}",
-        gps_count, gal_count, bds_count, total_samples, start.elapsed().as_secs_f64(), output);
+    println!("\r[gnss_pilot] Done! {} GPS + {} GAL + {} B1C + {} B1I, {} samples, {:.1}s → {}",
+        gps_count, gal_count, bds_count, b1i_count, total_samples, start.elapsed().as_secs_f64(), output);
 }
