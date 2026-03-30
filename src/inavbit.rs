@@ -932,29 +932,8 @@ impl INavBit {
     }
 
     fn crc24q_encode(&self, data: &[u32], length: i32) -> u32 {
-        // CRC-24Q encoding implementation
-        let mut crc: u32 = 0;
-        let poly: u32 = 0x1864CFB;
-
-        for i in 0..(length / 32) {
-            let mut word = data[i as usize];
-            for _ in 0..32 {
-                crc =
-                    (crc << 1) ^ if (crc & 0x800000) != 0 { poly } else { 0 } ^ ((word >> 31) & 1);
-                word <<= 1;
-            }
-        }
-
-        if (length % 32) != 0 {
-            let mut word = data[(length / 32) as usize];
-            for _ in 0..(length % 32) {
-                crc =
-                    (crc << 1) ^ if (crc & 0x800000) != 0 { poly } else { 0 } ^ ((word >> 31) & 1);
-                word <<= 1;
-            }
-        }
-
-        crc & 0xFFFFFF
+        // Use the table-based CRC-24Q implementation (matches C++ NavBit::Crc24qEncode)
+        crate::crc24q::crc24q_encode(data, length as usize)
     }
 
     fn gal_convolution_encode(&self, conv_encode_bits: &mut u8, encode_word: &mut u32) -> u8 {
