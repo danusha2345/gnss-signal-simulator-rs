@@ -241,6 +241,14 @@ fn main() {
     }
 
     // === BeiDou B1I satellites (D1: MEO/IGSO, SVID 6-58) ===
+    // Create shared D1D2NavBit with all ephemeris loaded (same as main generator)
+    let mut shared_d1nav = D1D2NavBit::new();
+    for bds_eph in &nav_data.beidou_ephemeris {
+        if bds_eph.valid != 0 && (6..=58).contains(&bds_eph.svid) {
+            let gps_eph_tmp = bds_eph.to_gps_ephemeris();
+            shared_d1nav.set_ephemeris(bds_eph.svid as i32, &gps_eph_tmp);
+        }
+    }
     for svid in 6u8..=58 {
         let bds_eph = match nav_data.beidou_ephemeris.iter()
             .filter(|e| e.svid == svid && e.valid != 0)
@@ -257,8 +265,7 @@ fn main() {
         let prn_code: Vec<f64> = match prn_gen.get_data_prn() { Some(c) => c, None => continue }
             .iter().map(|&v| if v != 0 { -1.0 } else { 1.0 }).collect();
 
-        let mut d1nav = D1D2NavBit::new();
-        d1nav.set_ephemeris(svid as i32, &gps_eph);
+        let d1nav = shared_d1nav.clone();
 
         println!("  B1I {:02}: el={:.1}\u{00b0} az={:.1}\u{00b0} dop={:.0}", svid, sp.Elevation.to_degrees(), sp.Azimuth.to_degrees(), get_doppler(&sp, SIGNAL_INDEX_B1I));
         channels.push(SatChannel::BeiDouB1I {
@@ -272,15 +279,23 @@ fn main() {
 
     println!("[gnss_pilot] {} GPS + {} GAL + {} B1C + {} B1I = {} total", gps_count, gal_count, bds_count, b1i_count, channels.len());
 
-    // Diagnostic: dump first Galileo I-NAV frame
+    // Diagnostic: dump first nav frames
     for ch in &mut channels {
-        if let SatChannel::Galileo { svid, inav, nav_bits, .. } = ch {
-            let test_time = GnssTime { Week: gps_time.Week, MilliSeconds: gps_time.MilliSeconds, SubMilliSeconds: 0.0 };
-            inav.get_frame_data(test_time, *svid as i32, 1, nav_bits);
-            let nonzero = nav_bits.iter().filter(|&&x| x != 0).count();
-            println!("[DIAG] E{:02} I-NAV: {}/{} non-zero bits, first 20: {:?}",
-                svid, nonzero, nav_bits.len(), &nav_bits[..20]);
-            break;
+        match ch {
+            SatChannel::BeiDouB1I { svid, d1nav, nav_bits, .. } => {
+                let test_time = GnssTime { Week: gps_time.Week, MilliSeconds: gps_time.MilliSeconds, SubMilliSeconds: 0.0 };
+                d1nav.get_frame_data(test_time, *svid as i32, 0, nav_bits);
+                let nonzero = nav_bits.iter().filter(|&&x| x != 0).count();
+                let transitions: usize = nav_bits.windows(2).filter(|w| w[0] != w[1]).count();
+                println!("[DIAG] C{:02} D1: {}/{} non-zero, {} transitions, first 30: {:?}",
+                    svid, nonzero, nav_bits.len(), transitions, &nav_bits[..30]);
+                // Expected preamble: 0x712 = 11100010010 (11 bits)
+                let preamble: Vec<i32> = vec![1,1,1,0,0,0,1,0,0,1,0];
+                let match_count = nav_bits[0..11].iter().zip(preamble.iter()).filter(|(&a,&b)| a==b).count();
+                println!("[DIAG] C{:02} preamble match: {}/11, word2 first 30: {:?}", svid, match_count, &nav_bits[30..60]);
+                break;
+            },
+            _ => continue,
         }
     }
 
@@ -495,9 +510,9 @@ fn main() {
                         let rx_sow = ms_time.MilliSeconds as f64 / 1000.0;
                         let base = ms_off * spm;
 
-                        // Nav bit timing (D1: 50 bps = 20ms per bit, frame = 6s = 300 bits)
-                        let tx_ms = (ms_time.MilliSeconds as f64 / 1000.0 - *travel_time_s) * 1000.0;
-                        let tx_ms_int = tx_ms as i32;
+                        // Nav bit timing — integer ms (same as GPS/Galileo)
+                        let travel_ms = (*travel_time_s * 1000.0) as i32;
+                        let tx_ms_int = ms_time.MilliSeconds - travel_ms;
                         let fn_ = tx_ms_int / B1I_FRAME_MS;
                         if fn_ != *current_frame {
                             d1nav.get_frame_data(GnssTime { Week: ms_time.Week, MilliSeconds: tx_ms_int, SubMilliSeconds: 0.0 }, *svid as i32, 0, nav_bits);
