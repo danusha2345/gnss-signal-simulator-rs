@@ -349,7 +349,6 @@ fn main() {
 
                             let data_val = -nav_bit * data_prn[logical_chip] * boc11 * AMP_HALF;
                             let pilot_val = sec_bit * pilot_prn[logical_chip] * cboc * AMP_HALF;
-                            // ICD Eq.11: both data+pilot on I (real) channel
                             let sig_i = (data_val + pilot_val) * *amp;
 
                             let angle = *carrier_phase * std::f64::consts::TAU;
