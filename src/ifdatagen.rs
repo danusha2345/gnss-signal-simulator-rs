@@ -4427,6 +4427,9 @@ impl IFDataGen {
                                         ("GPS", "L2C") => {
                                             self.output_param.CompactConfig.enable_signal(GEN_L2C);
                                         }
+                                        ("GPS", "L2P") => {
+                                            self.output_param.CompactConfig.enable_signal(GEN_L2P);
+                                        }
                                         ("GPS", "L5") => {
                                             self.output_param.CompactConfig.enable_signal(GEN_L5);
                                         }
@@ -4465,6 +4468,9 @@ impl IFDataGen {
                                         }
                                         ("GLONASS", "G2") => {
                                             self.output_param.CompactConfig.enable_signal(GEN_G2);
+                                        }
+                                        ("GLONASS", "G3") => {
+                                            self.output_param.CompactConfig.enable_signal(GEN_G3);
                                         }
                                         _ => {}
                                     }
