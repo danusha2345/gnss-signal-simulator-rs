@@ -6,7 +6,37 @@ use cudarc::driver::{CudaDevice, DriverError, LaunchAsync, LaunchConfig};
 #[cfg(feature = "gpu")]
 use cudarc::nvrtc::Ptx;
 #[cfg(feature = "gpu")]
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
+
+#[cfg(feature = "gpu")]
+static CUDA_PANIC_HOOK_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+#[cfg(feature = "gpu")]
+fn cuda_unavailable_error() -> Box<dyn std::error::Error> {
+    Box::new(std::io::Error::new(
+        std::io::ErrorKind::NotFound,
+        "CUDA driver library is unavailable",
+    ))
+}
+
+#[cfg(feature = "gpu")]
+fn try_cuda_device(device_index: usize) -> Result<Arc<CudaDevice>, Box<dyn std::error::Error>> {
+    let hook_lock = CUDA_PANIC_HOOK_LOCK.get_or_init(|| Mutex::new(()));
+    let _guard = hook_lock
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+    let previous_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(|_| {}));
+    let result = std::panic::catch_unwind(|| CudaDevice::new(device_index));
+    std::panic::set_hook(previous_hook);
+
+    match result {
+        Ok(Ok(device)) => Ok(device),
+        Ok(Err(err)) => Err(Box::new(err)),
+        Err(_) => Err(cuda_unavailable_error()),
+    }
+}
 
 /// РЕВОЛЮЦИОННЫЙ CUDA ускоритель для массивно-параллельной обработки GNSS сигналов
 /// Использует все 10496 CUDA ядер RTX 3090 одновременно!
@@ -22,7 +52,7 @@ impl CudaGnssAccelerator {
     pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
         #[cfg(feature = "gpu")]
         {
-            let device = CudaDevice::new(0)?; // Используем GPU #0 (RTX 3090)
+            let device = try_cuda_device(0)?;
             Ok(Self { device })
         }
         #[cfg(not(feature = "gpu"))]
@@ -37,7 +67,7 @@ impl CudaGnssAccelerator {
     pub fn is_available() -> bool {
         #[cfg(feature = "gpu")]
         {
-            CudaDevice::new(0).is_ok()
+            try_cuda_device(0).is_ok()
         }
         #[cfg(not(feature = "gpu"))]
         {

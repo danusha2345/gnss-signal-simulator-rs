@@ -2578,17 +2578,20 @@ impl IFDataGen {
                     }
                 });
 
-                // Phase 2: Accumulate satellite signals into block buffer (sequential)
+                // Phase 2: Accumulate satellite signals into block buffer.
+                // Each worker owns one output sample, so writes are race-free.
                 let buf_offset = ms_offset as usize * samples_per_ms;
-                for sig_option in sat_if_signals.iter() {
-                    if let Some(ref sig) = sig_option {
-                        let n = sig.sample_array.len().min(samples_per_ms);
-                        for i in 0..n {
-                            block_signal[buf_offset + i].real += sig.sample_array[i].real;
-                            block_signal[buf_offset + i].imag += sig.sample_array[i].imag;
+                block_signal[buf_offset..buf_offset + samples_per_ms]
+                    .par_iter_mut()
+                    .enumerate()
+                    .for_each(|(sample_idx, sample)| {
+                        for sig in sat_if_signals.iter().flatten() {
+                            if sample_idx < sig.sample_array.len() {
+                                sample.real += sig.sample_array[sample_idx].real;
+                                sample.imag += sig.sample_array[sample_idx].imag;
+                            }
                         }
-                    }
-                }
+                    });
             }
 
             let generation_duration = generation_start.elapsed();

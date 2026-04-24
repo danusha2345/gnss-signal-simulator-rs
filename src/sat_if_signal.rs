@@ -16,8 +16,6 @@ use crate::types::{GnssSystem, GnssTime, SatelliteParam};
 use wide::f64x4; // SIMD векторизация для 4 элементов за раз
                  // ЭКСТРЕМАЛЬНОЕ АППАРАТНОЕ УСКОРЕНИЕ
 use crate::avx512_intrinsics::Avx512Accelerator;
-#[cfg(feature = "gpu")]
-use crate::cuda_acceleration::CudaGnssAccelerator;
 
 /// Кэш PRN кодов для агрессивной оптимизации
 /// Предвычисляет PRN биты на несколько миллисекунд вперед
@@ -885,22 +883,13 @@ impl SatIfSignal {
         avx512_processor: &crate::avx512_intrinsics::SafeAvx512Processor,
     ) {
         // Если AVX-512 недоступен, fallback на кэшированную версию.
+        // CUDA не используется в этой функции; GPU offload живёт в cuda_acceleration.rs.
         if !avx512_processor.is_available() {
-            #[cfg(feature = "gpu")]
-            {
-                if !CudaGnssAccelerator::is_available() {
-                    return self.get_if_sample_cached(cur_time);
-                }
-            }
-            #[cfg(not(feature = "gpu"))]
-            {
-                return self.get_if_sample_cached(cur_time);
-            }
+            return self.get_if_sample_cached(cur_time);
         }
 
-        // BOC/сложные сигналы (BDS B1C, GAL E1) и non-GPS коды (ГЛОНАСС G1/G2 = 511 чипов) —
-        // AVX-512 fast path использует `& 0x3FF` (modulo 1024), что корректно ТОЛЬКО для
-        // GPS L1CA (1023 чипа). Все остальные коды перенаправляем на get_if_sample_cached,
+        // BOC/сложные сигналы (BDS B1C, GAL E1) и non-GPS коды (ГЛОНАСС G1/G2 = 511 чипов)
+        // перенаправляем на get_if_sample_cached,
         // который использует rem_euclid(data_length).
         if let Some(attr) = &self.prn_sequence.attribute {
             let is_boc = (attr.attribute & PRN_ATTRIBUTE_BOC) != 0;
@@ -996,7 +985,7 @@ impl SatIfSignal {
         // Генерация сэмплов (GPS L1CA only path)
         for i in 0..self.sample_number as usize {
             let chip_offset = base_chip_offset + (i as f64) * code_step;
-            let chip_index = (chip_offset as usize) & 0x3FF; // GPS L1CA: 1023 chips, & 0x3FF OK
+            let chip_index = (chip_offset as i32).rem_euclid(self.data_length) as usize;
 
             let prn_bit = self.prn_cache.get_prn_bit(chip_index);
 

@@ -7,6 +7,7 @@ use gnss_rust::nav_data::NavData;
 use gnss_rust::sat_if_signal::{PrnCache, SatIfSignal};
 use gnss_rust::satellite_signal::SatelliteSignal;
 use gnss_rust::types::{GnssSystem, GnssTime, SatelliteParam};
+use gnss_rust::SafeAvx512Processor;
 
 fn t(ms: i32) -> GnssTime {
     GnssTime {
@@ -285,6 +286,51 @@ fn block_generation_matches_repeated_cached_millisecond_generation() {
             assert_close(block_sample.real, step_sample.real, "block real");
             assert_close(block_sample.imag, step_sample.imag, "block imag");
         }
+    }
+}
+
+#[test]
+fn avx512_l1ca_path_matches_cached_generation_across_code_wrap() {
+    let processor = SafeAvx512Processor::new();
+    if !processor.is_available() {
+        return;
+    }
+
+    let samples_per_ms = 64;
+    let cur_time = t(381_948_321);
+    let mut sat_param = sample_param(GnssSystem::GpsSystem, 1);
+    // Leaves transmit sub-millisecond time close to 1.0, so the first ms crosses
+    // the GPS L1 C/A 1023-chip boundary and exercises wrap handling.
+    sat_param.TravelTime = 0.000_001;
+
+    let mut cached_channel = SatIfSignal::new(
+        samples_per_ms,
+        125_000,
+        GnssSystem::GpsSystem,
+        SIGNAL_INDEX_L1CA as i32,
+        1,
+    );
+    let mut accelerated_channel = SatIfSignal::new(
+        samples_per_ms,
+        125_000,
+        GnssSystem::GpsSystem,
+        SIGNAL_INDEX_L1CA as i32,
+        1,
+    );
+
+    cached_channel.init_state(cur_time, &sat_param, None);
+    accelerated_channel.init_state(cur_time, &sat_param, None);
+
+    cached_channel.get_if_sample_cached(cur_time);
+    accelerated_channel.get_if_sample_avx512_accelerated(cur_time, &processor);
+
+    for (cached_sample, accelerated_sample) in cached_channel
+        .sample_array
+        .iter()
+        .zip(accelerated_channel.sample_array.iter())
+    {
+        assert_close(accelerated_sample.real, cached_sample.real, "avx512 real");
+        assert_close(accelerated_sample.imag, cached_sample.imag, "avx512 imag");
     }
 }
 
