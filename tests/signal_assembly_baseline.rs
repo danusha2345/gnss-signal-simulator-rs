@@ -1,9 +1,10 @@
 use gnss_rust::complex_number::ComplexNumber;
 use gnss_rust::constants::{
-    SIGNAL_INDEX_B1C, SIGNAL_INDEX_E1, SIGNAL_INDEX_G3, SIGNAL_INDEX_L1CA, SIGNAL_INDEX_L5,
+    FREQ_GLO_G1, SIGNAL_INDEX_B1C, SIGNAL_INDEX_E1, SIGNAL_INDEX_G1, SIGNAL_INDEX_G3,
+    SIGNAL_INDEX_L1CA, SIGNAL_INDEX_L5,
 };
 use gnss_rust::nav_data::NavData;
-use gnss_rust::sat_if_signal::SatIfSignal;
+use gnss_rust::sat_if_signal::{PrnCache, SatIfSignal};
 use gnss_rust::satellite_signal::SatelliteSignal;
 use gnss_rust::types::{GnssSystem, GnssTime, SatelliteParam};
 
@@ -35,6 +36,30 @@ fn sample_param(system: GnssSystem, svid: i32) -> SatelliteParam {
         TravelTime: 0.074,
         ..SatelliteParam::default()
     }
+}
+
+fn signal_power(samples: &[ComplexNumber]) -> f64 {
+    samples
+        .iter()
+        .map(|sample| sample.real * sample.real + sample.imag * sample.imag)
+        .sum()
+}
+
+fn assert_finite_nonzero_samples(samples: &[ComplexNumber], name: &str) -> f64 {
+    assert!(
+        !samples.is_empty(),
+        "{name} sample block should not be empty"
+    );
+    assert!(
+        samples
+            .iter()
+            .all(|sample| sample.real.is_finite() && sample.imag.is_finite()),
+        "{name} sample block should be finite"
+    );
+
+    let total_power = signal_power(samples);
+    assert!(total_power > 0.0, "{name} sample block should have power");
+    total_power
 }
 
 #[test]
@@ -117,6 +142,185 @@ fn satellite_signal_component_mapping_matches_supported_modulations() {
         assert_close(pilot_signal.real.abs(), expected_pilot_real, name);
         assert_close(pilot_signal.imag.abs(), expected_pilot_imag, name);
     }
+}
+
+#[test]
+fn prn_cache_maps_binary_chips_to_bipolar_values_and_expires_by_millisecond() {
+    let mut cache = PrnCache::new();
+
+    assert!(cache.needs_update(42));
+    cache.update_cache(&[0, 1, 1, 0], 42);
+
+    assert!(!cache.needs_update(42));
+    assert!(cache.needs_update(43));
+    assert_eq!(cache.get_prn_bit(0), 1.0);
+    assert_eq!(cache.get_prn_bit(1), -1.0);
+    assert_eq!(cache.get_prn_bit(2), -1.0);
+    assert_eq!(cache.get_prn_bit(3), 1.0);
+    assert_eq!(cache.get_prn_bit(4), 1.0);
+}
+
+#[test]
+fn cached_if_generation_handles_modern_boc_and_glonass_signals() {
+    let cases = [
+        (
+            "BDS B1C",
+            GnssSystem::BdsSystem,
+            SIGNAL_INDEX_B1C,
+            19,
+            0,
+            137_000,
+        ),
+        (
+            "Galileo E1",
+            GnssSystem::GalileoSystem,
+            SIGNAL_INDEX_E1,
+            8,
+            0,
+            137_000,
+        ),
+        (
+            "GLONASS G3",
+            GnssSystem::GlonassSystem,
+            SIGNAL_INDEX_G3,
+            5,
+            0,
+            137_000,
+        ),
+        (
+            "GLONASS G1 FDMA",
+            GnssSystem::GlonassSystem,
+            SIGNAL_INDEX_G1,
+            7,
+            1,
+            0,
+        ),
+    ];
+    let cur_time = t(381_948_321);
+
+    for (name, system, signal_index, svid, freq_id, if_freq) in cases {
+        let mut sat_param = sample_param(system, svid);
+        sat_param.FreqID = freq_id;
+        let mut channel = SatIfSignal::new(96, if_freq, system, signal_index as i32, svid as u8);
+
+        channel.init_state(cur_time, &sat_param, None);
+        if system == GnssSystem::GlonassSystem && signal_index == SIGNAL_INDEX_G1 {
+            channel.push_sat_param_for_ms(&sat_param, FREQ_GLO_G1, &cur_time);
+        }
+        channel.get_if_sample_cached(cur_time);
+
+        assert_finite_nonzero_samples(&channel.sample_array, name);
+        let real_energy: f64 = channel
+            .sample_array
+            .iter()
+            .map(|sample| sample.real * sample.real)
+            .sum();
+        let imag_energy: f64 = channel
+            .sample_array
+            .iter()
+            .map(|sample| sample.imag * sample.imag)
+            .sum();
+        assert!(
+            real_energy > 0.0,
+            "{name} real component should have energy"
+        );
+        assert!(
+            imag_energy > 0.0,
+            "{name} imag component should have energy"
+        );
+    }
+}
+
+#[test]
+fn block_generation_matches_repeated_cached_millisecond_generation() {
+    let samples_per_ms = 64;
+    let duration_ms = 3;
+    let start_time = t(381_948_020);
+    let sat_param = sample_param(GnssSystem::GpsSystem, 1);
+
+    let mut block_channel = SatIfSignal::new(
+        samples_per_ms,
+        125_000,
+        GnssSystem::GpsSystem,
+        SIGNAL_INDEX_L1CA as i32,
+        1,
+    );
+    block_channel.init_state(start_time, &sat_param, None);
+    block_channel.generate_block_signal_parallel(
+        start_time,
+        duration_ms,
+        samples_per_ms as usize,
+        samples_per_ms as f64 * 1000.0,
+    );
+
+    let block_data = block_channel
+        .block_data
+        .as_ref()
+        .expect("block generation should allocate output");
+    assert_eq!(
+        block_data.len(),
+        samples_per_ms as usize * duration_ms as usize
+    );
+    assert_finite_nonzero_samples(block_data, "block generator");
+
+    let mut step_channel = SatIfSignal::new(
+        samples_per_ms,
+        125_000,
+        GnssSystem::GpsSystem,
+        SIGNAL_INDEX_L1CA as i32,
+        1,
+    );
+    step_channel.init_state(start_time, &sat_param, None);
+
+    for ms_offset in 0..duration_ms {
+        let cur_time = t(start_time.MilliSeconds + ms_offset);
+        step_channel.get_if_sample_cached(cur_time);
+        let start = ms_offset as usize * samples_per_ms as usize;
+        let end = start + samples_per_ms as usize;
+
+        for (block_sample, step_sample) in block_data[start..end]
+            .iter()
+            .zip(step_channel.sample_array.iter())
+        {
+            assert_close(block_sample.real, step_sample.real, "block real");
+            assert_close(block_sample.imag, step_sample.imag, "block imag");
+        }
+    }
+}
+
+#[test]
+fn glonass_fdma_frequency_slot_changes_cached_carrier_samples() {
+    let cur_time = t(381_948_321);
+    let mut slot_zero_param = sample_param(GnssSystem::GlonassSystem, 7);
+    slot_zero_param.FreqID = 0;
+    let mut slot_one_param = slot_zero_param;
+    slot_one_param.FreqID = 1;
+
+    let mut slot_zero =
+        SatIfSignal::new(96, 0, GnssSystem::GlonassSystem, SIGNAL_INDEX_G1 as i32, 7);
+    let mut slot_one =
+        SatIfSignal::new(96, 0, GnssSystem::GlonassSystem, SIGNAL_INDEX_G1 as i32, 7);
+
+    slot_zero.init_state(cur_time, &slot_zero_param, None);
+    slot_one.init_state(cur_time, &slot_one_param, None);
+    slot_zero.push_sat_param_for_ms(&slot_zero_param, FREQ_GLO_G1, &cur_time);
+    slot_one.push_sat_param_for_ms(&slot_one_param, FREQ_GLO_G1, &cur_time);
+    slot_zero.get_if_sample_cached(cur_time);
+    slot_one.get_if_sample_cached(cur_time);
+
+    assert_finite_nonzero_samples(&slot_zero.sample_array, "GLONASS slot zero");
+    assert_finite_nonzero_samples(&slot_one.sample_array, "GLONASS slot one");
+
+    let total_delta: f64 = slot_zero
+        .sample_array
+        .iter()
+        .zip(slot_one.sample_array.iter())
+        .map(|(left, right)| (left.real - right.real).abs() + (left.imag - right.imag).abs())
+        .sum();
+    assert!(
+        total_delta > 1.0e-6,
+        "GLONASS FDMA slot must affect carrier samples"
+    );
 }
 
 #[test]

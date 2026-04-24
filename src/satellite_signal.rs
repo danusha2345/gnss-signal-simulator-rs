@@ -388,7 +388,12 @@ impl SatelliteSignal {
                         0
                     };
                     let mut data_bits_i32 = [0; 4096];
-                    nav_data.get_frame_data(transmit_time_adj, self.svid, param, &mut data_bits_i32);
+                    nav_data.get_frame_data(
+                        transmit_time_adj,
+                        self.svid,
+                        param,
+                        &mut data_bits_i32,
+                    );
 
                     // DEBUG: Проверка навигационных данных
                     let _non_zero_count = data_bits_i32.iter().filter(|&&x| x != 0).count();
@@ -424,15 +429,19 @@ impl SatelliteSignal {
                 1
             };
         } else if !self.is_in_time_marker {
+            let nh_bit = if self.attribute.nh_code != 0
+                && bit_pos < 32
+                && (self.attribute.nh_code & (1u32 << bit_pos)) != 0
+            {
+                -1
+            } else {
+                1
+            };
             data_bit = (if self.data_bits[bit_number] != 0 {
                 -1
             } else {
                 1
-            }) * (if (self.attribute.nh_code & (1 << bit_pos)) != 0 {
-                -1
-            } else {
-                1
-            });
+            }) * nh_bit;
         } else {
             data_bit = 1; // Should be handled by the time marker logic above
         }
