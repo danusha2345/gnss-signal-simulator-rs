@@ -1,6 +1,7 @@
 use gnss_rust::constants::{LIGHT_SPEED, SIGNAL_INDEX_L1CA};
 use gnss_rust::coordinate::{
-    ecef_to_lla, geometry_distance, gps_iono_delay, gps_sat_pos_speed_eph, lla_to_ecef,
+    ecef_to_lla, geometry_distance, glonass_clock_correction, glonass_sat_pos_speed_eph,
+    gps_clock_correction, gps_iono_delay, gps_sat_pos_speed_eph, lla_to_ecef,
     sat_el_az_from_positions, tropo_delay,
 };
 use gnss_rust::json_interpreter::{read_nav_file_limited, CNavData};
@@ -100,6 +101,62 @@ fn gps_ephemeris_propagates_to_reasonable_position_and_velocity() {
     assert!(radius < 28_000_000.0, "unexpected orbit radius: {radius}");
     assert!(speed > 2_000.0, "unexpected satellite speed: {speed}");
     assert!(speed < 5_000.0, "unexpected satellite speed: {speed}");
+}
+
+#[test]
+fn clock_corrections_wrap_at_gps_week_and_glonass_day_boundaries() {
+    let gps_eph = gnss_rust::types::GpsEphemeris {
+        toc: 604_790,
+        af0: 1.0e-4,
+        af1: 2.0e-12,
+        af2: -1.0e-18,
+        ..gnss_rust::types::GpsEphemeris::default()
+    };
+    let gps_dt = 15.0;
+    let expected_gps =
+        (gps_eph.af0 + (gps_eph.af1 + gps_eph.af2 * gps_dt) * gps_dt) * (1.0 - gps_eph.af1);
+    assert!((gps_clock_correction(&gps_eph, 5.0) - expected_gps).abs() < 1e-18);
+
+    let glo_eph = gnss_rust::types::GlonassEphemeris {
+        tb: 86_390,
+        tn: 2.5e-4,
+        gamma: -3.0e-12,
+        ..gnss_rust::types::GlonassEphemeris::default()
+    };
+    let expected_glo = -glo_eph.tn + glo_eph.gamma * 15.0;
+    assert!((glonass_clock_correction(&glo_eph, 5.0) - expected_glo).abs() < 1e-18);
+}
+
+#[test]
+fn glonass_ephemeris_propagates_to_reasonable_position_and_velocity() {
+    let nav_data = load_nav_data();
+    let eph = nav_data
+        .glonass_ephemeris
+        .iter()
+        .find(|eph| eph.valid != 0)
+        .expect("GLONASS ephemeris should exist");
+
+    let mut eph_for_propagation = *eph;
+    let mut sat_pos = KinematicInfo::default();
+    assert!(glonass_sat_pos_speed_eph(
+        eph.tb as f64 + 600.0,
+        &mut eph_for_propagation,
+        &mut sat_pos,
+        None,
+    ));
+
+    let radius = (sat_pos.x * sat_pos.x + sat_pos.y * sat_pos.y + sat_pos.z * sat_pos.z).sqrt();
+    let speed =
+        (sat_pos.vx * sat_pos.vx + sat_pos.vy * sat_pos.vy + sat_pos.vz * sat_pos.vz).sqrt();
+
+    assert!(
+        (24_000_000.0..27_000_000.0).contains(&radius),
+        "unexpected GLONASS orbit radius: {radius}"
+    );
+    assert!(
+        (2_000.0..5_000.0).contains(&speed),
+        "unexpected GLONASS satellite speed: {speed}"
+    );
 }
 
 #[test]

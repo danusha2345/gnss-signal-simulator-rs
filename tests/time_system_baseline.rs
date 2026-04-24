@@ -2,7 +2,7 @@ use gnss_rust::gnsstime::{
     bds_time_to_utc, galileo_time_to_utc, gps_time_to_utc, utc_to_bds_time, utc_to_galileo_time,
     utc_to_glonass_time_corrected, utc_to_gps_time,
 };
-use gnss_rust::types::UtcTime;
+use gnss_rust::types::{GnssTime, UtcTime};
 
 fn utc_2025_june_5() -> UtcTime {
     UtcTime {
@@ -28,11 +28,15 @@ fn gps_bds_and_galileo_offsets_match_reference_epoch() {
     assert_eq!(bds.Week, 1013);
     assert_eq!(bds.MilliSeconds, 381_934_250);
     assert!((bds.SubMilliSeconds - 0.25).abs() < f64::EPSILON);
+    assert_eq!(gps.Week - bds.Week, 1356);
+    assert_eq!(gps.MilliSeconds - bds.MilliSeconds, 14_000);
 
     let galileo = utc_to_galileo_time(utc);
     assert_eq!(galileo.Week, 1345);
     assert_eq!(galileo.MilliSeconds, 381_948_250);
     assert!((galileo.SubMilliSeconds - 0.25).abs() < f64::EPSILON);
+    assert_eq!(gps.Week - galileo.Week, 1024);
+    assert_eq!(gps.MilliSeconds, galileo.MilliSeconds);
 }
 
 #[test]
@@ -50,6 +54,29 @@ fn gps_epoch_without_leap_seconds_starts_at_zero() {
     assert_eq!(gps.Week, 0);
     assert_eq!(gps.MilliSeconds, 0);
     assert_eq!(gps.SubMilliSeconds, 0.0);
+}
+
+#[test]
+fn gnss_time_add_milliseconds_wraps_week_boundaries() {
+    let end_of_week = GnssTime {
+        Week: 2369,
+        MilliSeconds: 604_799_900,
+        SubMilliSeconds: 0.5,
+    };
+    let next_week = end_of_week.add_milliseconds(250.0);
+    assert_eq!(next_week.Week, 2370);
+    assert_eq!(next_week.MilliSeconds, 150);
+    assert_eq!(next_week.SubMilliSeconds, 0.5);
+
+    let start_of_week = GnssTime {
+        Week: 2370,
+        MilliSeconds: 100,
+        SubMilliSeconds: 0.25,
+    };
+    let previous_week = start_of_week.add_milliseconds(-250.0);
+    assert_eq!(previous_week.Week, 2369);
+    assert_eq!(previous_week.MilliSeconds, 604_799_850);
+    assert_eq!(previous_week.SubMilliSeconds, 0.25);
 }
 
 #[test]
