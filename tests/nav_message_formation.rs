@@ -145,6 +145,25 @@ fn non_zero_ratio(bits: &[i32]) -> f32 {
     cnt as f32 / bits.len().min(2000) as f32
 }
 
+fn assert_nav_bits(name: &str, bits: &[i32], min_non_zero_ratio: f32) {
+    assert!(
+        bits.iter().all(|&bit| bit == 0 || bit == 1),
+        "{name} must contain only binary nav bits"
+    );
+    assert!(
+        non_zero_ratio(bits) > min_non_zero_ratio,
+        "{name} is too sparse"
+    );
+}
+
+fn hamming_distance(left: &[i32], right: &[i32]) -> usize {
+    assert_eq!(left.len(), right.len());
+    left.iter()
+        .zip(right.iter())
+        .filter(|(left, right)| left != right)
+        .count()
+}
+
 #[test]
 fn gps_lnav_forms_frames() {
     let mut nav = LNavBit::new();
@@ -157,15 +176,20 @@ fn gps_lnav_forms_frames() {
     nav.set_iono_utc(&sample_iono(), &sample_utc());
 
     // Cover 5 subframes (6s each)
+    let mut previous_bits: Option<[i32; 300]> = None;
     for i in 0..5 {
         let mut bits = [0i32; 300];
         let rc = nav.get_frame_data(t(1000 + i * 6000), 1, 0, &mut bits);
         assert_eq!(rc, 0);
-        assert!(
-            non_zero_ratio(&bits) > 0.05,
-            "too sparse LNAV frame {}",
-            i + 1
-        );
+        assert_nav_bits(&format!("LNAV frame {}", i + 1), &bits, 0.05);
+        if let Some(previous) = previous_bits {
+            assert!(
+                hamming_distance(&previous, &bits) > 20,
+                "LNAV frame {} should differ from previous subframe",
+                i + 1
+            );
+        }
+        previous_bits = Some(bits);
     }
 }
 
@@ -184,7 +208,7 @@ fn gps_cnav_and_l5cnav_form_frames() {
     let mut bits_cnav = vec![0i32; 600];
     let rc = cnav.get_frame_data(t(12_000), 3, 0, &mut bits_cnav);
     assert_eq!(rc, 0);
-    assert!(non_zero_ratio(&bits_cnav) > 0.05);
+    assert_nav_bits("CNAV frame", &bits_cnav, 0.05);
 
     // L5 CNAV
     let mut l5 = L5CNavBit::new();
@@ -195,7 +219,7 @@ fn gps_cnav_and_l5cnav_form_frames() {
     let mut bits_l5 = [0i32; 600];
     let rc = l5.get_frame_data(t(6_000), 4, 1, &mut bits_l5);
     assert_eq!(rc, 0);
-    assert!(non_zero_ratio(&bits_l5) > 0.05);
+    assert_nav_bits("L5 CNAV frame", &bits_l5, 0.05);
 }
 
 #[test]
@@ -212,7 +236,7 @@ fn gps_cnav2_l1c_forms_frames() {
     // Выберем время, дающее субкадр 2 (более плотное наполнение)
     let rc = l1c.get_frame_data(t(36_000), 6, 0, &mut bits);
     assert_eq!(rc, 0);
-    assert!(non_zero_ratio(&bits[..1200]) > 0.01);
+    assert_nav_bits("CNAV2 frame", &bits[..1200], 0.01);
 }
 
 #[test]
@@ -226,7 +250,7 @@ fn glonass_gnav_forms_strings() {
     let mut bits = vec![0i32; 100];
     let rc = gnav.get_frame_data(t(30_000), 1, 0, &mut bits);
     assert_eq!(rc, 0);
-    assert!(non_zero_ratio(&bits) > 0.05);
+    assert_nav_bits("GLONASS GNAV string", &bits, 0.05);
 }
 
 #[test]
@@ -242,7 +266,7 @@ fn galileo_inav_fnav_form_frames() {
     let mut bits_inav = vec![0i32; 600];
     let rc = inav.get_frame_data(t(2_000), 10, 1, &mut bits_inav);
     assert_eq!(rc, 0);
-    assert!(non_zero_ratio(&bits_inav[..500]) > 0.05);
+    assert_nav_bits("Galileo INAV frame", &bits_inav[..500], 0.05);
 
     // F/NAV (E5a)
     let mut fnav = FNavBit::new();
@@ -252,7 +276,7 @@ fn galileo_inav_fnav_form_frames() {
     let mut bits_fnav = vec![0i32; 600];
     let rc = fnav.get_frame_data(t(1_000), 11, 0, &mut bits_fnav);
     assert_eq!(rc, 0);
-    assert!(non_zero_ratio(&bits_fnav) > 0.05);
+    assert_nav_bits("Galileo FNAV frame", &bits_fnav, 0.05);
 }
 
 #[test]
@@ -272,7 +296,7 @@ fn beidou_d1d2_and_bcnav_form_frames() {
     let mut bits_d12 = vec![0i32; 300];
     let rc = d12.get_frame_data(t(6_000), 6, 0, &mut bits_d12);
     assert_eq!(rc, 0);
-    assert!(non_zero_ratio(&bits_d12) > 0.05);
+    assert_nav_bits("BeiDou D1/D2 frame", &bits_d12, 0.05);
 
     // BCNav1 (B1C)
     let mut b1c = BCNav1Bit::new();
@@ -282,7 +306,7 @@ fn beidou_d1d2_and_bcnav_form_frames() {
     let mut bits_b1c = vec![0i32; 2048];
     let rc = b1c.get_frame_data(t(18_000), 38, 0, &mut bits_b1c);
     assert_eq!(rc, 0);
-    assert!(non_zero_ratio(&bits_b1c[..1500]) > 0.02);
+    assert_nav_bits("BeiDou BCNav1 frame", &bits_b1c[..1500], 0.02);
 
     // BCNav2 (B2a)
     let mut b2a = BCNav2Bit::new();
@@ -292,7 +316,7 @@ fn beidou_d1d2_and_bcnav_form_frames() {
     let mut bits_b2a = vec![0i32; 1500];
     let rc = b2a.get_frame_data(t(9_000), 20, 0, &mut bits_b2a);
     assert!(rc >= 0);
-    assert!(non_zero_ratio(&bits_b2a[..1200]) > 0.02);
+    assert_nav_bits("BeiDou BCNav2 frame", &bits_b2a[..1200], 0.02);
 
     // BCNav3 (B2b/B3I)
     let mut b2b = BCNav3Bit::new();
@@ -302,7 +326,7 @@ fn beidou_d1d2_and_bcnav_form_frames() {
     let mut bits_b2b = vec![0i32; 2048];
     let rc = b2b.get_frame_data(t(21_000), 22, 0, &mut bits_b2b);
     assert_eq!(rc, 0);
-    assert!(non_zero_ratio(&bits_b2b[..1500]) > 0.02);
+    assert_nav_bits("BeiDou BCNav3 frame", &bits_b2b[..1500], 0.02);
 }
 fn sample_glo_eph(slot: u8) -> GlonassEphemeris {
     GlonassEphemeris {
