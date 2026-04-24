@@ -18,6 +18,7 @@ use gnss_rust::gnavbit::GNavBit;
 use gnss_rust::inavbit::INavBit;
 use gnss_rust::l5cnavbit::L5CNavBit;
 use gnss_rust::lnavbit::LNavBit;
+use gnss_rust::nav_data::{NavData, NavMessageType};
 use gnss_rust::types::*;
 
 fn sample_gps_eph(svid: u8) -> GpsEphemeris {
@@ -164,6 +165,22 @@ fn hamming_distance(left: &[i32], right: &[i32]) -> usize {
         .count()
 }
 
+fn bits_to_u32(bits: &[i32]) -> u32 {
+    bits.iter().fold(0u32, |acc, &bit| (acc << 1) | bit as u32)
+}
+
+fn assert_prefix_bits(name: &str, bits: &[i32], expected: u32, bit_count: usize) {
+    assert!(
+        bits.len() >= bit_count,
+        "{name} does not contain {bit_count} bits"
+    );
+    assert_eq!(
+        bits_to_u32(&bits[..bit_count]),
+        expected,
+        "{name} prefix mismatch"
+    );
+}
+
 #[test]
 fn gps_lnav_forms_frames() {
     let mut nav = LNavBit::new();
@@ -181,6 +198,19 @@ fn gps_lnav_forms_frames() {
         let mut bits = [0i32; 300];
         let rc = nav.get_frame_data(t(1000 + i * 6000), 1, 0, &mut bits);
         assert_eq!(rc, 0);
+        assert_prefix_bits("LNAV preamble", &bits, 0x8b, 8);
+
+        let expected_next_tow = ((1000 + i * 6000) / 6000 + 1) as u32;
+        assert_eq!(
+            bits_to_u32(&bits[30..47]),
+            expected_next_tow,
+            "LNAV HOW should carry next TOW count"
+        );
+        assert_eq!(
+            bits_to_u32(&bits[49..52]),
+            (i + 1) as u32,
+            "LNAV HOW should carry subframe id"
+        );
         assert_nav_bits(&format!("LNAV frame {}", i + 1), &bits, 0.05);
         if let Some(previous) = previous_bits {
             assert!(
@@ -220,6 +250,10 @@ fn gps_cnav_and_l5cnav_form_frames() {
     let rc = l5.get_frame_data(t(6_000), 4, 1, &mut bits_l5);
     assert_eq!(rc, 0);
     assert_nav_bits("L5 CNAV frame", &bits_l5, 0.05);
+    assert!(
+        hamming_distance(&bits_cnav, &bits_l5) > 200,
+        "L2C CNAV and L5 CNAV streams should not collapse to the same data"
+    );
 }
 
 #[test]
@@ -251,6 +285,15 @@ fn glonass_gnav_forms_strings() {
     let rc = gnav.get_frame_data(t(30_000), 1, 0, &mut bits);
     assert_eq!(rc, 0);
     assert_nav_bits("GLONASS GNAV string", &bits, 0.05);
+    assert_eq!(bits[84], 0, "GLONASS GNAV idle bit should be zero");
+    assert!(
+        bits[93..100].iter().all(|&bit| bit == 0),
+        "GLONASS GNAV padding bits should be zero"
+    );
+
+    let mut time_marker = [0i32; 30];
+    GNavBit::get_time_marker(&mut time_marker);
+    assert_eq!(bits_to_u32(&time_marker), 0x3E375096);
 }
 
 #[test]
@@ -266,6 +309,16 @@ fn galileo_inav_fnav_form_frames() {
     let mut bits_inav = vec![0i32; 600];
     let rc = inav.get_frame_data(t(2_000), 10, 1, &mut bits_inav);
     assert_eq!(rc, 0);
+    assert_eq!(
+        &bits_inav[..10],
+        &[0, 1, 0, 1, 1, 0, 0, 0, 0, 0],
+        "Galileo INAV even page sync pattern"
+    );
+    assert_eq!(
+        &bits_inav[250..260],
+        &[0, 1, 0, 1, 1, 0, 0, 0, 0, 0],
+        "Galileo INAV odd page sync pattern"
+    );
     assert_nav_bits("Galileo INAV frame", &bits_inav[..500], 0.05);
 
     // F/NAV (E5a)
@@ -316,6 +369,7 @@ fn beidou_d1d2_and_bcnav_form_frames() {
     let mut bits_b2a = vec![0i32; 1500];
     let rc = b2a.get_frame_data(t(9_000), 20, 0, &mut bits_b2a);
     assert!(rc >= 0);
+    assert_prefix_bits("BeiDou BCNav2 preamble", &bits_b2a, 0xe24de8, 24);
     assert_nav_bits("BeiDou BCNav2 frame", &bits_b2a[..1200], 0.02);
 
     // BCNav3 (B2b/B3I)
@@ -326,8 +380,47 @@ fn beidou_d1d2_and_bcnav_form_frames() {
     let mut bits_b2b = vec![0i32; 2048];
     let rc = b2b.get_frame_data(t(21_000), 22, 0, &mut bits_b2b);
     assert_eq!(rc, 0);
+    assert_prefix_bits("BeiDou BCNav3 preamble", &bits_b2b, 0xeb90, 16);
+    assert_eq!(
+        bits_to_u32(&bits_b2b[16..22]),
+        22,
+        "BeiDou BCNav3 header should carry SVID"
+    );
     assert_nav_bits("BeiDou BCNav3 frame", &bits_b2b[..1500], 0.02);
 }
+
+#[test]
+fn nav_data_enum_dispatch_matches_direct_lnav_output() {
+    let eph = sample_gps_eph(1);
+    let alm = sample_alm(32);
+    let iono = sample_iono();
+    let utc = sample_utc();
+    let frame_time = t(24_000);
+
+    let mut direct = LNavBit::new();
+    assert_ne!(direct.set_ephemeris(1, &eph), 0);
+    let alm_array: [GpsAlmanac; 32] = alm.clone().try_into().unwrap();
+    direct.set_almanac(&alm_array);
+    direct.set_iono_utc(&iono, &utc);
+    let mut direct_bits = [0i32; 300];
+    assert_eq!(direct.get_frame_data(frame_time, 1, 0, &mut direct_bits), 0);
+
+    let mut routed = NavData::new_for_system(GnssSystem::GpsSystem, 1)
+        .expect("GPS L1CA NavData should be constructible");
+    assert_eq!(routed.get_nav_message_type(), NavMessageType::LNav);
+    assert_ne!(routed.set_ephemeris(1, &eph), 0);
+    routed.set_almanac(&alm);
+    routed.set_iono_utc(Some(&iono), Some(&utc));
+    let mut routed_bits = vec![0i32; 300];
+    assert_eq!(routed.get_frame_data(frame_time, 1, 0, &mut routed_bits), 0);
+
+    assert_eq!(
+        &direct_bits[..],
+        &routed_bits[..300],
+        "NavData enum dispatch should preserve LNAV frame formation"
+    );
+}
+
 fn sample_glo_eph(slot: u8) -> GlonassEphemeris {
     GlonassEphemeris {
         valid: 1,
