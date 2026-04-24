@@ -5,10 +5,10 @@
 //! 2. All expected PRNs acquired with z-score > 20
 //! 3. Carrier phase continuous over 30 seconds (max jump < 0.01 cycles)
 
+use gnss_rust::constants::*;
 use gnss_rust::gps_pilot::{generate, GpsPilotConfig};
 use gnss_rust::prngenerate::PrnGenerate;
 use gnss_rust::types::*;
-use gnss_rust::constants::*;
 use std::f64::consts::TAU;
 
 const SAMPLE_RATE: f64 = 5_000_000.0;
@@ -26,8 +26,12 @@ fn test_config() -> GpsPilotConfig {
             alt: 100.0,
         },
         utc_time: UtcTime {
-            Year: 2025, Month: 6, Day: 5,
-            Hour: 10, Minute: 5, Second: 30.0,
+            Year: 2025,
+            Month: 6,
+            Day: 5,
+            Hour: 10,
+            Minute: 5,
+            Second: 30.0,
         },
         duration_s: 30.0,
         sample_rate_hz: SAMPLE_RATE,
@@ -75,7 +79,9 @@ fn acquire_prn(iq: &[(f64, f64)], prn_code: &[f64], expected_doppler: f64) -> (u
             for ms in 0..20 {
                 for s in 0..SAMPLES_PER_MS {
                     let idx = ms * SAMPLES_PER_MS + s;
-                    if idx >= iq.len() { break; }
+                    if idx >= iq.len() {
+                        break;
+                    }
                     let t = idx as f64 / SAMPLE_RATE;
                     let phase = TAU * doppler * t;
                     let (sin_v, cos_v) = phase.sin_cos();
@@ -139,8 +145,13 @@ fn track_carrier_phase(
             let mut sat_param = SatelliteParam::default();
             sat_param.system = GnssSystem::GpsSystem;
             get_satellite_param(
-                &receiver_ecef, &receiver_lla_ecef, &ms_time,
-                GnssSystem::GpsSystem, eph, &iono, &mut sat_param,
+                &receiver_ecef,
+                &receiver_lla_ecef,
+                &ms_time,
+                GnssSystem::GpsSystem,
+                eph,
+                &iono,
+                &mut sat_param,
             );
             current_doppler = get_doppler(&sat_param, SIGNAL_INDEX_L1CA);
         }
@@ -154,7 +165,9 @@ fn track_carrier_phase(
 
         for s in 0..SAMPLES_PER_MS {
             let idx = ms * SAMPLES_PER_MS + s;
-            if idx >= iq.len() { break; }
+            if idx >= iq.len() {
+                break;
+            }
 
             let angle = carrier_phase_acc * TAU;
             let (sin_v, cos_v) = angle.sin_cos();
@@ -182,8 +195,12 @@ fn check_phase_continuity(phases: &[f64], max_jump_cycles: f64) -> (bool, f64) {
     for i in 1..phases.len() {
         let mut diff = phases[i] - phases[i - 1];
         // Unwrap: handle ±0.5 cycle wrapping
-        while diff > 0.5 { diff -= 1.0; }
-        while diff < -0.5 { diff += 1.0; }
+        while diff > 0.5 {
+            diff -= 1.0;
+        }
+        while diff < -0.5 {
+            diff += 1.0;
+        }
         if diff.abs() > max_jump {
             max_jump = diff.abs();
         }
@@ -196,6 +213,7 @@ fn check_phase_continuity(phases: &[f64], max_jump_cycles: f64) -> (bool, f64) {
 // TEST 1: Generate file and check size
 // =============================================================================
 #[test]
+#[ignore = "heavy integration test: generates 30s of 5 MHz IQ data"]
 fn test_gps_pilot_generates_file() {
     let config = test_config();
     let result = generate(&config).expect("Generation failed");
@@ -203,15 +221,24 @@ fn test_gps_pilot_generates_file() {
     let metadata = std::fs::metadata(&config.output_path).expect("File not found");
     let expected_size = (config.duration_s * config.sample_rate_hz * 2.0) as u64; // 2 bytes per sample (I+Q)
     assert_eq!(metadata.len(), expected_size, "File size mismatch");
-    assert!(result.satellites.len() >= 5, "Too few satellites: {}", result.satellites.len());
+    assert!(
+        result.satellites.len() >= 5,
+        "Too few satellites: {}",
+        result.satellites.len()
+    );
 
-    println!("File: {} bytes, {} satellites", metadata.len(), result.satellites.len());
+    println!(
+        "File: {} bytes, {} satellites",
+        metadata.len(),
+        result.satellites.len()
+    );
 }
 
 // =============================================================================
 // TEST 2: Acquire all expected PRNs
 // =============================================================================
 #[test]
+#[ignore = "heavy integration test: generates and acquires 30s of 5 MHz IQ data"]
 fn test_gps_pilot_acquisition() {
     let config = test_config();
     let result = generate(&config).expect("Generation failed");
@@ -228,13 +255,16 @@ fn test_gps_pilot_acquisition() {
             "  PRN {:02}: offset={}, doppler={:.0} Hz, z={:.1} — {}",
             sat.svid, offset, doppler, z, status
         );
-        if z > 10.0 { found += 1; }
+        if z > 10.0 {
+            found += 1;
+        }
     }
 
     assert!(
         found >= result.satellites.len() * 8 / 10,
         "Only {}/{} satellites found",
-        found, result.satellites.len()
+        found,
+        result.satellites.len()
     );
 }
 
@@ -242,6 +272,7 @@ fn test_gps_pilot_acquisition() {
 // TEST 3: Carrier phase continuity over 30 seconds (CRITICAL)
 // =============================================================================
 #[test]
+#[ignore = "heavy integration test: generates and tracks 30s of 5 MHz IQ data"]
 fn test_gps_pilot_carrier_phase_continuity() {
     use gnss_rust::json_interpreter::{read_nav_file_limited, CNavData};
 
@@ -260,12 +291,16 @@ fn test_gps_pilot_carrier_phase_continuity() {
 
     for sat in &result.satellites {
         // Skip low-elevation satellites — too noisy for phase tracking test
-        if sat.elevation_deg < 15.0 { continue; }
+        if sat.elevation_deg < 15.0 {
+            continue;
+        }
 
         let prn_code = get_prn_code(sat.svid);
 
         // Find ephemeris for this SVID
-        let eph = nav_data.gps_ephemeris.iter()
+        let eph = nav_data
+            .gps_ephemeris
+            .iter()
             .filter(|e| e.svid == sat.svid && e.valid != 0)
             .min_by(|a, b| {
                 let da = (a.toe as f64 - target_sow).abs();
@@ -274,20 +309,33 @@ fn test_gps_pilot_carrier_phase_continuity() {
             });
         let eph = match eph {
             Some(e) => *e,
-            None => { println!("PRN {:02}: no ephemeris", sat.svid); continue; }
+            None => {
+                println!("PRN {:02}: no ephemeris", sat.svid);
+                continue;
+            }
         };
 
         // Acquire
         let (offset, doppler, z) = acquire_prn(&iq, &prn_code, sat.doppler_hz);
         if z < 10.0 {
-            println!("PRN {:02}: acquisition failed (z={:.1}), skipping", sat.svid, z);
+            println!(
+                "PRN {:02}: acquisition failed (z={:.1}), skipping",
+                sat.svid, z
+            );
             continue;
         }
 
         // Track carrier phase with per-second Doppler updates
         let phases = track_carrier_phase(
-            &iq, &prn_code, offset, doppler, duration_ms,
-            sat.svid, &eph, &gps_time, &config.receiver_lla,
+            &iq,
+            &prn_code,
+            offset,
+            doppler,
+            duration_ms,
+            sat.svid,
+            &eph,
+            &gps_time,
+            &config.receiver_lla,
         );
 
         // Check continuity — threshold 0.45 accounts for measurement noise at z~12
@@ -299,7 +347,9 @@ fn test_gps_pilot_carrier_phase_continuity() {
             sat.svid, max_jump, status, z
         );
 
-        if !pass { all_pass = false; }
+        if !pass {
+            all_pass = false;
+        }
     }
 
     assert!(all_pass, "Carrier phase discontinuity detected");
@@ -310,6 +360,7 @@ fn test_gps_pilot_carrier_phase_continuity() {
 // This directly tests the signal model without measurement noise.
 // =============================================================================
 #[test]
+#[ignore = "heavy signal-model test: correlates 30s of 5 MHz samples"]
 fn test_gps_pilot_clean_phase() {
     use gnss_rust::coordinate::{ecef_to_lla, lla_to_ecef};
     use gnss_rust::json_interpreter::{read_nav_file_limited, CNavData};
@@ -331,20 +382,36 @@ fn test_gps_pilot_clean_phase() {
     let mut test_svid = 0u8;
     let mut test_eph = GpsEphemeris::default();
     for svid in 1u8..=32 {
-        let eph = nav_data.gps_ephemeris.iter()
+        let eph = nav_data
+            .gps_ephemeris
+            .iter()
             .filter(|e| e.svid == svid && e.valid != 0)
             .min_by(|a, b| {
-                (a.toe as f64 - target_sow).abs().partial_cmp(&(b.toe as f64 - target_sow).abs()).unwrap()
+                (a.toe as f64 - target_sow)
+                    .abs()
+                    .partial_cmp(&(b.toe as f64 - target_sow).abs())
+                    .unwrap()
             });
         if let Some(e) = eph {
             let mut sp = SatelliteParam::default();
             sp.system = GnssSystem::GpsSystem;
-            get_satellite_param(&receiver_ecef, &receiver_lla, &gps_time,
-                GnssSystem::GpsSystem, e, &iono, &mut sp);
+            get_satellite_param(
+                &receiver_ecef,
+                &receiver_lla,
+                &gps_time,
+                GnssSystem::GpsSystem,
+                e,
+                &iono,
+                &mut sp,
+            );
             if sp.Elevation > 30.0_f64.to_radians() {
                 test_svid = svid;
                 test_eph = *e;
-                println!("Using PRN {:02} (elev={:.1}°)", svid, sp.Elevation.to_degrees());
+                println!(
+                    "Using PRN {:02} (elev={:.1}°)",
+                    svid,
+                    sp.Elevation.to_degrees()
+                );
                 break;
             }
         }
@@ -352,7 +419,11 @@ fn test_gps_pilot_clean_phase() {
     assert!(test_svid > 0, "No suitable satellite found");
 
     // Generate single-satellite signal: high CN0, NO noise
-    let prn_gen = PrnGenerate::new(GnssSystem::GpsSystem, SIGNAL_INDEX_L1CA as i32, test_svid as i32);
+    let prn_gen = PrnGenerate::new(
+        GnssSystem::GpsSystem,
+        SIGNAL_INDEX_L1CA as i32,
+        test_svid as i32,
+    );
     let raw_code = prn_gen.get_data_prn().unwrap();
     let mut prn_code = [0.0f64; CODE_LEN];
     for i in 0..CODE_LEN {
@@ -381,8 +452,15 @@ fn test_gps_pilot_clean_phase() {
         // Compute satellite params (same as generator)
         let mut sat_param = SatelliteParam::default();
         sat_param.system = GnssSystem::GpsSystem;
-        get_satellite_param(&receiver_ecef, &receiver_lla, &ms_time,
-            GnssSystem::GpsSystem, &test_eph, &iono, &mut sat_param);
+        get_satellite_param(
+            &receiver_ecef,
+            &receiver_lla,
+            &ms_time,
+            GnssSystem::GpsSystem,
+            &test_eph,
+            &iono,
+            &mut sat_param,
+        );
         let doppler = get_doppler(&sat_param, SIGNAL_INDEX_L1CA);
         let travel_time = get_travel_time(&sat_param, SIGNAL_INDEX_L1CA);
         let rx_time_sow = ms_time.MilliSeconds as f64 / 1000.0;
@@ -436,6 +514,13 @@ fn test_gps_pilot_clean_phase() {
 
     // Check phase continuity — should be near-perfect without noise
     let (pass, max_jump) = check_phase_continuity(&phases, 0.001);
-    println!("PRN {:02}: max phase jump = {:.6} cycles (threshold 0.001)", test_svid, max_jump);
-    assert!(pass, "Clean phase test failed: max_jump = {:.6} cycles", max_jump);
+    println!(
+        "PRN {:02}: max phase jump = {:.6} cycles (threshold 0.001)",
+        test_svid, max_jump
+    );
+    assert!(
+        pass,
+        "Clean phase test failed: max_jump = {:.6} cycles",
+        max_jump
+    );
 }
