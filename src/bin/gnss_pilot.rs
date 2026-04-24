@@ -510,19 +510,20 @@ fn main() {
                         let rx_sow = ms_time.MilliSeconds as f64 / 1000.0;
                         let base = ms_off * spm;
 
-                        // Nav bit timing — integer ms (same as GPS/Galileo)
+                        // Nav bit timing — integer ms, BDT = GPS - 14s (matching satellite_signal.rs:287)
                         let travel_ms = (*travel_time_s * 1000.0) as i32;
                         let tx_ms_int = ms_time.MilliSeconds - travel_ms;
-                        let fn_ = tx_ms_int / B1I_FRAME_MS;
+                        let tx_ms_bdt = tx_ms_int - 14000; // GPS→BDT correction
+                        let fn_ = tx_ms_bdt / B1I_FRAME_MS;
                         if fn_ != *current_frame {
-                            d1nav.get_frame_data(GnssTime { Week: ms_time.Week, MilliSeconds: tx_ms_int, SubMilliSeconds: 0.0 }, *svid as i32, 0, nav_bits);
+                            d1nav.get_frame_data(GnssTime { Week: ms_time.Week, MilliSeconds: tx_ms_bdt, SubMilliSeconds: 0.0 }, *svid as i32, 0, nav_bits);
                             *current_frame = fn_;
                         }
-                        let bi = ((tx_ms_int % B1I_FRAME_MS).max(0) / B1I_NAV_BIT_MS) as usize;
+                        let bi = ((tx_ms_bdt % B1I_FRAME_MS).max(0) / B1I_NAV_BIT_MS) as usize;
                         let nav_bit: f64 = if nav_bits[bi.min(B1I_BITS_PER_FRAME - 1)] != 0 { -1.0 } else { 1.0 };
 
                         // Neumann-Hoffman secondary code (20 bits, LSB-first as in satellite_signal.rs)
-                        let nh_idx = (tx_ms_int.rem_euclid(B1I_NH_LEN)) as u32;
+                        let nh_idx = (tx_ms_bdt.rem_euclid(B1I_NH_LEN)) as u32;
                         let nh_bit: f64 = if (B1I_NH_CODE >> nh_idx) & 1 != 0 { -1.0 } else { 1.0 };
 
                         for s in 0..spm {

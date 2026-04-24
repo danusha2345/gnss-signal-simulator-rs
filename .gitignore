@@ -5,6 +5,7 @@ Cargo.lock
 # IDE files
 .vscode/
 .idea/
+.serena/
 *.swp
 *.swo
 *~
@@ -17,13 +18,50 @@ Thumbs.db
 *.tmp
 *.temp
 *.bak
+.env
 
 # Generated signal files (large binary files)
-generated_files/*.C8
-generated_files/*.bin
+/generated_files/
+*.C8
+*.bin
+
+# GNSS receiver/generated observation outputs
+/GSDR*
+/gnss_sdr_pvt.nmea
+/pvt.dat_*
+/logs/
+*.nmea
+*.gpx
+*.kml
+*.geojson
+
+# Local telemetry captures and reports
+/telemetry*.dat
+/telemetry*.mat
+*.pdf
+/photo_*.jpg
+
+# Generated ephemeris/export files
+/gps_ephemeris.xml
+/bds_dnav_*.xml
+/gal_*.xml
+
+# Local GNSS-SDR configs
+/gnss-sdr-*.conf
+
+# Local scenario presets
+/presets/moscow_*.json
+
+# Android/Gradle build outputs
+/android/**/build/
+/.gradle/
 
 # Debug logs
 *.log
+
+# Python cache
+__pycache__/
+*.py[cod]
 
 # Performance profiling
 perf.data*
@@ -33,7 +71,14 @@ flamegraph.svg
 debug_output.txt
 spectrum.csv
 *.png
+*.jpg
 *.o
+/debug_*.rs
+/generate_test_if.rs
+/simple_param_test.rs
+/test_*.rs
+/ble_gnss_reader.py
+/compare_iq.py
 test_ephemeris_search_basic
 test_rinex
 test_rinex_validation_simple
