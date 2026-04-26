@@ -11,11 +11,11 @@
 ## Build, Test, and Development Commands
 - `cargo check` — fast type/check cycle.
 - `cargo build --release [--features gpu,avx512]` — optimized build. GPU requires CUDA 12.5 (cudarc).
-- `cargo run -- presets/GPS_L1_only.json` — run main generator with a preset.
+- `cargo run -- presets/gps_l1ca.json` — run main generator with a preset.
 - `cargo run --bin spectrum_analyzer -- <file> <iq4|iq8>` — analyze IF samples.
 - `cargo test` — run unit tests (`#[cfg(test)]` in modules).
 - `cargo fmt --all` / `cargo clippy -- -D warnings` — format and lint.
-- Example: `cargo run --release -- presets/GPS_BDS_GAL_triple_system.json` (Rayon-параллелизм всегда включён).
+- Example: `cargo run --release -- presets/gps_bds_gal_l1.json` (Rayon-параллелизм всегда включён).
 
 ## Coding Style & Naming Conventions
 - Rust 2021; rustfmt default (4 spaces). Run `cargo fmt` before commit.
@@ -37,4 +37,3 @@
 ## Security & Configuration Tips
 - Do not commit credentials or large data. Store secrets in local env, not `.env` in Git; rotate if exposed.
 - Use relative paths in presets; keep `Rinex_Data/` files read-only in PRs.
-

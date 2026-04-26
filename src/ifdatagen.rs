@@ -30,22 +30,21 @@ use wide::f64x4;
 
 use crate::complex_number::ComplexNumber;
 use crate::constants::*;
-use crate::json_parser::JsonObject;
-use crate::types::IonoNequick as INavIonoNequick;
-use crate::types::*;
-use std::env;
 use crate::coordinate::{calc_conv_matrix_lla, ecef_to_lla, lla_to_ecef, speed_local_to_ecef};
 #[cfg(feature = "gpu")]
 use crate::cuda_acceleration::HybridAccelerator;
 use crate::gnsstime::{
     utc_to_bds_time, utc_to_galileo_time, utc_to_glonass_time_corrected, utc_to_gps_time,
 };
+use crate::json_parser::JsonObject;
 use crate::nav_data::NavData as UnifiedNavData;
 use crate::navdata::NavDataType;
 use crate::powercontrol::{CPowerControl, SignalPower};
 use crate::pvt;
 use crate::trajectory::CTrajectory;
+use crate::types::IonoNequick as INavIonoNequick;
 use crate::types::SatelliteParam;
+use crate::types::*;
 use crate::{
     bcnav1bit::BCNav1Bit as ActualBCNav1Bit, bcnav2bit::BCNav2Bit as ActualBCNav2Bit,
     bcnav3bit::BCNav3Bit as ActualBCNav3Bit,
@@ -56,6 +55,7 @@ use crate::{
     inavbit::INavBit as ActualINavBit,
 };
 use crate::{gnavbit::GNavBit, l5cnavbit::L5CNavBit, lnavbit::LNavBit};
+use std::env;
 
 #[derive(Debug)]
 pub struct GenerationStats {
@@ -759,6 +759,8 @@ use crate::fastmath::FastMath;
 use rayon::prelude::*;
 
 // Constants for quantization and time conversion
+const QUANT_SCALE_IQ4: f64 = 3.0;
+const QUANT_SCALE_IQ8: f64 = 127.0;
 
 const TOTAL_GPS_SAT: usize = 32;
 const TOTAL_BDS_SAT: usize = 63;
@@ -2177,8 +2179,14 @@ impl IFDataGen {
 
         // СТРАТЕГИЯ: Обрабатываем по блокам 1000ms (1 секунда)
         const BLOCK_SIZE_MS: i32 = 50; // 50ms blocks for smooth carrier phase (SignalSim updates every 1ms)
+        let bytes_per_sample = if self.output_param.Format == OutputFormat::OutputFormatIQ4 {
+            1usize
+        } else {
+            2usize
+        };
         let estimated_mb_total =
-            (total_duration_ms as f64 * samples_per_ms as f64 * 2.0) / (1024.0 * 1024.0);
+            (total_duration_ms as f64 * samples_per_ms as f64 * bytes_per_sample as f64)
+                / (1024.0 * 1024.0);
         println!(
             "🎯 Общий размер данных: {:.1} MB, обработка блоками по {} ms",
             estimated_mb_total, BLOCK_SIZE_MS
@@ -2226,6 +2234,7 @@ impl IFDataGen {
         // СЧЕТЧИКИ ДЛЯ СТАТИСТИКИ
         let mut total_clipped_samples = 0i64;
         let mut total_samples_written = 0i64;
+        let mut total_bytes_written = 0i64;
 
         println!("[AGC] Начальный gain: {:.3} (спутников: {}, RMS сигнала: {:.4}, RMS+шум: {:.4}, целевой RMS: {:.2})",
                  agc_gain, active_satellites, total_rms_amplitude, total_rms_with_noise, target_rms);
@@ -2236,7 +2245,7 @@ impl IFDataGen {
         // ОПТИМИЗАЦИЯ: Выделяем буферы один раз перед циклом, переиспользуем между блоками
         let max_block_samples = BLOCK_SIZE_MS as usize * samples_per_ms;
         let mut block_signal = vec![ComplexNumber::from_parts(0.0, 0.0); max_block_samples];
-        let mut iq8_data = vec![0u8; max_block_samples * 2];
+        let mut quant_data = vec![0u8; max_block_samples * bytes_per_sample];
 
         for block_idx in 0..num_blocks {
             let block_start_ms = block_idx * BLOCK_SIZE_MS;
@@ -2379,75 +2388,26 @@ impl IFDataGen {
             // МАСШТАБИРОВАНИЕ: Отсчеты с плавающей точкой [-1.0, +1.0] масштабируются к [-127, +127]
             // Множитель 127 обеспечивает оптимальное использование динамического диапазона
             let write_start = std::time::Instant::now();
-            let mut clipped_in_block = 0u64;
 
-            // SIMD-квантование: обработка 4 сэмплов за итерацию через f64x4
-            let scale = f64x4::splat(127.0);
-            let clamp_lo = f64x4::splat(-128.0);
-            let clamp_hi = f64x4::splat(127.0);
-
-            let chunks = block_samples / 4;
-
-            for chunk in 0..chunks {
-                let base = chunk * 4;
-                let s0 = &block_signal[base];
-                let s1 = &block_signal[base + 1];
-                let s2 = &block_signal[base + 2];
-                let s3 = &block_signal[base + 3];
-
-                let reals = f64x4::new([s0.real, s1.real, s2.real, s3.real]);
-                let imags = f64x4::new([s0.imag, s1.imag, s2.imag, s3.imag]);
-
-                // Клиппинг-детекция скалярно (дешевле чем SIMD extract для 4 элементов)
-                if s0.real.abs() > 1.0 || s0.imag.abs() > 1.0 {
-                    clipped_in_block += 1;
-                }
-                if s1.real.abs() > 1.0 || s1.imag.abs() > 1.0 {
-                    clipped_in_block += 1;
-                }
-                if s2.real.abs() > 1.0 || s2.imag.abs() > 1.0 {
-                    clipped_in_block += 1;
-                }
-                if s3.real.abs() > 1.0 || s3.imag.abs() > 1.0 {
-                    clipped_in_block += 1;
-                }
-
-                // SIMD масштабирование и clamp
-                let i_scaled = (reals * scale).max(clamp_lo).min(clamp_hi);
-                let q_scaled = (imags * scale).max(clamp_lo).min(clamp_hi);
-
-                let i_arr = i_scaled.as_array_ref();
-                let q_arr = q_scaled.as_array_ref();
-
-                let out_base = base * 2;
-                iq8_data[out_base] = (i_arr[0] as i8) as u8;
-                iq8_data[out_base + 1] = (q_arr[0] as i8) as u8;
-                iq8_data[out_base + 2] = (i_arr[1] as i8) as u8;
-                iq8_data[out_base + 3] = (q_arr[1] as i8) as u8;
-                iq8_data[out_base + 4] = (i_arr[2] as i8) as u8;
-                iq8_data[out_base + 5] = (q_arr[2] as i8) as u8;
-                iq8_data[out_base + 6] = (i_arr[3] as i8) as u8;
-                iq8_data[out_base + 7] = (q_arr[3] as i8) as u8;
-            }
-
-            // Остаток (< 4 сэмплов)
-            for idx in (chunks * 4)..block_samples {
-                let sample = &block_signal[idx];
-                let i_scaled = (sample.real * 127.0).clamp(-128.0, 127.0) as i8;
-                let q_scaled = (sample.imag * 127.0).clamp(-128.0, 127.0) as i8;
-                if sample.real.abs() > 1.0 || sample.imag.abs() > 1.0 {
-                    clipped_in_block += 1;
-                }
-                iq8_data[idx * 2] = i_scaled as u8;
-                iq8_data[idx * 2 + 1] = q_scaled as u8;
-            }
-            let clipped_in_block = clipped_in_block;
+            let (bytes_to_write, clipped_in_block) =
+                if self.output_param.Format == OutputFormat::OutputFormatIQ4 {
+                    (
+                        block_samples,
+                        Self::quantize_samples_iq4(&block_signal[..block_samples], &mut quant_data),
+                    )
+                } else {
+                    (
+                        block_samples * 2,
+                        Self::quantize_samples_iq8(&block_signal[..block_samples], &mut quant_data),
+                    )
+                };
 
             // Записываем блок в файл
-            if_file.write_all(&iq8_data[..block_samples * 2])?;
+            if_file.write_all(&quant_data[..bytes_to_write])?;
 
             total_clipped_samples += clipped_in_block as i64;
-            total_samples_written += block_samples as i64 * 2; // I + Q
+            total_samples_written += block_samples as i64;
+            total_bytes_written += bytes_to_write as i64;
 
             // ========== RMS-BASED AGC ==========
             // Измеряем RMS блока ПЕРЕД квантованием (сигнал уже масштабирован AGC)
@@ -2488,7 +2448,7 @@ impl IFDataGen {
                     "\r💾 Блок {}/{} записан: {:.1} MB за {:.0}ms генерации + {:.0}ms записи     ",
                     block_idx + 1,
                     num_blocks,
-                    iq8_data.len() as f64 / (1024.0 * 1024.0),
+                    bytes_to_write as f64 / (1024.0 * 1024.0),
                     generation_duration.as_secs_f64() * 1000.0,
                     write_duration.as_secs_f64() * 1000.0
                 );
@@ -2510,17 +2470,16 @@ impl IFDataGen {
                 "==============================================================================="
             );
             println!("🎯 Время генерации: {:.3}s", total_duration.as_secs_f64());
-            println!("📊 Всего сэмплов: {}", total_samples_written / 2);
-            println!("📁 Всего байт: {}", total_samples_written);
+            println!("📊 Всего сэмплов: {}", total_samples_written);
+            println!("📁 Всего байт: {}", total_bytes_written);
             println!(
                 "⚡ Скорость: {:.1} MS/s",
-                (total_samples_written / 2) as f64 / total_duration.as_secs_f64() / 1e6
+                total_samples_written as f64 / total_duration.as_secs_f64() / 1e6
             );
         }
 
         if total_clipped_samples > 0 {
-            let clip_rate =
-                total_clipped_samples as f64 / (total_samples_written / 2) as f64 * 100.0;
+            let clip_rate = total_clipped_samples as f64 / total_samples_written as f64 * 100.0;
             if crate::logutil::is_verbose() {
                 println!(
                     "⚠️  Клиппинг: {} сэмплов ({:.2}%)",
@@ -2542,6 +2501,94 @@ impl IFDataGen {
 
         if_file.flush()?;
         Ok(())
+    }
+
+    fn quantize_samples_iq4(samples: &[ComplexNumber], quant_data: &mut [u8]) -> u64 {
+        debug_assert!(quant_data.len() >= samples.len());
+
+        let mut clipped = 0u64;
+        for (idx, sample) in samples.iter().enumerate() {
+            let (i_nibble, i_clipped) = Self::quantize_iq4_component(sample.real);
+            let (q_nibble, q_clipped) = Self::quantize_iq4_component(sample.imag);
+            if i_clipped || q_clipped {
+                clipped += 1;
+            }
+            quant_data[idx] = (i_nibble << 4) | q_nibble;
+        }
+        clipped
+    }
+
+    fn quantize_iq4_component(value: f64) -> (u8, bool) {
+        let mut magnitude = (value.abs() * QUANT_SCALE_IQ4) as u8;
+        let clipped = magnitude > 7;
+        if clipped {
+            magnitude = 7;
+        }
+        let sign = if value >= 0.0 { 0 } else { 1 << 3 };
+        (magnitude | sign, clipped)
+    }
+
+    fn quantize_samples_iq8(samples: &[ComplexNumber], quant_data: &mut [u8]) -> u64 {
+        debug_assert!(quant_data.len() >= samples.len() * 2);
+
+        let mut clipped = 0u64;
+        let scale = f64x4::splat(QUANT_SCALE_IQ8);
+        let clamp_lo = f64x4::splat(-128.0);
+        let clamp_hi = f64x4::splat(127.0);
+        let chunks = samples.len() / 4;
+
+        for chunk in 0..chunks {
+            let base = chunk * 4;
+            let s0 = &samples[base];
+            let s1 = &samples[base + 1];
+            let s2 = &samples[base + 2];
+            let s3 = &samples[base + 3];
+
+            let reals = f64x4::new([s0.real, s1.real, s2.real, s3.real]);
+            let imags = f64x4::new([s0.imag, s1.imag, s2.imag, s3.imag]);
+
+            if s0.real.abs() > 1.0 || s0.imag.abs() > 1.0 {
+                clipped += 1;
+            }
+            if s1.real.abs() > 1.0 || s1.imag.abs() > 1.0 {
+                clipped += 1;
+            }
+            if s2.real.abs() > 1.0 || s2.imag.abs() > 1.0 {
+                clipped += 1;
+            }
+            if s3.real.abs() > 1.0 || s3.imag.abs() > 1.0 {
+                clipped += 1;
+            }
+
+            let i_scaled = (reals * scale).max(clamp_lo).min(clamp_hi);
+            let q_scaled = (imags * scale).max(clamp_lo).min(clamp_hi);
+
+            let i_arr = i_scaled.as_array_ref();
+            let q_arr = q_scaled.as_array_ref();
+
+            let out_base = base * 2;
+            quant_data[out_base] = (i_arr[0] as i8) as u8;
+            quant_data[out_base + 1] = (q_arr[0] as i8) as u8;
+            quant_data[out_base + 2] = (i_arr[1] as i8) as u8;
+            quant_data[out_base + 3] = (q_arr[1] as i8) as u8;
+            quant_data[out_base + 4] = (i_arr[2] as i8) as u8;
+            quant_data[out_base + 5] = (q_arr[2] as i8) as u8;
+            quant_data[out_base + 6] = (i_arr[3] as i8) as u8;
+            quant_data[out_base + 7] = (q_arr[3] as i8) as u8;
+        }
+
+        for idx in (chunks * 4)..samples.len() {
+            let sample = &samples[idx];
+            let i_scaled = (sample.real * QUANT_SCALE_IQ8).clamp(-128.0, 127.0) as i8;
+            let q_scaled = (sample.imag * QUANT_SCALE_IQ8).clamp(-128.0, 127.0) as i8;
+            if sample.real.abs() > 1.0 || sample.imag.abs() > 1.0 {
+                clipped += 1;
+            }
+            quant_data[idx * 2] = i_scaled as u8;
+            quant_data[idx * 2 + 1] = q_scaled as u8;
+        }
+
+        clipped
     }
 
     // Helper methods
@@ -4810,6 +4857,55 @@ impl Default for IFDataGen {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn quantize_samples_iq4_packs_sign_and_magnitude_nibbles() {
+        let samples = [
+            ComplexNumber::from_parts(1.0, -0.5),
+            ComplexNumber::from_parts(-3.0, 3.0),
+        ];
+        let mut quant_data = [0u8; 2];
+
+        let clipped = IFDataGen::quantize_samples_iq4(&samples, &mut quant_data);
+
+        assert_eq!(quant_data, [0x39, 0xf7]);
+        assert_eq!(clipped, 1);
+    }
+
+    #[test]
+    fn quantize_samples_iq8_writes_interleaved_signed_bytes() {
+        let samples = [
+            ComplexNumber::from_parts(1.0, -1.0),
+            ComplexNumber::from_parts(2.0, -2.0),
+            ComplexNumber::from_parts(0.5, -0.5),
+            ComplexNumber::from_parts(0.0, 0.0),
+            ComplexNumber::from_parts(-2.0, 2.0),
+        ];
+        let mut quant_data = [0u8; 10];
+
+        let clipped = IFDataGen::quantize_samples_iq8(&samples, &mut quant_data);
+
+        assert_eq!(
+            quant_data,
+            [
+                127u8,
+                (-127i8) as u8,
+                127u8,
+                (-128i8) as u8,
+                63u8,
+                (-63i8) as u8,
+                0u8,
+                0u8,
+                (-128i8) as u8,
+                127u8,
+            ]
+        );
+        assert_eq!(clipped, 2);
+    }
+}
 
 // Main function for the executable
 pub fn main() -> Result<(), Box<dyn std::error::Error>> {
