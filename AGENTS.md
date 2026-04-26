@@ -8,6 +8,11 @@
 - `generated_files/` — large outputs (ignored); do not commit.
 - Logs, PDFs and debug artifacts live at repo root; keep out of PRs.
 
+## Project Docs
+- Overview and usage: `README.md`.
+- Verification source matrix and phased baseline: `docs/verification_sources.md`, `docs/verification_report.md`.
+- ICD conformance status and current open gaps: `docs/gnss_icd_conformance_report.md`.
+
 ## Build, Test, and Development Commands
 - `cargo check` — fast type/check cycle.
 - `cargo build --release [--features gpu,avx512]` — optimized build. GPU requires CUDA 12.5 (cudarc).

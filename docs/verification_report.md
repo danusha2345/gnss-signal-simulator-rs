@@ -40,6 +40,11 @@ timeout 240 cargo test
 Latest result: full `cargo test` passed. Existing compiler warnings remain, and
 the existing heavy/known-baseline tests remain ignored by their test attributes.
 
+The newer ICD-focused conformance pass is tracked separately in
+`docs/gnss_icd_conformance_report.md`. It covers GPS CNAV-2 LDPC/framing,
+BeiDou B1C LDPC/interleaving, GPS L5 CNAV vectors, IQ4/IQ8 smoke checks, and the
+current open Galileo I/NAV ignored-test decode gap.
+
 ## Issues found and fixed
 
 - `SatelliteSignal::get_satellite_signal` could panic for long or zero NH-code

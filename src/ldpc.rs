@@ -22,27 +22,13 @@ const V2E_TABLE: [u32; 64] = [
     47, 31, 51, 23, 40, 44, 30, 61, 43, 22, 21, 60, 58, 59,
 ];
 
-/// Умножение в поле Галуа GF(64) (полиномиальная реализация).
-/// Используем порождающий полином x^6 + x + 1 (0x43). Векторное пространство над GF(2).
+/// Умножение в поле Галуа GF(64) в представлении BeiDou ICD/SignalSim.
 fn gf6_int_mul(a: i32, b: i32) -> i32 {
-    let mut aa = (a & 0x3F) as u8; // 6 бит
-    let mut bb = (b & 0x3F) as u8;
-    let mut res: u8 = 0;
-    const PRIM: u8 = 0x43; // x^6 + x + 1
-
-    for _ in 0..6 {
-        if (bb & 1) != 0 {
-            res ^= aa;
-        }
-        let carry = (aa & 0x20) != 0; // старший бит (x^5) перед сдвигом
-        aa <<= 1;
-        aa &= 0x3F;
-        if carry {
-            aa ^= PRIM & 0x3F; // редукция по примитивному полиному
-        }
-        bb >>= 1;
+    if a == 0 || b == 0 {
+        0
+    } else {
+        E2V_TABLE[(V2E_TABLE[a as usize] + V2E_TABLE[b as usize]) as usize] as i32
     }
-    res as i32
 }
 
 /// LDPC кодирование для символов BeiDou
@@ -102,12 +88,12 @@ mod tests {
         // Тест базовых случаев
         assert_eq!(gf6_int_mul(0, 5), 0);
         assert_eq!(gf6_int_mul(5, 0), 0);
-        assert_eq!(gf6_int_mul(1, 1), 1);
+        assert_eq!(gf6_int_mul(1, 1), 4);
 
         // Тест некоторых значений
-        assert_eq!(gf6_int_mul(2, 3), 6);
-        // Проверка на произвольной паре: (x^2+x+1)*(x^3+1) = x^5+x^4+x^3+x^2+x+1 = 0b111111 = 63
-        assert_eq!(gf6_int_mul(7, 9), 63);
+        assert_eq!(gf6_int_mul(2, 3), 24);
+        assert_eq!(gf6_int_mul(7, 9), 57);
+        assert_eq!(gf6_int_mul(5, 11), 26);
     }
 
     #[test]

@@ -218,6 +218,9 @@ cargo fmt --all      # Format code
 cargo clippy         # Lint
 ```
 
+Detailed verification status is tracked in `docs/verification_report.md` and
+`docs/gnss_icd_conformance_report.md`.
+
 ## Troubleshooting
 
 | Problem | Solution |

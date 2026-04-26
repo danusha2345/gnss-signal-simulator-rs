@@ -135,7 +135,16 @@ pub const SIGNAL_CENTER_FREQ: [[f64; 8]; 4] = [
         0.0,
         0.0,
     ],
-    [FREQ_GLO_G1, FREQ_GLO_G2, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+    [
+        FREQ_GLO_G1,
+        FREQ_GLO_G2,
+        FREQ_GLO_G3,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+    ],
 ];
 
 // Macro for composing bits

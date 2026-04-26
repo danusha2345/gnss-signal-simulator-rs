@@ -36,6 +36,7 @@ pub mod debug_positions;
 pub mod fastmath;
 pub mod fnavbit;
 // pub mod fnavbit_backup;
+pub(crate) mod cnav2_ldpc_tables;
 pub mod cnav2bit;
 pub mod cnavbit;
 pub mod complex_number;

@@ -408,8 +408,8 @@ impl NavBit {
         let mut data = bit_stream[0];
 
         for i in 0..byte_num {
-            crc_result =
-                (crc_result << 8) ^ Self::CRC24Q[((data >> 24) ^ (crc_result >> 16)) as usize];
+            let index = (((data >> 24) ^ (crc_result >> 16)) & 0xff) as usize;
+            crc_result = (crc_result << 8) ^ Self::CRC24Q[index];
             data <<= 8;
             if (i & 3) == 3 {
                 // move to next word
