@@ -206,8 +206,7 @@ Added comprehensive satellite visibility tables matching C version format:
 
 ### Performance Features
 
-- **Parallel Mode**: Enable with `GNSS_PARALLEL_MODE=true` environment variable
-- **High Performance**: Optimized Rayon-based parallel processing
+- **High Performance**: Rayon-параллелизм спутников + AVX-512 fast path (всегда включены)
 - **Unified Output**: All systems generated into single IF data file
 
 6. **BeiDou/Galileo Time Calculation Error** in `src/ifdatagen.rs` (September 2025):

@@ -26,7 +26,6 @@
 
 use std::fs::File;
 use std::io::{BufWriter, Write};
-use std::time::Instant;
 use wide::f64x4;
 
 use crate::complex_number::ComplexNumber;
@@ -35,8 +34,6 @@ use crate::json_parser::JsonObject;
 use crate::types::IonoNequick as INavIonoNequick;
 use crate::types::*;
 use std::env;
-// ЭКСТРЕМАЛЬНОЕ АППАРАТНОЕ УСКОРЕНИЕ: CPU + GPU
-use crate::avx512_intrinsics::SafeAvx512Processor;
 use crate::coordinate::{calc_conv_matrix_lla, ecef_to_lla, lla_to_ecef, speed_local_to_ecef};
 #[cfg(feature = "gpu")]
 use crate::cuda_acceleration::HybridAccelerator;
@@ -762,9 +759,6 @@ use crate::fastmath::FastMath;
 use rayon::prelude::*;
 
 // Constants for quantization and time conversion
-const QUANT_SCALE_IQ4: f64 = 3.0;
-const QUANT_SCALE_IQ8: f64 = 100.0; // Увеличено с 25.0 для лучшего использования динамического диапазона
-const WEEK_MS: i32 = 604800000;
 
 const TOTAL_GPS_SAT: usize = 32;
 const TOTAL_BDS_SAT: usize = 63;
@@ -2105,19 +2099,13 @@ impl IFDataGen {
         &mut self,
         if_file: &mut BufWriter<File>,
         sat_if_signals: &mut Vec<Option<Box<SatIfSignal>>>,
-        mut cur_pos: KinematicInfo,
+        _cur_pos: KinematicInfo,
         trajectory_duration_s: f64,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // Расчет количества выборок на миллисекунду
         // SampleFreq в Hz (например, 5_000_000 Hz = 5000 выборок/мс)
         // Определяет временное разрешение цифрового приемника
         let samples_per_ms = (self.output_param.SampleFreq as f64 / 1000.0) as usize;
-        // Массивы для обработки сигнала:
-        // - noise_array: комплексные выборки (I+Q) с тепловым шумом и спутниковыми сигналами
-        // - quant_array: квантованные данные для записи (IQ4=1 байт, IQ8=2 байта на выборку)
-        let mut noise_array = vec![ComplexNumber::new(); samples_per_ms];
-        let mut quant_array = vec![0u8; samples_per_ms * 2];
-
         // Calculate total data size and setup progress tracking
         // Используем переданное время траектории из JSON пресета
         let total_duration_ms = (trajectory_duration_s * 1000.0) as i32;
@@ -2132,16 +2120,6 @@ impl IFDataGen {
                 2.0
             };
         let total_mb = (total_duration_ms as f64 * bytes_per_ms) / (1024.0 * 1024.0);
-        let mut length = 0;
-        let mut total_clipped_samples = 0i64;
-        let mut total_samples = 0i64;
-        let mut agc_gain = 1.0; // Automatic gain control
-
-        // PERFORMANCE OPTIMIZATION: Use real GNSS signal generation with optimizations
-        let debug_mode = false; // Always use full signal generation
-                                // TODO: Make max_satellites configurable via command line or JSON
-                                // For now, None means use all available satellites (restore original behavior)
-        let max_satellites_for_debug: Option<usize> = None; // Use all satellites (was 3)
 
         println!("[INFO]\tStarting signal generation loop...");
         println!(
@@ -2166,229 +2144,16 @@ impl IFDataGen {
             self.output_param.SampleFreq as f64 / 1_000_000.0
         );
 
-        if debug_mode {}
-
-        let start_time = Instant::now();
-
         println!("[INFO]\tStarting main generation loop...");
 
-        // РЕВОЛЮЦИОННЫЙ РЕЖИМ: Истинная параллелизация спутников (включен по умолчанию)
-        if std::env::var("GNSS_PARALLEL_MODE").unwrap_or("true".to_string()) == "true" {
-            let signals_owned = std::mem::take(sat_if_signals);
-            return self.generate_with_true_parallelization(
-                if_file,
-                signals_owned,
-                total_duration_ms,
-                samples_per_ms,
-                self.cur_time,
-            );
-        }
-
-        let mut _iteration_count = 0;
-
-        while length < total_duration_ms {
-            _iteration_count += 1;
-
-            // Step to next millisecond
-            self.step_to_next_ms(&mut cur_pos)?;
-
-            // OPTIMIZATION: Update satellite parameters less frequently for better performance
-            // Satellite positions change very slowly, so update every 50ms instead of every 10ms for 5x fewer calculations
-            let should_update_sat_params = (length % 50) == 0;
-            if should_update_sat_params {
-                self.update_sat_params_optimized(cur_pos)?;
-            }
-
-            // PERFORMANCE OPTIMIZATION: Use simple test signal for debugging
-            // TODO: Re-enable full signal generation after debugging is complete
-
-            if debug_mode {
-                // Generate simple test pattern instead of complex GNSS signals
-                // This is 100x faster for debugging purposes
-                for j in 0..samples_per_ms {
-                    // Simple sine wave test signal + noise
-                    let phase = (j as f64) * 2.0 * std::f64::consts::PI / 1000.0; // 1kHz test tone
-                    let amplitude = 0.1; // Low amplitude test signal
-                                         // УСКОРЕНИЕ: используем FastMath вместо стандартных sin/cos
-                    noise_array[j].real = crate::fastmath::FastMath::fast_sin(phase) * amplitude
-                        + (rand::random::<f64>() - 0.5) * 0.01;
-                    noise_array[j].imag = crate::fastmath::FastMath::fast_cos(phase) * amplitude
-                        + (rand::random::<f64>() - 0.5) * 0.01;
-                }
-            } else {
-                // Full GNSS signal generation (slower but accurate)
-                let noise_start = std::time::Instant::now();
-                FastMath::generate_noise_block(&mut noise_array, 1.0);
-                let _noise_duration = noise_start.elapsed();
-
-                // CRITICAL OPTIMIZATION: Generate satellite signals more efficiently
-                let sat_start = std::time::Instant::now();
-                let current_time = self.cur_time;
-
-                // Use all available satellites or limit for debugging if specified
-                let active_sats = if let Some(limit) = max_satellites_for_debug {
-                    sat_if_signals.len().min(limit)
-                } else {
-                    sat_if_signals.len() // Use all satellites
-                };
-
-                // РЕВОЛЮЦИОННАЯ ОПТИМИЗАЦИЯ: AVX-512 + CUDA + Rayon параллелизация
-                let sat_process_start = std::time::Instant::now();
-
-                // Создаем AVX-512 процессор для супер-быстрой обработки
-                let avx512_processor = SafeAvx512Processor::new();
-
-                // SUPER-OPTIMIZATION: Используем AVX-512 для массовой обработки спутников
-                // ТЕСТИРОВАНИЕ: Снизили порог с 16 до 8 спутников для активации AVX-512
-                // Выбираем ускоренный путь, если доступен AVX-512 или CUDA GPU
-                #[cfg(feature = "gpu")]
-                let gpu_available = crate::cuda_acceleration::CudaGnssAccelerator::is_available();
-                #[cfg(not(feature = "gpu"))]
-                let gpu_available = false;
-
-                if (avx512_processor.is_available() || gpu_available) && active_sats >= 8 {
-                    // AVX-512 путь: используем для всех спутников с оптимальной логикой
-                    if length == 0 {
-                        // Показываем только один раз в начале
-                        println!(
-                            "[AVX512] 🚀 Активирован AVX-512 для {} спутников!",
-                            active_sats
-                        );
-                    }
-
-                    // Обрабатываем все спутники с AVX-512 ускорением
-                    sat_if_signals[..active_sats]
-                        .par_iter_mut()
-                        .for_each(|sig_option| {
-                            if let Some(ref mut sig) = sig_option {
-                                // AVX-512 ускоренная генерация для всех спутников
-                                sig.get_if_sample_avx512_accelerated(
-                                    current_time,
-                                    &avx512_processor,
-                                );
-                            }
-                        });
-                } else {
-                    // OPTIMIZED: Parallel satellite processing with rayon (fallback)
-                    // NavData enum supports Sync + Send, enabling parallelization!
-                    sat_if_signals[..active_sats]
-                        .par_iter_mut()
-                        .for_each(|sig_option| {
-                            if let Some(ref mut sig) = sig_option {
-                                // СУПЕР-ОПТИМИЗАЦИЯ: SIMD + агрессивное кэширование
-                                sig.get_if_sample_cached(current_time);
-                            }
-                        });
-                }
-                let _sat_process_duration = sat_process_start.elapsed();
-
-                // OPTIMIZED: Parallel signal accumulation with rayon + AVX-512 optimization
-                let accumulation_start = std::time::Instant::now();
-                noise_array.par_iter_mut().enumerate().for_each(|(j, sum)| {
-                    // Accumulate all satellite signals efficiently
-                    for sig in sat_if_signals.iter().take(active_sats).flatten() {
-                        if j < sig.sample_array.len() {
-                            let sample = sig.sample_array[j];
-                            sum.real += sample.real;
-                            sum.imag += sample.imag;
-                        }
-                    }
-
-                    // Apply AGC
-                    sum.real *= agc_gain;
-                    sum.imag *= agc_gain;
-                });
-                let _accumulation_duration = accumulation_start.elapsed();
-                let _sat_total_duration = sat_start.elapsed();
-
-                // Детальная статистика каждые 1000 миллисекунд
-            }
-
-            let quant_start = std::time::Instant::now();
-            let mut clipped_in_block = 0;
-            if self.output_param.Format == OutputFormat::OutputFormatIQ4 {
-                Self::quant_samples_iq4(
-                    &noise_array,
-                    &mut quant_array[..samples_per_ms],
-                    &mut clipped_in_block,
-                );
-                let _bytes_written = if_file.write(&quant_array[..samples_per_ms])?;
-            } else {
-                Self::quant_samples_iq8(&noise_array, &mut quant_array, &mut clipped_in_block);
-                let _bytes_written = if_file.write(&quant_array)?;
-            }
-            let quant_duration = quant_start.elapsed();
-
-            // Детальная статистика I/O каждые 1000 миллисекунд
-            if length % 1000 == 0 {
-                println!(
-                    "[TIMING_DETAIL] ms {}: Quantization+I/O: {:.3}ms",
-                    length,
-                    quant_duration.as_millis()
-                );
-            }
-
-            // Update statistics
-            total_clipped_samples += clipped_in_block as i64;
-            total_samples += (self.output_param.SampleFreq * 2) as i64; // I and Q components
-
-            // Adaptive AGC adjustment every 100 ms
-            if (length % 100) == 0 && length > 0 {
-                let clipping_rate = total_clipped_samples as f64 / total_samples as f64;
-                if clipping_rate > 0.01 {
-                    // If more than 1% clipping
-                    agc_gain *= 0.95; // Reduce gain by 5%
-                    println!(
-                        "[WARNING]\tAGC: Clipping {:.2}%, reducing gain to {:.3}",
-                        clipping_rate * 100.0,
-                        agc_gain
-                    );
-                    total_clipped_samples = 0; // reset statistics
-                    total_samples = 0;
-                } else if clipping_rate < 0.001 && agc_gain < 3.0 {
-                    // If less than 0.1% clipping
-                    agc_gain *= 1.02; // Increase gain by 2%
-                    if agc_gain > 3.0 {
-                        agc_gain = 3.0;
-                    }
-                    println!(
-                        "[WARNING]\tAGC: Clipping {:.2}%, increasing gain to {:.3}",
-                        clipping_rate * 100.0,
-                        agc_gain
-                    );
-                    total_clipped_samples = 0; // reset statistics
-                    total_samples = 0;
-                }
-            }
-
-            length += 1;
-            // Reduce progress output frequency for better performance during debugging
-            let step = if debug_mode { 50 } else { 10 };
-            if (length % step) == 0 {
-                self.display_progress(
-                    length,
-                    total_duration_ms,
-                    total_mb,
-                    bytes_per_ms,
-                    start_time,
-                );
-            }
-        }
-
-        self.display_final_progress(total_duration_ms, total_mb);
-        self.display_completion_stats(
-            total_samples,
-            total_clipped_samples,
-            agc_gain,
-            start_time,
-            total_mb,
-        );
-
-        // Flush buffer to ensure all data is written to file
-        if_file.flush()?;
-        println!("[INFO]\tOutput file flushed successfully");
-
-        Ok(())
+        let signals_owned = std::mem::take(sat_if_signals);
+        self.generate_with_true_parallelization(
+            if_file,
+            signals_owned,
+            total_duration_ms,
+            samples_per_ms,
+            self.cur_time,
+        )
     }
 
     /// 🚀 РЕВОЛЮЦИОННАЯ ФУНКЦИЯ: Потоковая параллелизация спутников (ПАМЯТЬ-ЭФФЕКТИВНАЯ)
@@ -2780,37 +2545,6 @@ impl IFDataGen {
     }
 
     // Helper methods
-    fn step_to_next_ms(
-        &mut self,
-        cur_pos: &mut KinematicInfo,
-    ) -> Result<bool, Box<dyn std::error::Error>> {
-        if !self.trajectory.get_next_pos_vel_ecef(0.001, cur_pos) {
-            return Ok(true); // End of trajectory
-        }
-
-        self.cur_time.MilliSeconds += 1;
-        if self.cur_time.MilliSeconds >= WEEK_MS {
-            self.cur_time.Week += 1;
-            self.cur_time.MilliSeconds -= WEEK_MS;
-        }
-
-        Ok(false)
-    }
-
-    // OPTIMIZED: Update satellite parameters less frequently for performance
-    fn update_sat_params_optimized(
-        &mut self,
-        cur_pos: KinematicInfo,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let (power_slice, list_count) = self.power_control.get_power_control_list(1);
-        let mut power_list_owned = Vec::new();
-        power_list_owned.extend_from_slice(power_slice);
-
-        let cur_time = self.cur_time;
-        // Update satellite parameters (expensive operation)
-        self.update_sat_param_list(cur_time, cur_pos, list_count, &power_list_owned, None);
-        Ok(())
-    }
 
     fn get_nav_data<'a>(
         &self,
@@ -2872,78 +2606,6 @@ impl IFDataGen {
         }
     }
 
-    fn quant_samples_iq4(
-        samples: &[ComplexNumber],
-        quant_samples: &mut [u8],
-        clipped_count: &mut i32,
-    ) {
-        *clipped_count = 0;
-
-        for (i, sample) in samples.iter().enumerate() {
-            if i >= quant_samples.len() {
-                break;
-            }
-
-            let value = sample.real.abs();
-            let mut quant_value = (value * QUANT_SCALE_IQ4) as u8;
-            if quant_value > 7 {
-                quant_value = 7;
-                *clipped_count += 1;
-            }
-            quant_value += if sample.real >= 0.0 { 0 } else { 1 << 3 }; // add sign bit as MSB
-            let mut quant_sample = quant_value << 4;
-
-            let value = sample.imag.abs();
-            let mut quant_value = (value * QUANT_SCALE_IQ4) as u8;
-            if quant_value > 7 {
-                quant_value = 7;
-                *clipped_count += 1;
-            }
-            quant_value += if sample.imag >= 0.0 { 0 } else { 1 << 3 }; // add sign bit as MSB
-            quant_sample |= quant_value;
-            quant_samples[i] = quant_sample;
-        }
-    }
-
-    fn quant_samples_iq8(
-        samples: &[ComplexNumber],
-        quant_samples: &mut [u8],
-        clipped_count: &mut i32,
-    ) {
-        *clipped_count = 0;
-
-        for (i, sample) in samples.iter().enumerate() {
-            if i * 2 + 1 >= quant_samples.len() {
-                break;
-            }
-
-            let val_real = sample.real * QUANT_SCALE_IQ8;
-            let quant_value = if val_real > 127.0 {
-                *clipped_count += 1;
-                127
-            } else if val_real < -128.0 {
-                *clipped_count += 1;
-                -128
-            } else {
-                val_real as i32
-            };
-            quant_samples[i * 2] = (quant_value & 0xff) as u8;
-
-            let val_imag = sample.imag * QUANT_SCALE_IQ8;
-            let quant_value = if val_imag > 127.0 {
-                *clipped_count += 1;
-                127
-            } else if val_imag < -128.0 {
-                *clipped_count += 1;
-                -128
-            } else {
-                val_imag as i32
-            };
-            quant_samples[i * 2 + 1] = (quant_value & 0xff) as u8;
-        }
-    }
-
-    // Display and utility methods
     fn display_enabled_signals(&self) {
         // GPS signals
         if self.output_param.CompactConfig.should_parse_gps() {
@@ -3356,126 +3018,6 @@ impl IFDataGen {
         );
     }
 
-    fn display_progress(
-        &self,
-        length: i32,
-        total_duration_ms: i32,
-        total_mb: f64,
-        bytes_per_ms: f64,
-        start_time: Instant,
-    ) {
-        let elapsed = start_time.elapsed().as_millis() as u64;
-        let percentage = length as f64 / total_duration_ms as f64 * 100.0;
-        let current_mb = (length as f64 * bytes_per_ms) / (1024.0 * 1024.0);
-        let mb_per_sec = if elapsed > 0 {
-            (current_mb * 1000.0) / elapsed as f64
-        } else {
-            0.0
-        };
-
-        // Calculate estimated time remaining
-        let eta_ms = if percentage > 0.0 && elapsed > 0 {
-            ((elapsed as f64 * (100.0 - percentage)) / percentage) as u64
-        } else {
-            0
-        };
-
-        // Progress bar with percentage in center
-        let bar_width = 50;
-        let progress = (percentage * bar_width as f64 / 100.0) as usize;
-        let progress_str = format!("{:.1}%", percentage);
-        let progress_str_len = progress_str.len();
-        let center_pos = (bar_width - progress_str_len) / 2;
-
-        print!("\r[");
-        for k in 0..bar_width {
-            if k >= center_pos && k < center_pos + progress_str_len {
-                print!(
-                    "{}",
-                    progress_str.chars().nth(k - center_pos).unwrap_or(' ')
-                );
-            } else if k < progress {
-                print!("=");
-            } else if k == progress && percentage < 100.0 {
-                print!(">");
-            } else if percentage >= 100.0 && k < bar_width {
-                print!("=");
-            } else {
-                print!(" ");
-            }
-        }
-
-        // Format ETA
-        let eta_str = if eta_ms > 0 {
-            let eta_seconds = (eta_ms / 1000) as i32;
-            let eta_minutes = eta_seconds / 60;
-            let eta_seconds = eta_seconds % 60;
-            if eta_minutes > 0 {
-                format!("ETA: {}m{:02}s   ", eta_minutes, eta_seconds)
-            } else {
-                format!("ETA: {:02}s   ", eta_seconds)
-            }
-        } else {
-            "ETA: --   ".to_string()
-        };
-
-        print!(
-            "] {}/{} ms | {:.2}/{:.2} MB | {:.2} MB/s | {}",
-            length, total_duration_ms, current_mb, total_mb, mb_per_sec, eta_str
-        );
-        std::io::stdout().flush().unwrap();
-    }
-
-    fn display_final_progress(&self, total_duration_ms: i32, total_mb: f64) {
-        print!("\r[");
-        for k in 0..50 {
-            if (22..28).contains(&k) {
-                print!("{}", "100.0%".chars().nth(k - 22).unwrap_or(' '));
-            } else {
-                print!("=");
-            }
-        }
-        println!(
-            "] {}/{} ms | {:.2}/{:.2} MB | COMPLETED: --",
-            total_duration_ms, total_duration_ms, total_mb, total_mb
-        );
-    }
-
-    fn display_completion_stats(
-        &self,
-        total_samples: i64,
-        total_clipped_samples: i64,
-        agc_gain: f64,
-        start_time: Instant,
-        final_mb: f64,
-    ) {
-        let duration = start_time.elapsed();
-        let avg_mb_per_sec = if duration.as_millis() > 0 {
-            (final_mb * 1000.0) / duration.as_millis() as f64
-        } else {
-            0.0
-        };
-
-        println!("\n[INFO]\tIF Signal generation completed!");
-        println!("------------------------------------------------------------------");
-        println!("[INFO]\tTotal samples: {}", total_samples);
-        println!(
-            "[INFO]\tClipped samples: {} ({:.4}%)",
-            total_clipped_samples,
-            total_clipped_samples as f64 / total_samples as f64 * 100.0
-        );
-        println!("[INFO]\tFinal AGC gain: {:.3}", agc_gain);
-        if total_clipped_samples as f64 / total_samples as f64 > 0.05 {
-            println!("[WARNING]\tHigh clipping rate! Consider reducing initPower in JSON config.");
-        }
-        println!("[INFO]\tTotal time taken: {:.2} s", duration.as_secs_f64());
-        println!("[INFO]\tData generated: {:.2} MB", final_mb);
-        println!("[INFO]\tAverage rate: {:.2} MB/s", avg_mb_per_sec);
-        println!("------------------------------------------------------------------");
-    }
-
-    // Placeholder methods that need to be implemented based on the actual types and interfaces
-    #[allow(dead_code)]
     fn assign_parameters(
         &mut self,
         _object: &JsonObject,
@@ -5268,41 +4810,6 @@ impl Default for IFDataGen {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn quant_samples_iq4_packs_sign_and_magnitude_nibbles() {
-        let samples = [
-            ComplexNumber::from_parts(1.0, -0.5),
-            ComplexNumber::from_parts(-3.0, 3.0),
-        ];
-        let mut quant_samples = [0u8; 2];
-        let mut clipped_count = 0;
-
-        IFDataGen::quant_samples_iq4(&samples, &mut quant_samples, &mut clipped_count);
-
-        assert_eq!(quant_samples[0], 0x39);
-        assert_eq!(quant_samples[1], 0xf7);
-        assert_eq!(clipped_count, 2);
-    }
-
-    #[test]
-    fn quant_samples_iq8_writes_signed_iq_pairs_and_clips() {
-        let samples = [
-            ComplexNumber::from_parts(0.5, -0.5),
-            ComplexNumber::from_parts(1.28, -1.29),
-        ];
-        let mut quant_samples = [0u8; 4];
-        let mut clipped_count = 0;
-
-        IFDataGen::quant_samples_iq8(&samples, &mut quant_samples, &mut clipped_count);
-
-        assert_eq!(quant_samples, [50, 206, 127, 128]);
-        assert_eq!(clipped_count, 2);
-    }
-}
 
 // Main function for the executable
 pub fn main() -> Result<(), Box<dyn std::error::Error>> {

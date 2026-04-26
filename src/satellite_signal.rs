@@ -395,21 +395,6 @@ impl SatelliteSignal {
                         &mut data_bits_i32,
                     );
 
-                    // DEBUG: Проверка навигационных данных
-                    let _non_zero_count = data_bits_i32.iter().filter(|&&x| x != 0).count();
-                    let _system_name = match self.sat_system {
-                        GnssSystem::GpsSystem => "GPS",
-                        GnssSystem::BdsSystem => "BDS",
-                        GnssSystem::GalileoSystem => "GAL",
-                        GnssSystem::GlonassSystem => "GLO",
-                        GnssSystem::SbasSystem => "SBAS",
-                        GnssSystem::QzssSystem => "QZSS",
-                        GnssSystem::NavICSystem => "NavIC",
-                    };
-
-                    // Navigation data validation - silent mode
-                    // Non-zero check available for debugging if needed
-
                     for (i, val) in data_bits_i32.iter().enumerate() {
                         self.data_bits[i] = (*val) as u8;
                     }

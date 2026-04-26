@@ -15,7 +15,7 @@
 - `cargo run --bin spectrum_analyzer -- <file> <iq4|iq8>` — analyze IF samples.
 - `cargo test` — run unit tests (`#[cfg(test)]` in modules).
 - `cargo fmt --all` / `cargo clippy -- -D warnings` — format and lint.
-- Example (parallel run): `GNSS_PARALLEL_MODE=true cargo run --release -- presets/GPS_BDS_GAL_triple_system.json`.
+- Example: `cargo run --release -- presets/GPS_BDS_GAL_triple_system.json` (Rayon-параллелизм всегда включён).
 
 ## Coding Style & Naming Conventions
 - Rust 2021; rustfmt default (4 spaces). Run `cargo fmt` before commit.

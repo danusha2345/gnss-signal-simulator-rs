@@ -395,7 +395,7 @@ fn sat_if_signal_generates_finite_nonzero_one_millisecond_block() {
     let sat_param = sample_param(GnssSystem::GpsSystem, 1);
 
     channel.init_state(cur_time, &sat_param, None);
-    channel.get_if_sample(cur_time);
+    channel.get_if_sample_cached(cur_time);
 
     assert_eq!(channel.sample_array.len(), 32);
     assert!(channel

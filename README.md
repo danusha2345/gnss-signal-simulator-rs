@@ -225,7 +225,7 @@ cargo clippy         # Lint
 | "Configuration file not found" | Use presets from `presets/` or edit generated `config.json` |
 | "RINEX file not found" | Check relative paths in preset, ensure files exist in `Rinex_Data/` |
 | CUDA not found | Install CUDA 12.5, verify NVRTC in PATH/LD_LIBRARY_PATH |
-| Slow generation | Use `--release`, enable `GNSS_PARALLEL_MODE=true`, use `--features gpu` |
+| Slow generation | Use `--release`, use `--features gpu` |
 | 0 visible satellites | Check RINEX date matches preset time, verify receiver coordinates |
 
 ## License

@@ -72,10 +72,6 @@ pub mod avx512_intrinsics;
 pub mod benchmarks;
 pub mod cuda_acceleration;
 pub mod pvt;
-// ОПТИМИЗИРОВАННОЕ КЭШИРОВАНИЕ ДЛЯ GNSS СИГНАЛОВ
-pub mod cache_manager;
-pub mod optimized_sat_signal;
-pub mod cache_integration_patch;
 
 pub use almanac::*;
 pub use bcnav1bit::*;
@@ -100,9 +96,6 @@ pub use types::*;
 pub use avx512_intrinsics::*;
 pub use benchmarks::*;
 pub use cuda_acceleration::*;
-pub use cache_manager::*;
-pub use optimized_sat_signal::*;
-pub use cache_integration_patch::*;
 pub use inavbit::*;
 pub use json_parser::*;
 pub use l5cnavbit::*;
