@@ -1,10 +1,17 @@
 # GNSS verification report
 
-Date: 2026-04-25
+Date: 2026-04-25; follow-up re-verification 2026-06-02.
 
 This report summarizes the phased verification pass from RINEX/config parsing
 through navigation message and IF-generation setup. Source references are pinned
 in `docs/verification_sources.md`.
+
+> **2026-06-02 follow-up.** A May 31 – June 1 audit and ICD-conformance pass
+> reworked the ephemeris encoders and added round-trip decoders for every
+> navigation message. Full `cargo test` now passes (65 library unit tests + all
+> integration suites, 0 failures). The Galileo I/NAV decode gap noted below is
+> resolved. Details in `docs/gnss_icd_conformance_report.md` ("June 2026
+> conformance pass" and "Ephemeris round-trip coverage").
 
 ## Phase commits
 
@@ -43,7 +50,8 @@ the existing heavy/known-baseline tests remain ignored by their test attributes.
 The newer ICD-focused conformance pass is tracked separately in
 `docs/gnss_icd_conformance_report.md`. It covers GPS CNAV-2 LDPC/framing,
 BeiDou B1C LDPC/interleaving, GPS L5 CNAV vectors, IQ4/IQ8 smoke checks, and the
-current open Galileo I/NAV ignored-test decode gap.
+Galileo I/NAV Viterbi/CRC decode (the formerly open gap was a test-harness bug,
+fixed in commit `3c565b1`; the test now passes in the default suite).
 
 ## Issues found and fixed
 

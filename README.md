@@ -39,7 +39,7 @@ Generate realistic IQ baseband samples for GPS, Galileo, BeiDou, and GLONASS fro
 - **IQ8 output** — signed 8-bit I/Q interleaved samples, compatible with SDR receivers (GNURadio, SDR#)
 - **Python verification tool** — 3-page PDF report with PSD, acquisition, correlation analysis
 - **Minimal dependencies** — only `rand`, `rayon`, `wide`, `serde_json` (+ optional `cudarc`)
-- **~38,000 lines of Rust** — full GNSS stack implemented from scratch
+- **~55,000 lines of Rust** — full GNSS stack implemented from scratch
 
 ## Quick Start
 
@@ -96,7 +96,7 @@ Ready-to-use JSON configurations in `presets/`:
 | `gps_bds_gal_l1.json` | GPS+BDS+GAL L1 | 5 MHz |
 | `quad_l1g1.json` | GPS+BDS+GAL+GLO L1/G1 | 46.5 MHz |
 
-All 36 presets use Montana location, 10s duration, elevation mask 5°, full RINEX.
+The repository ships 44 presets. Most use the Montana location, 10s duration, elevation mask 5°, full RINEX; the `moscow_*` and `usa_*` presets are longer real-receiver scenarios (60–300s) at their respective locations.
 
 Custom presets: copy any JSON, edit receiver position (LLA), sample rate, RINEX path, duration, and signal selection.
 
@@ -178,8 +178,14 @@ src/
 ├── trajectory.rs        # Receiver trajectory generation
 ├── *navbit.rs           # Navigation message generators (GPS LNAV, Galileo I/NAV,
 │                        #   F/NAV, BeiDou BCNav1/2/3, GLONASS G-NAV, etc.)
+├── nav_decode.rs        # Reverse decoders + ICD parity/CRC verifiers for nav messages
+├── gps_pilot/mod.rs     # Clean minimal phase-continuous GPS L1CA generator
 └── bin/
     ├── spectrum_analyzer.rs  # IF spectrum analysis (PSD, peaks, CSV export)
+    ├── nav_diagnostics.rs    # Nav message encode→decode→compare vs RINEX (ICD verify)
+    ├── decode_iq.rs          # GPS L1CA IQ8 decoder — acquisition, tracking, LNAV decode
+    ├── gnss_pilot.rs         # Clean GPS L1CA + Galileo E1 + BeiDou B1C L1-band generator
+    ├── gps_pilot.rs          # Clean minimal GPS L1CA generator
     ├── nav_test.rs           # Navigation bit unit tests
     ├── bench.rs              # CPU/AVX-512/GPU benchmarks
     └── extreme_bench.rs      # Stress benchmarks
@@ -280,4 +286,4 @@ python verify_signal_enhanced.py generated_files/gps_l1ca.C8 \
 - Опциональный GPU offload (CUDA 12.5)
 - Выход IQ8 (8-бит I/Q), совместимый с SDR-приёмниками
 - Инструмент верификации с 3-страничным PDF-отчётом
-- ~38 000 строк Rust, минимум зависимостей
+- ~55 000 строк Rust, минимум зависимостей

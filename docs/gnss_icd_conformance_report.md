@@ -1,12 +1,21 @@
 # GNSS ICD conformance report
 
-Date checked: 2026-04-26
+Date checked: 2026-04-26; updated 2026-06-02 after the May 31 – June 1
+audit and ICD-conformance pass.
 
 This report tracks the current bit, carrier, modulation, and IF-output
 conformance checks against the public ICD/source set listed below. The tests are
-small, hand-derived fixtures. Fixed mismatches are marked in the findings; any
-remaining spec gaps are recorded explicitly instead of being hidden by sanity
-checks.
+small, hand-derived fixtures plus encode→decode→compare round-trips against the
+RINEX ephemeris. Fixed mismatches are marked in the findings; any remaining spec
+gaps are recorded explicitly instead of being hidden by sanity checks.
+
+> **2026-06-02 status.** Full `cargo test` passes: 65 library unit tests and all
+> integration suites green, 0 failures. The previously open Galileo I/NAV
+> Viterbi/CRC decode finding (`F-GAL-INAV-VITERBI-CRC`) is resolved — the test
+> now passes in the default suite and is no longer `#[ignore]`. A complete set of
+> ephemeris round-trip decoders (GPS LNAV/CNAV/CNAV-2, Galileo I/NAV & F/NAV,
+> BeiDou D1/D2 & B-CNAV1/2/3, GLONASS G-NAV) was added during the pass; see
+> "Ephemeris round-trip coverage" and "June 2026 conformance pass" below.
 
 ## Primary ICD sources
 
@@ -68,8 +77,10 @@ checks.
 ### F-GPS-CNAV2-PARTIAL
 
 - Severity: unsupported/spec-drift for full GPS L1C CNAV-2 bit conformance.
-- Status: LDPC/framing and core field packing fixed on 2026-04-26; residual
-  page-coverage gap remains.
+- Status: LDPC/framing and core field packing fixed on 2026-04-26; subframe-2
+  ephemeris packing now confirmed by a round-trip decoder added on 2026-06-01
+  (commit `d354887`, test `cnav2_eph_round_trips_via_subframe2_decoder`).
+  Residual subframe-3 variable-page coverage gap remains (see below).
 - ICD source: IS-GPS-800J sections 3.2.3.1-3.2.3.5 and 3.5.
 - Expected value or layout: full CNAV-2 CRC, LDPC, interleaving, and message
   field mapping should match the L1C message definition.
@@ -118,18 +129,92 @@ checks.
 ### F-GAL-INAV-VITERBI-CRC
 
 - Severity: decode/regression gap for Galileo I/NAV end-to-end verification.
-- Status: still open after targeted ignored-test run on 2026-04-26.
+- Status: **resolved on 2026-06-01** (commit `3c565b1`). The fault was in the
+  test harness, not the encoder: the Viterbi/deinterleaver fixture mis-ordered
+  the even/odd page halves and tail handling, so it reported `0/15 pages CRC OK`
+  against a correctly generated stream. The encoder was confirmed correct.
 - ICD source: Galileo OS SIS ICD v2.1 sections 4.1, 4.3, and 5.1.
-- Expected value or layout: the ignored Viterbi/deinterleaver test should decode
+- Expected value or layout: the Viterbi/deinterleaver test should decode
   generated I/NAV pages and verify CRC24Q against the reference page data.
-- Current observed output: `cargo test -- --ignored
-  test_galileo_inav_viterbi_decode` fails in `tests/signal_quality.rs`. For
-  Galileo E27, tail bits are reported OK, but all 15 sampled pages fail CRC.
-  The output reports `Summary: 0/15 pages CRC OK`; several lines also show
-  `DATA MISMATCH even=false odd=true`, which points to a generated data or
-  decode ordering mismatch rather than a pure tail-bit issue.
-- Affected symbols: `src/inavbit.rs`, `tests/signal_quality.rs`.
-- Reproducer: `cargo test -- --ignored test_galileo_inav_viterbi_decode`.
+- Previous observed output: `cargo test -- --ignored
+  test_galileo_inav_viterbi_decode` failed in `tests/signal_quality.rs` with
+  `Summary: 0/15 pages CRC OK` and `DATA MISMATCH even=false odd=true` lines.
+- Current observed output: `test_galileo_inav_viterbi_decode` and
+  `test_galileo_inav_all_svs_crc` both pass and are no longer `#[ignore]`; they
+  run in the default suite (`cargo test --test signal_quality`).
+- Affected symbols: `tests/signal_quality.rs` (harness), `src/inavbit.rs`.
+- Reproducer: `cargo test --test signal_quality galileo_inav`.
+
+## June 2026 conformance pass (May 31 – June 1)
+
+After the 2026-04-26 sync/header fixtures, a follow-up audit and ICD pass
+reworked the ephemeris encoders themselves and added decoders to verify them by
+round-trip against the RINEX data. The findings below are all fixed and covered
+by the round-trip tests in the next section.
+
+### F-FNAV-E5A-EXPONENT (fixed, `e9b3b5b`)
+
+- The private `unscale_int`/`unscale_uint` helpers in the F/NAV (E5a) encoder
+  inverted the scale-factor exponent, which silently zeroed the entire E5a
+  ephemeris payload. Galileo OS SIS ICD F/NAV field scaling restored; covered by
+  `fnav_eph_round_trips_via_decoder`.
+
+### F-D1D2-EXPONENT (fixed, `6c9127c`)
+
+- The same inverted-exponent bug in `unscale_double` zeroed the entire BeiDou
+  legacy D1/D2 (B1I/B2I/B3I) ephemeris. Fixed per BDS-SIS-ICD-B1I-3.0 field
+  scaling; covered by `d1_eph_round_trips_via_decoder`.
+
+### F-GLO-G3-L3OC-CODE (fixed, `d3f1658`)
+
+- The GLONASS G3/L3OC ranging code was a degenerate placeholder. Replaced with
+  the official ICD truncated Kasami sequence. This complements the earlier
+  `F-GLO-G3-FREQ` carrier-frequency fix.
+
+### F-GLO-GNAV-EPHEMERIS (fixed, `2e978de`)
+
+- The GLONASS G-NAV ephemeris encoder was rewritten per the official ICD
+  (GLONASS ICD 5.1), correcting field widths, scale factors, and units
+  (audit items H15/H16/H17).
+
+### F-BCNAV23-EPHEMERIS (fixed, `c17eb24`, `b4905d9`, `9594bd1`)
+
+- BeiDou B-CNAV2 (B2a) and B-CNAV3 (B2b) ephemeris were a stub / mis-packed.
+  Both now encode via the verified B-CNAV1 encoder; B-CNAV3 MT10 framing
+  (`append_word`, IODE-in-EphI) corrected. Covered by
+  `bcnav2_ephemeris_round_trips_via_b1c_decoder`,
+  `bcnav3_ephemeris_round_trips_via_b1c_decoder`, and
+  `bcnav3_mt10_frame_round_trips`.
+
+### F-SCALE-MISC (fixed, `953c1c8`, `cdedbc5`, `ef2d765`, `24095ff`)
+
+- F/NAV almanac `sqrtA` scale, BDS D2 `af2` width, and B-CNAV1 `Δn0-dot`/`TGD`
+  scaling corrected; GPS L5 CNAV now reuses the verified `CNavBit` encoder; IQ4
+  quantization fixed (was collapsing to ~1 effective bit); low-severity audit
+  fixes (i32 week overflow, `extract_bits` UB shift, `NavBit` CRC empty-input
+  panic).
+
+## Ephemeris round-trip coverage (2026-06-02)
+
+Each encoder now has a decoder that reverses it; the round-trip re-derives the
+ephemeris from the encoded bitstream and compares against the source RINEX
+values. All pass in the default `cargo test` run.
+
+| Constellation | Nav type | Round-trip test |
+| --- | --- | --- |
+| GPS | LNAV | `lnavbit::tests::test_lnav_ephemeris_round_trip` |
+| GPS | L2C/L5 CNAV | `nav_decode::cnav_roundtrip_tests::cnav_eph_round_trip_matches_l2c_encoder` |
+| GPS | L1C CNAV-2 | `nav_decode::cnav_roundtrip_tests::cnav2_eph_round_trips_via_subframe2_decoder` |
+| Galileo | I/NAV | `inavbit::tests::test_inav_ephemeris_round_trip` |
+| Galileo | F/NAV (E5a) | `nav_decode::fnav_roundtrip_tests::fnav_eph_round_trips_via_decoder` |
+| BeiDou | D1/D2 (B1I/B2I/B3I) | `nav_decode::d1d2_roundtrip_tests::d1_eph_round_trips_via_decoder` |
+| BeiDou | B-CNAV1 (B1C) | `bcnavbit::tests::test_bcnav_ephemeris_round_trip` |
+| BeiDou | B-CNAV2 (B2a) | `bcnav2bit::append_word_tests::bcnav2_ephemeris_round_trips_via_b1c_decoder` |
+| BeiDou | B-CNAV3 (B2b) | `bcnav3bit::gf6_tests::bcnav3_ephemeris_round_trips_via_b1c_decoder` |
+
+The standalone `cargo run --bin nav_diagnostics -- --rinex <file>` tool runs the
+same encode→decode→compare loop across every SV in a RINEX file for manual
+inspection.
 
 ## Verification commands run
 
@@ -167,16 +252,27 @@ system temp directory and asserts deterministic byte sizes plus nonzero content.
 
 Result: passed on 2026-04-26.
 
-Ignored heavy decode probe:
+Galileo I/NAV Viterbi/CRC decode (was the open `F-GAL-INAV-VITERBI-CRC`
+finding, now part of the default suite):
 
 ```bash
-cargo test -- --ignored test_galileo_inav_viterbi_decode
+cargo test --test signal_quality galileo_inav
 ```
 
-Result: failed on 2026-04-26 as recorded in
-`F-GAL-INAV-VITERBI-CRC`. The run decoded Galileo E27, reported valid tail
-bits, but ended with `Summary: 0/15 pages CRC OK`; heavy 30s/60s IQ tests remain
-ignored and were not added to the default fast suite.
+Result: **passed on 2026-06-02** — `test_galileo_inav_viterbi_decode` and
+`test_galileo_inav_all_svs_crc` both green after the harness fix in `3c565b1`.
+Only two heavy 60s/200ms integration tests remain `#[ignore]` in
+`tests/signal_quality.rs` (`test_gps_lnav_end_to_end_decode`,
+`test_code_phase_continuity`); these are excluded from the fast suite by design.
+
+Ephemeris round-trip and full suite (2026-06-02):
+
+```bash
+cargo test
+```
+
+Result: passed — 65 library unit tests (including every round-trip decoder in
+the coverage table above) and all integration suites green, 0 failures.
 
 Formatting:
 
