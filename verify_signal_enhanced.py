@@ -55,6 +55,8 @@ BDS_CODE_LENGTH = 10230
 BDS_CODE_PERIOD_MS = 10
 BDS_B1I_CODE_LENGTH = 2046
 BDS_B1I_CODE_PERIOD_MS = 1
+BDS_B2A_CODE_LENGTH = 10230
+BDS_B2A_CODE_PERIOD_MS = 1
 GAL_CODE_LENGTH = 4092
 GAL_CODE_PERIOD_MS = 4
 
@@ -65,6 +67,7 @@ ZSCORE_THRESHOLD = 30
 NON_COHERENT_GPS = 10
 NON_COHERENT_BDS = 10
 NON_COHERENT_B1I = 50  # 1 ms code period -> 50 ms total, comparable to B1C's 10x10 ms
+NON_COHERENT_B2A = 100  # 1 ms code, half-power data channel
 NON_COHERENT_GAL = 20
 NON_COHERENT_GLO = 10
 
@@ -78,7 +81,7 @@ GLO_F_STEP = 0.5625e6       # FDMA channel step (Hz)
 F_L5 = 1176.45e6
 GPS_L5_CODE_LENGTH = 10230
 GPS_L5_CODE_PERIOD_MS = 1      # 10.23 Mchip/s -> 10230/10.23e6 = 1 ms
-NON_COHERENT_L5 = 10
+NON_COHERENT_L5 = 100   # 1 ms code, half-power data channel
 
 # GPS L2C
 F_L2 = 1227.60e6
@@ -95,13 +98,13 @@ NON_COHERENT_L1C = 5
 F_E5A = 1176.45e6
 GAL_E5A_CODE_LENGTH = 10230
 GAL_E5A_CODE_PERIOD_MS = 1    # 10.23 Mchip/s -> 10230/10.23e6 = 1 ms
-NON_COHERENT_E5A = 10
+NON_COHERENT_E5A = 100  # 1 ms code, half-power data channel
 
 # Galileo E5b
 F_E5B = 1207.14e6
 GAL_E5B_CODE_LENGTH = 10230
 GAL_E5B_CODE_PERIOD_MS = 1
-NON_COHERENT_E5B = 10
+NON_COHERENT_E5B = 100  # 1 ms code, half-power data channel
 
 # Galileo E6
 F_E6 = 1278.75e6
@@ -248,12 +251,15 @@ B1I_PRN_INIT = [
 ]
 
 
-def _lfsr_sequence(init, poly, depth, n):
-    """MSB-output LFSR with parity feedback (mirror of LsfrSequence in prngenerate.rs)."""
+def _lfsr_sequence(init, poly, depth, n, reset_pos=None):
+    """MSB-output LFSR with parity feedback (mirror of LsfrSequence in prngenerate.rs).
+    reset_pos: chip index at which the register is re-initialized (L5/B2a XA short cycle)."""
     state = init
     mask = 1 << (depth - 1)
     out = np.zeros(n, dtype=np.int32)
     for i in range(n):
+        if i == reset_pos:
+            state = init
         out[i] = 1 if (state & mask) else 0
         fb = bin(state & poly).count('1') & 1
         state = (state << 1) | fb
@@ -267,6 +273,30 @@ def generate_b1i_code(svid):
     g1 = _lfsr_sequence(B1I_PRN_INIT[svid - 1], 0x59f, 11, BDS_B1I_CODE_LENGTH)
     g2 = _lfsr_sequence(0x2aa, 0x7c1, 11, BDS_B1I_CODE_LENGTH)
     return 1.0 - 2.0 * (g1 ^ g2).astype(np.float64)
+
+
+# ============================================================
+# BeiDou B2a Code Generation (13-bit Gold, XA short-cycled at 8190)
+# ============================================================
+
+# Per-SV XB initial states, data channel (mirror of src/prngenerate.rs; bit-exact vs PocketSDR)
+B2A_D_PRN_INIT = [
+    0x1481, 0x0581, 0x16a1, 0x1e51, 0x1551, 0x0eb1, 0x0ef1, 0x1bf1, 0x1299, 0x0b79, 0x1585, 0x0445,
+    0x1545, 0x1b45, 0x0745, 0x18a5, 0x1de5, 0x1015, 0x0f95, 0x1ab5, 0x11b5, 0x194d, 0x08cd, 0x032d,
+    0x0dad, 0x09ed, 0x1fed, 0x091d, 0x079d, 0x10bd, 0x027d, 0x057d, 0x1afd, 0x19fd, 0x1143, 0x0523,
+    0x1da3, 0x1113, 0x1313, 0x1ab3, 0x11b3, 0x0973, 0x154b, 0x05cb, 0x1a6b, 0x1d5b, 0x0587, 0x1827,
+    0x1a27, 0x18a7, 0x02a7, 0x1b97, 0x1d37, 0x024f, 0x052f, 0x132f, 0x0b6f, 0x03ef, 0x1fef, 0x15bf,
+    0x0804, 0x15fb, 0x0978,
+]
+
+
+def generate_b2a_code(svid):
+    """Generate BeiDou B2a data-channel code (10230 chips, BPSK(10)). Returns +/-1 array."""
+    if svid < 1 or svid > 63:
+        return None
+    xb = _lfsr_sequence(B2A_D_PRN_INIT[svid - 1], 0x1d14, 13, BDS_B2A_CODE_LENGTH)
+    xa = _lfsr_sequence(0x1fff, 0x1411, 13, BDS_B2A_CODE_LENGTH, reset_pos=8190)
+    return 1.0 - 2.0 * (xb ^ xa).astype(np.float64)
 
 
 # ============================================================
@@ -629,6 +659,8 @@ def parse_preset(preset_path):
             enabled.add('BDS')
         elif sys_name == 'BDS' and sig == 'B1I':
             enabled.add('BDS_B1I')
+        elif sys_name == 'BDS' and sig == 'B2a':
+            enabled.add('BDS_B2A')
         elif sys_name == 'Galileo' and sig == 'E1':
             enabled.add('GAL')
         elif sys_name == 'Galileo' and sig == 'E5a':
@@ -1088,16 +1120,23 @@ def compute_rms_stability(filename, sample_rate, block_ms=100):
 
 def acquire_satellite_generic(signal_blocks, local_code_resampled, doppler_range, doppler_step,
                               sample_rate, non_coherent_count, save_heatmap=False,
-                              if_offset=IF_FREQ):
+                              if_offset=IF_FREQ, carrier_freq=F_L1):
     """
     FFT-based parallel code phase search.
     Returns (found, doppler, code_phase, zscore, best_corr, heatmap, doppler_bins).
     if_offset: carrier IF offset in Hz (default IF_FREQ=0 for L1 baseband, non-zero for GLONASS FDMA).
+    carrier_freq: RF carrier (Hz) — sets code-Doppler drift compensation; the code phase
+    drifts doppler/carrier_freq*n samples per block, smearing long non-coherent sums
+    (~4 samples per 100 ms at 2 kHz Doppler, 21 MHz sampling) unless realigned.
     """
     n = len(local_code_resampled)
-    code_fft_conj = np.conj(fft(local_code_resampled))
+    # Linear correlation via zero-padded FFT over double-length blocks: lag k correlates
+    # the full code period starting at sample k, so per-period secondary/NH sign flips
+    # (constant within a period) cost nothing regardless of the SV's code phase.
+    n2 = 2 * n
+    code_fft_conj = np.conj(fft(local_code_resampled, n2))
     doppler_bins = np.arange(-doppler_range, doppler_range + 1, doppler_step)
-    t = np.arange(n) / sample_rate
+    t = np.arange(n2) / sample_rate
 
     best_zscore = 0.0
     best_doppler = 0
@@ -1110,11 +1149,15 @@ def acquire_satellite_generic(signal_blocks, local_code_resampled, doppler_range
         carrier = np.exp(-1j * 2 * np.pi * (if_offset + doppler) * t)
         correlation_sum = np.zeros(n)
         count = min(non_coherent_count, len(signal_blocks))
+        # код дрейфует на doppler/carrier_freq * n отсчётов за блок; выравниваем
+        drift_per_block = doppler / carrier_freq * n
 
-        for blk in signal_blocks[:count]:
-            baseband = blk[:n] * carrier
-            corr = np.abs(ifft(fft(baseband) * code_fft_conj)) ** 2
-            correlation_sum += corr
+        for k, blk in enumerate(signal_blocks[:count]):
+            m = min(len(blk), n2)
+            baseband = blk[:m] * carrier[:m]
+            corr = np.abs(ifft(fft(baseband, n2) * code_fft_conj)[:n]) ** 2
+            shift = int(round(k * drift_per_block))
+            correlation_sum += np.roll(corr, shift) if shift else corr
 
         if save_heatmap:
             heatmap[d_idx, :] = correlation_sum
@@ -1142,15 +1185,18 @@ def acquire_satellite_generic(signal_blocks, local_code_resampled, doppler_range
 
 def acquire_system(signal, system_name, svid_range, code_gen_fn, code_period_ms,
                    sample_rate, non_coherent, threshold=ZSCORE_THRESHOLD,
-                   doppler_step=DOPPLER_STEP):
+                   doppler_step=DOPPLER_STEP, carrier_freq=F_L1):
     """Run acquisition for one GNSS system. Returns results dict.
     doppler_step: coherent integration spans the full code period, so the step must
     satisfy ~1/(2T): 250 Hz is fine for 1 ms codes but loses up to 5x for 10 ms codes."""
     samples_per_ms = int(sample_rate * 1e-3)
     samples_per_code = code_period_ms * samples_per_ms
 
-    blocks = [signal[i * samples_per_code:(i + 1) * samples_per_code]
-              for i in range(len(signal) // samples_per_code)]
+    # Double-length blocks for linear (non-circular) correlation: every lag in [0, n)
+    # then spans one COMPLETE code period, so secondary-code/NH chip flips at the code
+    # epoch never land mid-integration (they killed up to |1-2g| of the peak before).
+    blocks = [signal[i * samples_per_code:(i + 2) * samples_per_code]
+              for i in range(len(signal) // samples_per_code - 1)]
 
     all_results = []
     found_sats = []
@@ -1170,7 +1216,7 @@ def acquire_system(signal, system_name, svid_range, code_gen_fn, code_period_ms,
         local_code = resample_code(code, samples_per_code)
         found, doppler, cp, zscore, _, _, _ = acquire_satellite_generic(
             blocks, local_code, DOPPLER_RANGE, doppler_step,
-            sample_rate, non_coherent, save_heatmap=False)
+            sample_rate, non_coherent, save_heatmap=False, carrier_freq=carrier_freq)
 
         r = {'svid': svid, 'doppler': doppler, 'code_phase': cp, 'zscore': zscore, 'found': found}
         all_results.append(r)
@@ -1199,7 +1245,7 @@ def acquire_system(signal, system_name, svid_range, code_gen_fn, code_period_ms,
         local_code = resample_code(code, samples_per_code)
         _, _, _, _, best_corr, best_heatmap, best_doppler_bins = acquire_satellite_generic(
             blocks, local_code, DOPPLER_RANGE, doppler_step,
-            sample_rate, non_coherent, save_heatmap=True)
+            sample_rate, non_coherent, save_heatmap=True, carrier_freq=carrier_freq)
 
     return {
         'system': system_name,
@@ -1221,8 +1267,9 @@ def acquire_glonass_system(signal, sat_info_glo, center_freq, sample_rate,
     samples_per_ms = int(sample_rate * 1e-3)
     samples_per_code = GLO_CODE_PERIOD_MS * samples_per_ms
 
-    blocks = [signal[i * samples_per_code:(i + 1) * samples_per_code]
-              for i in range(len(signal) // samples_per_code)]
+    # Double-length blocks for linear correlation (see acquire_system)
+    blocks = [signal[i * samples_per_code:(i + 2) * samples_per_code]
+              for i in range(len(signal) // samples_per_code - 1)]
 
     g1_code = generate_glonass_g1_code()
     local_code = resample_code(g1_code, samples_per_code)
@@ -1254,7 +1301,8 @@ def acquire_glonass_system(signal, sat_info_glo, center_freq, sample_rate,
 
         found, doppler, cp, zscore, _, _, _ = acquire_satellite_generic(
             blocks, local_code, DOPPLER_RANGE, DOPPLER_STEP,
-            sample_rate, non_coherent, save_heatmap=False, if_offset=if_offset)
+            sample_rate, non_coherent, save_heatmap=False, if_offset=if_offset,
+            carrier_freq=GLO_F_BASE + freq_num * GLO_F_STEP)
 
         r = {'svid': svid, 'doppler': doppler, 'code_phase': cp,
              'zscore': zscore, 'found': found, 'freq_num': freq_num, 'if_offset': if_offset}
@@ -1284,7 +1332,8 @@ def acquire_glonass_system(signal, sat_info_glo, center_freq, sample_rate,
         print(f"  Computing 2D heatmap for R{best_sv['svid']:02d}...")
         _, _, _, _, best_corr, best_heatmap, best_doppler_bins = acquire_satellite_generic(
             blocks, local_code, DOPPLER_RANGE, DOPPLER_STEP,
-            sample_rate, non_coherent, save_heatmap=True, if_offset=best_sv['if_offset'])
+            sample_rate, non_coherent, save_heatmap=True, if_offset=best_sv['if_offset'],
+            carrier_freq=GLO_F_BASE + best_sv.get('freq_num', 0) * GLO_F_STEP)
 
     return {
         'system': 'GLONASS G1',
@@ -1322,7 +1371,7 @@ SYS_COLORS = {
 SYS_PREFIX = {
     'GPS L1CA': ('G', 'GPS'), 'GPS L5': ('G', 'GPS_L5'),
     'GPS L2C': ('G', 'GPS_L2C'), 'GPS L1C': ('G', 'GPS_L1C'),
-    'BeiDou B1C': ('C', 'BDS'), 'BeiDou B1I': ('C', 'BDS'),
+    'BeiDou B1C': ('C', 'BDS'), 'BeiDou B1I': ('C', 'BDS'), 'BeiDou B2a': ('C', 'BDS'),
     'Galileo E1': ('E', 'GAL'), 'GLONASS G1': ('R', 'GLO'),
     'Galileo E5a': ('E', 'GAL_E5A'), 'Galileo E5b': ('E', 'GAL_E5B'),
     'Galileo E6': ('E', 'GAL_E6'),
@@ -1349,6 +1398,7 @@ def _cn0_bars(results_list):
         'GPS L1CA': NON_COHERENT_GPS, 'GPS L5': NON_COHERENT_L5,
         'GPS L2C': NON_COHERENT_L2C, 'GPS L1C': NON_COHERENT_L1C,
         'BeiDou B1C': NON_COHERENT_BDS, 'BeiDou B1I': NON_COHERENT_B1I,
+        'BeiDou B2a': NON_COHERENT_B2A,
         'Galileo E1': NON_COHERENT_GAL, 'GLONASS G1': NON_COHERENT_GLO,
         'Galileo E5a': NON_COHERENT_E5A, 'Galileo E5b': NON_COHERENT_E5B,
         'Galileo E6': NON_COHERENT_E6,
@@ -1602,6 +1652,7 @@ def generate_report(iq_file, signal, sample_rate, rms_values,
             'GPS L1C': (GPS_L1C_CODE_LENGTH * 2, 5),  # BOC doubles subchips
             'BeiDou B1C': (BDS_CODE_LENGTH, 5),
             'BeiDou B1I': (BDS_B1I_CODE_LENGTH, 50),
+            'BeiDou B2a': (BDS_B2A_CODE_LENGTH, 50),
             'Galileo E1': (GAL_CODE_LENGTH, 5),
             'GLONASS G1': (GLO_CODE_LENGTH, 50),
             'Galileo E5a': (GAL_E5A_CODE_LENGTH, 50),
@@ -1798,7 +1849,7 @@ def main():
     enabled = config.get('enabled_systems', {'GPS', 'BDS', 'GAL'})
     any_gps = any(s in enabled for s in ('GPS', 'GPS_L5', 'GPS_L2C', 'GPS_L1C'))
     gps_range = list(range(1, 33)) if any_gps else []
-    any_bds = any(s in enabled for s in ('BDS', 'BDS_B1I'))
+    any_bds = any(s in enabled for s in ('BDS', 'BDS_B1I', 'BDS_B2A'))
     bds_range = list(range(1, 64)) if any_bds else []
     any_gal = any(s in enabled for s in ('GAL', 'GAL_E5A', 'GAL_E5B', 'GAL_E6'))
     gal_range = list(range(1, 37)) if any_gal else []
@@ -1827,13 +1878,15 @@ def main():
     # GPS L5
     if 'GPS_L5' in enabled and gps_range:
         res = acquire_system(signal, 'GPS L5', gps_range, generate_l5i_code,
-                             GPS_L5_CODE_PERIOD_MS, sample_rate, NON_COHERENT_L5, threshold)
+                             GPS_L5_CODE_PERIOD_MS, sample_rate, NON_COHERENT_L5, threshold,
+                             carrier_freq=1176.45e6)
         results_list.append(res)
 
     # GPS L2C
     if 'GPS_L2C' in enabled and gps_range:
         res = acquire_system(signal, 'GPS L2C', gps_range, generate_l2c_cm_code,
-                             GPS_L2C_CODE_PERIOD_MS, sample_rate, NON_COHERENT_L2C, threshold)
+                             GPS_L2C_CODE_PERIOD_MS, sample_rate, NON_COHERENT_L2C, threshold,
+                             carrier_freq=1227.60e6)
         results_list.append(res)
 
     # GPS L1C
@@ -1853,7 +1906,15 @@ def main():
     # BeiDou B1I
     if 'BDS_B1I' in enabled and bds_range:
         res = acquire_system(signal, 'BeiDou B1I', bds_range, generate_b1i_code,
-                             BDS_B1I_CODE_PERIOD_MS, sample_rate, NON_COHERENT_B1I, threshold)
+                             BDS_B1I_CODE_PERIOD_MS, sample_rate, NON_COHERENT_B1I, threshold,
+                             carrier_freq=1561.098e6)
+        results_list.append(res)
+
+    # BeiDou B2a (data channel)
+    if 'BDS_B2A' in enabled and bds_range:
+        res = acquire_system(signal, 'BeiDou B2a', bds_range, generate_b2a_code,
+                             BDS_B2A_CODE_PERIOD_MS, sample_rate, NON_COHERENT_B2A, threshold,
+                             carrier_freq=1176.45e6)
         results_list.append(res)
 
     # Galileo E1 (100 Hz step for 4 ms coherent integration)
@@ -1866,19 +1927,22 @@ def main():
     # Galileo E5a
     if 'GAL_E5A' in enabled and gal_range:
         res = acquire_system(signal, 'Galileo E5a', gal_range, generate_e5a_code,
-                             GAL_E5A_CODE_PERIOD_MS, sample_rate, NON_COHERENT_E5A, threshold)
+                             GAL_E5A_CODE_PERIOD_MS, sample_rate, NON_COHERENT_E5A, threshold,
+                             carrier_freq=1176.45e6)
         results_list.append(res)
 
     # Galileo E5b
     if 'GAL_E5B' in enabled and gal_range:
         res = acquire_system(signal, 'Galileo E5b', gal_range, generate_e5b_code,
-                             GAL_E5B_CODE_PERIOD_MS, sample_rate, NON_COHERENT_E5B, threshold)
+                             GAL_E5B_CODE_PERIOD_MS, sample_rate, NON_COHERENT_E5B, threshold,
+                             carrier_freq=1207.14e6)
         results_list.append(res)
 
     # Galileo E6
     if 'GAL_E6' in enabled and gal_range:
         res = acquire_system(signal, 'Galileo E6', gal_range, generate_e6_pilot_code,
-                             GAL_E6_CODE_PERIOD_MS, sample_rate, NON_COHERENT_E6, threshold)
+                             GAL_E6_CODE_PERIOD_MS, sample_rate, NON_COHERENT_E6, threshold,
+                             carrier_freq=1278.75e6)
         results_list.append(res)
 
     # GLONASS FDMA acquisition (requires sat_info for frequency channels)

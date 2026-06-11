@@ -1,6 +1,6 @@
 # GNSS verification report
 
-Date: 2026-04-25; follow-up re-verification 2026-06-02; L1-band signal pass 2026-06-11.
+Date: 2026-04-25; follow-up re-verification 2026-06-02; L1-band signal pass 2026-06-11; L5-band pass + verifier rebuild 2026-06-11.
 
 This report summarizes the phased verification pass from RINEX/config parsing
 through navigation message and IF-generation setup. Source references are pinned
@@ -27,6 +27,20 @@ in `docs/verification_sources.md`.
 > caused the historic partial B1C detection. The stale `signal_assembly_baseline`
 > expectation (E1 pilot on I) was updated to the hardware-confirmed Q layout.
 > Hardware re-test after the waveform change is still pending.
+
+> **2026-06-11 L5-band pass + verifier rebuild.** GPS L5, Galileo E5a, and BeiDou
+> B2a verified end-to-end. PRN codes bit-exact vs PocketSDR (E5a I/Q 36/36, B2a
+> data/pilot 63/63, all NH/secondary codes); GPS L5 XA/XB shown ICD-literal — our
+> free-running XB matches the IS-GPS-705 initial-state definition, while
+> PocketSDR/gnss-sdr wrap XB mod 10230 and diverge in the last `adv` chips per PRN
+> (<0.12 dB). A clean-room generator dump proved GPS L5 ideal: every code period at
+> theoretical correlation amplitude with bit-exact NH10/NH20+CNAV wiring. The
+> verifier's earlier 0/10 on L5-band was its own artifact: circular correlation lost
+> up to |1-2g| of the peak when the SV's code epoch (where NH chips flip every 1 ms)
+> fell mid-block. `verify_signal_enhanced.py` was rebuilt with double-window linear
+> correlation, code-Doppler drift compensation, and a BeiDou B2a mode; results:
+> GPS L5 10/10 (z 44-59), E5a 10/10 (z 48-64), B2a 12/12 (z 48-72), with L1-band
+> regression improved (B1C z 132-247, B1I 65-96, E1 63-103; GLONASS 6/8).
 
 ## Phase commits
 

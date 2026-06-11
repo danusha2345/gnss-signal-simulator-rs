@@ -14,22 +14,23 @@ Generate realistic IQ baseband samples for GPS, Galileo, BeiDou, and GLONASS fro
 | System | Signal | Frequency | Modulation | Code Length | Verified z-score |
 |--------|--------|-----------|------------|-------------|-----------------|
 | GPS | L1CA | 1575.42 MHz | BPSK(1) | 1023 | 58–88 |
-| GPS | L5 | 1176.45 MHz | BPSK(10) | 10230 | Verified |
+| GPS | L5 | 1176.45 MHz | BPSK(10) | 10230 | 44–59 |
 | GPS | L2C | 1227.60 MHz | BPSK(1) | 10230 | Verified |
 | GPS | L1C | 1575.42 MHz | BOC(1,1) | 10230 | Verified |
-| Galileo | E1 | 1575.42 MHz | CBOC(6,1,1/11) | 4092 | 50–97 |
-| Galileo | E5a | 1176.45 MHz | BPSK(10) | 10230 | 434–502 |
+| Galileo | E1 | 1575.42 MHz | CBOC(6,1,1/11) | 4092 | 63–103 |
+| Galileo | E5a | 1176.45 MHz | BPSK(10) | 10230 | 48–64 |
 | Galileo | E5b | 1207.14 MHz | BPSK(10) | 10230 | 449–514 |
 | Galileo | E6 | 1278.75 MHz | BPSK(5) | 5115 | 270–299 |
-| BeiDou | B1C | 1575.42 MHz | BOC(1,1)+QMBOC(6,1,4/33) | 10230 | 105–153 |
-| BeiDou | B1I | 1561.098 MHz | BPSK(2) | 2046 | 37–93 |
+| BeiDou | B1C | 1575.42 MHz | BOC(1,1)+QMBOC(6,1,4/33) | 10230 | 132–247 |
+| BeiDou | B1I | 1561.098 MHz | BPSK(2) | 2046 | 65–96 |
+| BeiDou | B2a | 1176.45 MHz | BPSK(10) | 10230 | 48–72 |
 | GLONASS | G1 | 1602+k×0.5625 MHz | BPSK(0.5) FDMA | 511 | 54–56 |
 
 > z-score = (correlation peak − mean) / std, threshold ≥ 30. Values above 50 indicate reliable detection.
 
 ## Key Features
 
-- **4 GNSS constellations, 11 verified signals** — simultaneous multi-system generation into a single IQ file
+- **4 GNSS constellations, 12 verified signals** — simultaneous multi-system generation into a single IQ file
 - **RINEX 3.04 ephemeris parsing** — GPS (7-line), BeiDou (7-line with BDT correction), Galileo (7-line), GLONASS (3-line with km→m)
 - **Keplerian orbit propagation** — GPS ICD-200 algorithm; GLONASS RK4 in PZ-90
 - **Unified epoch algorithm** — forces all satellites to use ephemeris from the same time epoch
@@ -149,15 +150,20 @@ python verify_signal_enhanced.py generated_files/output.C8 \
 | E5b | 21 MHz | 7/7 | 449–514 |
 | E6 | 11 MHz | 7/7 | 270–299 |
 
-**L1-band single-system after true CBOC/QMBOC waveforms (Montana, 10s, 5 MHz, June 2026):**
+**Single-system results after the June 2026 passes (true CBOC/QMBOC waveforms + NH-robust verifier):**
 
-| Signal | RINEX Visible | Detected | z-score Range |
-|--------|--------------|----------|---------------|
-| Galileo E1 (CBOC) | 10 | 10/10 | 50–97 |
-| BeiDou B1C (QMBOC, pilot-channel acquisition) | 12 | 12/12 | 105–153 |
-| BeiDou B1I | 12 | 12/12 | 37–93 |
+| Signal | Sample Rate | RINEX Visible | Detected | z-score Range |
+|--------|-------------|--------------|----------|---------------|
+| Galileo E1 (CBOC) | 5 MHz | 10 | 10/10 | 63–103 |
+| BeiDou B1C (QMBOC, pilot acquisition) | 5 MHz | 12 | 12/12 | 132–247 |
+| BeiDou B1I | 5 MHz | 12 | 12/12 | 65–96 |
+| GPS L5 | 21 MHz | 10 | 10/10 | 44–59 |
+| Galileo E5a | 21 MHz | 10 | 10/10 | 48–64 |
+| BeiDou B2a | 21 MHz | 12 | 12/12 | 48–72 |
 
-> PRN codes cross-verified bit-exact against independent references: B1I vs gnss-sdr (63/63 PRN), B1C data/pilot/secondary vs PocketSDR (63/63 PRN).
+> PRN codes cross-verified bit-exact against independent references: B1I vs gnss-sdr (63/63 PRN); B1C data/pilot/secondary, E5a I/Q, B2a data/pilot and all NH/secondary codes vs PocketSDR. GPS L5 XA/XB is ICD-literal (free-running XB; the references' mod-10230 roll diverges in the last `adv` chips per PRN, <0.12 dB effect).
+>
+> The verifier uses double-window linear correlation (immune to NH/secondary chip flips at code epochs) with code-Doppler drift compensation — the earlier 0/10 GPS L5 result was a verifier artifact, confirmed by a clean-room dump showing ideal per-period correlation and bit-exact NH wiring.
 
 **GLONASS G1 (10 MHz, Montana, 10s):**
 
@@ -267,7 +273,7 @@ See source files for license information.
 
 - **GPS**: L1CA, L5, L2C, L1C
 - **Galileo**: E1 (CBOC), E5a, E5b, E6
-- **BeiDou**: B1C (BOC+QMBOC), B1I
+- **BeiDou**: B1C (BOC+QMBOC), B1I, B2a
 - **GLONASS**: G1 (FDMA)
 
 ### Быстрый старт
