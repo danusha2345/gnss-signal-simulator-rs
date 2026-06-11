@@ -97,14 +97,15 @@ fn satellite_signal_component_mapping_matches_supported_modulations() {
             0.0,
         ),
         (
+            // E1-B data on I, E1-C pilot on Q (hardware-confirmed layout, commit 4091adb)
             "Galileo E1",
             GnssSystem::GalileoSystem,
             SIGNAL_INDEX_E1,
             8,
             std::f64::consts::FRAC_1_SQRT_2,
             0.0,
-            std::f64::consts::FRAC_1_SQRT_2,
             0.0,
+            std::f64::consts::FRAC_1_SQRT_2,
         ),
         (
             "GLONASS G3",

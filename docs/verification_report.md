@@ -1,6 +1,6 @@
 # GNSS verification report
 
-Date: 2026-04-25; follow-up re-verification 2026-06-02.
+Date: 2026-04-25; follow-up re-verification 2026-06-02; L1-band signal pass 2026-06-11.
 
 This report summarizes the phased verification pass from RINEX/config parsing
 through navigation message and IF-generation setup. Source references are pinned
@@ -12,6 +12,21 @@ in `docs/verification_sources.md`.
 > integration suites, 0 failures). The Galileo I/NAV decode gap noted below is
 > resolved. Details in `docs/gnss_icd_conformance_report.md` ("June 2026
 > conformance pass" and "Ephemeris round-trip coverage").
+
+> **2026-06-11 L1-band signal pass.** Galileo E1 and BeiDou B1 narrowband
+> generation verified end-to-end (IQ statistics, quantization, channel
+> quadrature on generated files). PRN codes cross-checked bit-exact against
+> independent references: B1I vs gnss-sdr (63/63 PRN), B1C data/pilot/secondary
+> vs PocketSDR (63/63 PRN). The generator's two-level CBOC/QMBOC approximations
+> were replaced with true multi-level ICD waveforms (E1 CBOC(6,1,1/11) on both
+> channels, B1C QMBOC(6,1,4/33) quadrature pilot component); acquisition
+> verified before/after with no regression (E1 10/10, z 50–97) and improved B1C
+> detection (12/12, z 105–153). `verify_signal_enhanced.py` gained a B1I
+> acquisition mode, B1C pilot-channel correlation, and per-system Doppler steps
+> (50 Hz for 10 ms coherent codes) — the coarse 250 Hz grid, not the generator,
+> caused the historic partial B1C detection. The stale `signal_assembly_baseline`
+> expectation (E1 pilot on I) was updated to the hardware-confirmed Q layout.
+> Hardware re-test after the waveform change is still pending.
 
 ## Phase commits
 

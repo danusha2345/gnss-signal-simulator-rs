@@ -17,18 +17,19 @@
 | GPS | L5 | 1176.45 MHz | BPSK(10) | 10230 | Verified |
 | GPS | L2C | 1227.60 MHz | BPSK(1) | 10230 | Verified |
 | GPS | L1C | 1575.42 MHz | BOC(1,1) | 10230 | Verified |
-| Galileo | E1 | 1575.42 MHz | CBOC(6,1,1/11) | 4092 | 364–425 |
+| Galileo | E1 | 1575.42 MHz | CBOC(6,1,1/11) | 4092 | 50–97 |
 | Galileo | E5a | 1176.45 MHz | BPSK(10) | 10230 | 434–502 |
 | Galileo | E5b | 1207.14 MHz | BPSK(10) | 10230 | 449–514 |
 | Galileo | E6 | 1278.75 MHz | BPSK(5) | 5115 | 270–299 |
-| BeiDou | B1C | 1575.42 MHz | BOC(1,1)+QMBOC | 10230 | 574–955 |
+| BeiDou | B1C | 1575.42 MHz | BOC(1,1)+QMBOC(6,1,4/33) | 10230 | 105–153 |
+| BeiDou | B1I | 1561.098 MHz | BPSK(2) | 2046 | 37–93 |
 | GLONASS | G1 | 1602+k×0.5625 MHz | BPSK(0.5) FDMA | 511 | 54–56 |
 
 > z-score = (correlation peak − mean) / std, threshold ≥ 30. Значения выше 50 указывают на надёжную детекцию.
 
 ## Ключевые возможности
 
-- **4 GNSS-созвездия, 10 сигналов** — одновременная мультисистемная генерация в один IQ-файл
+- **4 GNSS-созвездия, 11 верифицированных сигналов** — одновременная мультисистемная генерация в один IQ-файл
 - **Парсинг эфемерид RINEX 3.04** — GPS (7-line), BeiDou (7-line с BDT correction), Galileo (7-line), GLONASS (3-line с km→m)
 - **Кеплеровская пропагация орбит** — алгоритм GPS ICD-200; GLONASS RK4 в PZ-90
 - **Алгоритм единой эпохи** — заставляет все спутники использовать эфемериды с одного эпохи времени
@@ -148,6 +149,16 @@ python verify_signal_enhanced.py generated_files/output.C8 \
 | E5b | 21 MHz | 7/7 | 449–514 |
 | E6 | 11 MHz | 7/7 | 270–299 |
 
+**L1-band single-system после перехода на честные CBOC/QMBOC (Montana, 10s, 5 MHz, июнь 2026):**
+
+| Сигнал | RINEX Visible | Detected | z-score Range |
+|--------|--------------|----------|---------------|
+| Galileo E1 (CBOC) | 10 | 10/10 | 50–97 |
+| BeiDou B1C (QMBOC, акквизиция по пилоту) | 12 | 12/12 | 105–153 |
+| BeiDou B1I | 12 | 12/12 | 37–93 |
+
+> PRN-коды сверены бит-в-бит с независимыми эталонами: B1I — gnss-sdr (63/63 PRN), B1C data/pilot/secondary — PocketSDR (63/63 PRN).
+
 **GLONASS G1 (10 MHz, Montana, 10s):**
 
 | Generated | Detected | z-score Range |
@@ -256,7 +267,7 @@ Generate realistic IQ baseband samples for GPS, Galileo, BeiDou, and GLONASS fro
 
 - **GPS**: L1CA, L5, L2C, L1C
 - **Galileo**: E1 (CBOC), E5a, E5b, E6
-- **BeiDou**: B1C (BOC+QMBOC)
+- **BeiDou**: B1C (BOC+QMBOC), B1I
 - **GLONASS**: G1 (FDMA)
 
 ### Quick Start

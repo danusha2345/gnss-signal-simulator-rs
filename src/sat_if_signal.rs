@@ -677,6 +677,13 @@ impl SatIfSignal {
             let pilot_length = self.pilot_length;
             let is_cboc = (code_attribute.attribute & PRN_ATTRIBUTE_CBOC) != 0;
             let is_qmboc = (code_attribute.attribute & PRN_ATTRIBUTE_QMBOC) != 0;
+            // QMBOC flag is shared by GPS L1C (TMBOC) and BDS B1C (true QMBOC)
+            let is_b1c = is_qmboc && self.system == GnssSystem::BdsSystem;
+            // CBOC(6,1,1/11): data = alpha*sc(1,1) + beta*sc(6,1), pilot = alpha*sc(1,1) - beta*sc(6,1)
+            let cboc_alpha = (10.0f64 / 11.0).sqrt();
+            let cboc_beta = (1.0f64 / 11.0).sqrt();
+            // QMBOC(6,1,4/33): quadrature BOC(6,1) pilot component, sqrt(4/29) of the sc(1,1) part
+            let qmboc_quad = (4.0f64 / 29.0).sqrt();
             let data_period = code_attribute.data_period;
 
             // BUG 4 FIX: Local copies for mid-sample nav bit transitions
@@ -687,7 +694,14 @@ impl SatIfSignal {
             let mut prev_data_chip: i32 = -1;
 
             for i in 0..self.sample_number as usize {
-                let chip_raw = (base_chip_offset + (i as f64) * code_step) as i32;
+                let chip_f = base_chip_offset + (i as f64) * code_step;
+                let chip_raw = chip_f as i32;
+                // BOC(6,1) subcarrier sign: 6 half-periods per BOC(1,1) subchip (chip_f >= 0)
+                let s6 = if (is_cboc || is_b1c) && ((chip_f * 6.0) as i64) & 1 != 0 {
+                    -1.0
+                } else {
+                    1.0
+                };
 
                 // --- Data channel (COMPLEX modulation, BUG 1) ---
                 let chip_mod = chip_raw.rem_euclid(data_length);
@@ -720,7 +734,13 @@ impl SatIfSignal {
                 let mut prn_i = data_signal_local.imag * data_sign;
 
                 // BOC subchip sign flip for data
-                if is_boc && (chip_mod & 1) != 0 {
+                if is_cboc {
+                    // Galileo E1-B data: CBOC(6,1,1/11) in-phase sum
+                    let s11 = if (chip_mod & 1) != 0 { -1.0 } else { 1.0 };
+                    let f = cboc_alpha * s11 + cboc_beta * s6;
+                    prn_r *= f;
+                    prn_i *= f;
+                } else if is_boc && (chip_mod & 1) != 0 {
                     prn_r = -prn_r;
                     prn_i = -prn_i;
                 }
@@ -737,28 +757,34 @@ impl SatIfSignal {
                             let mut p_r = pilot_signal_local.real * pilot_sign;
                             let mut p_i = pilot_signal_local.imag * pilot_sign;
 
-                            // BOC/QMBOC/CBOC flip logic for pilot
-                            let mut flip = false;
-                            if (is_qmboc || is_cboc) && is_boc {
-                                if is_qmboc {
-                                    let symbol_pos = (signal_time_local.MilliSeconds % 330) / 10;
-                                    if symbol_pos == 1 || symbol_pos == 5 || symbol_pos == 7 || symbol_pos == 30 {
-                                        let sub_chip_pos = chip_raw.rem_euclid(12);
-                                        if sub_chip_pos >= 6 { flip = true; }
-                                    } else if (pilot_chip_mod & 1) != 0 { flip = true; }
-                                } else {
-                                    // CBOC (Galileo E1)
-                                    let chip_in_code = chip_raw.rem_euclid(4092);
-                                    if (chip_in_code % 11) == 0 {
-                                        let boc6_phase = chip_raw.rem_euclid(12);
-                                        if boc6_phase >= 6 { flip = true; }
-                                    } else if (pilot_chip_mod & 1) != 0 { flip = true; }
+                            // BOC/QMBOC/CBOC pilot subcarrier
+                            if is_cboc {
+                                // Galileo E1-C pilot: CBOC(6,1,1/11) in-phase difference
+                                let s11 = if (pilot_chip_mod & 1) != 0 { -1.0 } else { 1.0 };
+                                let f = cboc_alpha * s11 - cboc_beta * s6;
+                                p_r *= f;
+                                p_i *= f;
+                            } else if is_b1c {
+                                // BDS B1C pilot: QMBOC(6,1,4/33) = sqrt(29/33)*sc(1,1) - j*sqrt(4/33)*sc(6,1);
+                                // pilot_signal carries the sc(1,1) amplitude, the BOC(6,1) part is the
+                                // -90deg rotation scaled by sqrt(4/29)
+                                let s11 = if (pilot_chip_mod & 1) != 0 { -1.0 } else { 1.0 };
+                                let (r, im) = (p_r, p_i);
+                                p_r = r * s11 + im * qmboc_quad * s6;
+                                p_i = im * s11 - r * qmboc_quad * s6;
+                            } else if is_qmboc {
+                                // GPS L1C pilot: TMBOC(6,1,4/33) time multiplex
+                                let mut flip = false;
+                                let symbol_pos = (signal_time_local.MilliSeconds % 330) / 10;
+                                if symbol_pos == 1 || symbol_pos == 5 || symbol_pos == 7 || symbol_pos == 30 {
+                                    let sub_chip_pos = chip_raw.rem_euclid(12);
+                                    if sub_chip_pos >= 6 { flip = true; }
+                                } else if (pilot_chip_mod & 1) != 0 { flip = true; }
+                                if flip {
+                                    p_r = -p_r;
+                                    p_i = -p_i;
                                 }
                             } else if is_boc && (pilot_chip_mod & 1) != 0 {
-                                flip = true;
-                            }
-
-                            if flip {
                                 p_r = -p_r;
                                 p_i = -p_i;
                             }

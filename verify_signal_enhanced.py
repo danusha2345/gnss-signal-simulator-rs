@@ -53,6 +53,8 @@ GPS_CODE_LENGTH = 1023
 GPS_CODE_PERIOD_MS = 1
 BDS_CODE_LENGTH = 10230
 BDS_CODE_PERIOD_MS = 10
+BDS_B1I_CODE_LENGTH = 2046
+BDS_B1I_CODE_PERIOD_MS = 1
 GAL_CODE_LENGTH = 4092
 GAL_CODE_PERIOD_MS = 4
 
@@ -62,6 +64,7 @@ DOPPLER_STEP = 250
 ZSCORE_THRESHOLD = 30
 NON_COHERENT_GPS = 10
 NON_COHERENT_BDS = 10
+NON_COHERENT_B1I = 50  # 1 ms code period -> 50 ms total, comparable to B1C's 10x10 ms
 NON_COHERENT_GAL = 20
 NON_COHERENT_GLO = 10
 
@@ -163,6 +166,21 @@ B1C_DATA_PHASE_DIFF = [
     271, 915, 497, 139, 3693, 2054, 4342, 3342, 2592, 1007, 310, 4203, 455, 4318,
 ]
 
+# Pilot channel Weil parameters (BDS-SIS-ICD-B1C; bit-exact vs PocketSDR)
+B1C_PILOT_TRUNCATION = [
+    7575, 2369, 5688, 539, 2270, 7306, 6457, 6254, 5644, 7119, 1402, 5557, 5764, 1073, 7001, 5910,
+    10060, 2710, 1546, 6887, 1883, 5613, 5062, 1038, 10170, 6484, 1718, 2535, 1158, 526, 7331,
+    5844, 6423, 6968, 1280, 1838, 1989, 6468, 2091, 1581, 1453, 6252, 7122, 7711, 7216, 2113, 1095,
+    1628, 1713, 6102, 6123, 6070, 1115, 8047, 6795, 2575, 53, 1729, 6388, 682, 5565, 7160, 2277,
+]
+
+B1C_PILOT_PHASE_DIFF = [
+    796, 156, 4198, 3941, 1374, 1338, 1833, 2521, 3175, 168, 2715, 4408, 3160, 2796, 459, 3594,
+    4813, 586, 1428, 2371, 2285, 3377, 4965, 3779, 4547, 1646, 1430, 607, 2118, 4709, 1149, 3283,
+    2473, 1006, 3670, 1817, 771, 2173, 740, 1433, 2458, 3459, 2155, 1205, 413, 874, 2463, 1106,
+    1590, 3873, 4026, 4272, 3556, 128, 1200, 130, 4494, 1871, 3073, 4386, 4098, 1923, 1176,
+]
+
 
 def generate_legendre_sequence(length):
     seq = np.zeros(length, dtype=np.int32)
@@ -171,11 +189,15 @@ def generate_legendre_sequence(length):
     return seq
 
 
-def generate_b1c_weil(svid):
+def generate_b1c_weil(svid, use_pilot=False):
     if svid < 1 or svid > 63:
         return None
-    trunc = B1C_DATA_TRUNCATION[svid - 1]
-    phase = B1C_DATA_PHASE_DIFF[svid - 1]
+    if use_pilot:
+        trunc = B1C_PILOT_TRUNCATION[svid - 1]
+        phase = B1C_PILOT_PHASE_DIFF[svid - 1]
+    else:
+        trunc = B1C_DATA_TRUNCATION[svid - 1]
+        phase = B1C_DATA_PHASE_DIFF[svid - 1]
     legendre = generate_legendre_sequence(10243)
     code = np.zeros(10230, dtype=np.int32)
     idx1 = trunc - 1
@@ -200,11 +222,51 @@ def apply_boc11(code_01):
     return boc
 
 
-def generate_b1c_boc(svid):
-    code = generate_b1c_weil(svid)
+def generate_b1c_boc(svid, use_pilot=False):
+    code = generate_b1c_weil(svid, use_pilot)
     if code is None:
         return None
     return apply_boc11(code)
+
+
+def generate_b1c_pilot_boc(svid):
+    """B1C pilot channel: 3x the data channel power (BDS ICD 1:3 split) -> ~1.7x higher z."""
+    return generate_b1c_boc(svid, use_pilot=True)
+
+
+# ============================================================
+# BeiDou B1I Code Generation (Gold code, 2046 chips)
+# ============================================================
+
+# Per-SV G1 initial states (mirror of src/prngenerate.rs; bit-exact vs gnss-sdr)
+B1I_PRN_INIT = [
+    0x187, 0x639, 0x1e6, 0x609, 0x605, 0x1f8, 0x606, 0x1f9, 0x704, 0x7be, 0x061, 0x78e, 0x782,
+    0x07f, 0x781, 0x07e, 0x7df, 0x030, 0x03c, 0x7c1, 0x03f, 0x7c0, 0x7ef, 0x7e3, 0x01e, 0x7e0,
+    0x01f, 0x00c, 0x7f1, 0x00f, 0x7f0, 0x7fd, 0x003, 0x7fc, 0x7fe, 0x001, 0x7ff, 0x457, 0x4ed,
+    0x4dd, 0x4d1, 0x4d2, 0x32d, 0x48c, 0x492, 0x4bc, 0x4b0, 0x4b3, 0x34c, 0x4a2, 0x4ae, 0x4ad,
+    0x352, 0x5d0, 0x5b1, 0x5af, 0x50b, 0x515, 0x53b, 0x537, 0x534, 0x2cb, 0x525,
+]
+
+
+def _lfsr_sequence(init, poly, depth, n):
+    """MSB-output LFSR with parity feedback (mirror of LsfrSequence in prngenerate.rs)."""
+    state = init
+    mask = 1 << (depth - 1)
+    out = np.zeros(n, dtype=np.int32)
+    for i in range(n):
+        out[i] = 1 if (state & mask) else 0
+        fb = bin(state & poly).count('1') & 1
+        state = (state << 1) | fb
+    return out
+
+
+def generate_b1i_code(svid):
+    """Generate BeiDou B1I ranging code (2046 chips, BPSK). Returns +/-1 array."""
+    if svid < 1 or svid > 63:
+        return None
+    g1 = _lfsr_sequence(B1I_PRN_INIT[svid - 1], 0x59f, 11, BDS_B1I_CODE_LENGTH)
+    g2 = _lfsr_sequence(0x2aa, 0x7c1, 11, BDS_B1I_CODE_LENGTH)
+    return 1.0 - 2.0 * (g1 ^ g2).astype(np.float64)
 
 
 # ============================================================
@@ -565,6 +627,8 @@ def parse_preset(preset_path):
                 enabled.add('GPS_L1C')
         elif sys_name == 'BDS' and sig == 'B1C':
             enabled.add('BDS')
+        elif sys_name == 'BDS' and sig == 'B1I':
+            enabled.add('BDS_B1I')
         elif sys_name == 'Galileo' and sig == 'E1':
             enabled.add('GAL')
         elif sys_name == 'Galileo' and sig == 'E5a':
@@ -1077,8 +1141,11 @@ def acquire_satellite_generic(signal_blocks, local_code_resampled, doppler_range
 
 
 def acquire_system(signal, system_name, svid_range, code_gen_fn, code_period_ms,
-                   sample_rate, non_coherent, threshold=ZSCORE_THRESHOLD):
-    """Run acquisition for one GNSS system. Returns results dict."""
+                   sample_rate, non_coherent, threshold=ZSCORE_THRESHOLD,
+                   doppler_step=DOPPLER_STEP):
+    """Run acquisition for one GNSS system. Returns results dict.
+    doppler_step: coherent integration spans the full code period, so the step must
+    satisfy ~1/(2T): 250 Hz is fine for 1 ms codes but loses up to 5x for 10 ms codes."""
     samples_per_ms = int(sample_rate * 1e-3)
     samples_per_code = code_period_ms * samples_per_ms
 
@@ -1092,7 +1159,7 @@ def acquire_system(signal, system_name, svid_range, code_gen_fn, code_period_ms,
     print(f"\n{'=' * 60}")
     print(f"  {system_name} ACQUISITION")
     print(f"{'=' * 60}")
-    print(f"  Doppler: +/-{DOPPLER_RANGE} Hz, step {DOPPLER_STEP} Hz, z-threshold={threshold}")
+    print(f"  Doppler: +/-{DOPPLER_RANGE} Hz, step {doppler_step} Hz, z-threshold={threshold}")
 
     for idx, svid in enumerate(svid_range):
         print(f"\r  Searching {system_name} SV{svid:02d}... ({idx + 1}/{total})", end='', flush=True)
@@ -1102,7 +1169,7 @@ def acquire_system(signal, system_name, svid_range, code_gen_fn, code_period_ms,
 
         local_code = resample_code(code, samples_per_code)
         found, doppler, cp, zscore, _, _, _ = acquire_satellite_generic(
-            blocks, local_code, DOPPLER_RANGE, DOPPLER_STEP,
+            blocks, local_code, DOPPLER_RANGE, doppler_step,
             sample_rate, non_coherent, save_heatmap=False)
 
         r = {'svid': svid, 'doppler': doppler, 'code_phase': cp, 'zscore': zscore, 'found': found}
@@ -1131,7 +1198,7 @@ def acquire_system(signal, system_name, svid_range, code_gen_fn, code_period_ms,
         code = code_gen_fn(best_sv['svid'])
         local_code = resample_code(code, samples_per_code)
         _, _, _, _, best_corr, best_heatmap, best_doppler_bins = acquire_satellite_generic(
-            blocks, local_code, DOPPLER_RANGE, DOPPLER_STEP,
+            blocks, local_code, DOPPLER_RANGE, doppler_step,
             sample_rate, non_coherent, save_heatmap=True)
 
     return {
@@ -1255,7 +1322,7 @@ SYS_COLORS = {
 SYS_PREFIX = {
     'GPS L1CA': ('G', 'GPS'), 'GPS L5': ('G', 'GPS_L5'),
     'GPS L2C': ('G', 'GPS_L2C'), 'GPS L1C': ('G', 'GPS_L1C'),
-    'BeiDou B1C': ('C', 'BDS'),
+    'BeiDou B1C': ('C', 'BDS'), 'BeiDou B1I': ('C', 'BDS'),
     'Galileo E1': ('E', 'GAL'), 'GLONASS G1': ('R', 'GLO'),
     'Galileo E5a': ('E', 'GAL_E5A'), 'Galileo E5b': ('E', 'GAL_E5B'),
     'Galileo E6': ('E', 'GAL_E6'),
@@ -1281,7 +1348,7 @@ def _cn0_bars(results_list):
     nc_map = {
         'GPS L1CA': NON_COHERENT_GPS, 'GPS L5': NON_COHERENT_L5,
         'GPS L2C': NON_COHERENT_L2C, 'GPS L1C': NON_COHERENT_L1C,
-        'BeiDou B1C': NON_COHERENT_BDS,
+        'BeiDou B1C': NON_COHERENT_BDS, 'BeiDou B1I': NON_COHERENT_B1I,
         'Galileo E1': NON_COHERENT_GAL, 'GLONASS G1': NON_COHERENT_GLO,
         'Galileo E5a': NON_COHERENT_E5A, 'Galileo E5b': NON_COHERENT_E5B,
         'Galileo E6': NON_COHERENT_E6,
@@ -1534,6 +1601,7 @@ def generate_report(iq_file, signal, sample_rate, rms_values,
             'GPS L2C': (GPS_L2C_CODE_LENGTH, 50),
             'GPS L1C': (GPS_L1C_CODE_LENGTH * 2, 5),  # BOC doubles subchips
             'BeiDou B1C': (BDS_CODE_LENGTH, 5),
+            'BeiDou B1I': (BDS_B1I_CODE_LENGTH, 50),
             'Galileo E1': (GAL_CODE_LENGTH, 5),
             'GLONASS G1': (GLO_CODE_LENGTH, 50),
             'Galileo E5a': (GAL_E5A_CODE_LENGTH, 50),
@@ -1730,7 +1798,8 @@ def main():
     enabled = config.get('enabled_systems', {'GPS', 'BDS', 'GAL'})
     any_gps = any(s in enabled for s in ('GPS', 'GPS_L5', 'GPS_L2C', 'GPS_L1C'))
     gps_range = list(range(1, 33)) if any_gps else []
-    bds_range = list(range(1, 64)) if 'BDS' in enabled else []
+    any_bds = any(s in enabled for s in ('BDS', 'BDS_B1I'))
+    bds_range = list(range(1, 64)) if any_bds else []
     any_gal = any(s in enabled for s in ('GAL', 'GAL_E5A', 'GAL_E5B', 'GAL_E6'))
     gal_range = list(range(1, 37)) if any_gal else []
 
@@ -1773,16 +1842,25 @@ def main():
                              GPS_L1C_CODE_PERIOD_MS, sample_rate, NON_COHERENT_L1C, threshold)
         results_list.append(res)
 
-    # BeiDou B1C
-    if bds_range:
-        res = acquire_system(signal, 'BeiDou B1C', bds_range, generate_b1c_boc,
-                             BDS_CODE_PERIOD_MS, sample_rate, NON_COHERENT_BDS, threshold)
+    # BeiDou B1C (pilot channel: 3x data power per BDS ICD 1:3 split;
+    # 50 Hz step for 10 ms coherent integration)
+    if 'BDS' in enabled and bds_range:
+        res = acquire_system(signal, 'BeiDou B1C', bds_range, generate_b1c_pilot_boc,
+                             BDS_CODE_PERIOD_MS, sample_rate, NON_COHERENT_BDS, threshold,
+                             doppler_step=50)
         results_list.append(res)
 
-    # Galileo E1
+    # BeiDou B1I
+    if 'BDS_B1I' in enabled and bds_range:
+        res = acquire_system(signal, 'BeiDou B1I', bds_range, generate_b1i_code,
+                             BDS_B1I_CODE_PERIOD_MS, sample_rate, NON_COHERENT_B1I, threshold)
+        results_list.append(res)
+
+    # Galileo E1 (100 Hz step for 4 ms coherent integration)
     if 'GAL' in enabled and gal_range:
         res = acquire_system(signal, 'Galileo E1', gal_range, generate_e1_boc,
-                             GAL_CODE_PERIOD_MS, sample_rate, NON_COHERENT_GAL, threshold)
+                             GAL_CODE_PERIOD_MS, sample_rate, NON_COHERENT_GAL, threshold,
+                             doppler_step=100)
         results_list.append(res)
 
     # Galileo E5a
