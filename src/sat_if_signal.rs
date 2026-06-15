@@ -684,6 +684,13 @@ impl SatIfSignal {
             let cboc_beta = (1.0f64 / 11.0).sqrt();
             // QMBOC(6,1,4/33): quadrature BOC(6,1) pilot component, sqrt(4/29) of the sc(1,1) part
             let qmboc_quad = (4.0f64 / 29.0).sqrt();
+            // The BOC(6,1) subcarrier is 6*1.023 = 6.138 MHz; it can only be represented if
+            // Fs/2 exceeds it (Fs > 12.276 MHz). At low Fs (e.g. 5 MHz) the 6.138 MHz component
+            // aliases straight into the BOC(1,1) main lobe (~±1.14 MHz), corrupting the E1-B /
+            // B1C *data* channel and blocking nav-message decode on real receivers (acquisition
+            // on the pilot still survives). Fall back to pure BOC(1,1) — the hardware-proven
+            // 5 MHz waveform — when the 6,1 component is not representable.
+            let boc61_representable = (self.sample_number as f64 * 1000.0) > 12.276e6;
             let data_period = code_attribute.data_period;
 
             // BUG 4 FIX: Local copies for mid-sample nav bit transitions
@@ -697,7 +704,7 @@ impl SatIfSignal {
                 let chip_f = base_chip_offset + (i as f64) * code_step;
                 let chip_raw = chip_f as i32;
                 // BOC(6,1) subcarrier sign: 6 half-periods per BOC(1,1) subchip (chip_f >= 0)
-                let s6 = if (is_cboc || is_b1c) && ((chip_f * 6.0) as i64) & 1 != 0 {
+                let s6 = if (is_cboc || is_b1c) && boc61_representable && ((chip_f * 6.0) as i64) & 1 != 0 {
                     -1.0
                 } else {
                     1.0
@@ -735,9 +742,10 @@ impl SatIfSignal {
 
                 // BOC subchip sign flip for data
                 if is_cboc {
-                    // Galileo E1-B data: CBOC(6,1,1/11) in-phase sum
+                    // Galileo E1-B data: CBOC(6,1,1/11) in-phase sum (alpha*sc11 + beta*sc61).
+                    // At low Fs the sc61 part aliases, so fall back to pure BOC(1,1) at full power.
                     let s11 = if (chip_mod & 1) != 0 { -1.0 } else { 1.0 };
-                    let f = cboc_alpha * s11 + cboc_beta * s6;
+                    let f = if boc61_representable { cboc_alpha * s11 + cboc_beta * s6 } else { s11 };
                     prn_r *= f;
                     prn_i *= f;
                 } else if is_boc && (chip_mod & 1) != 0 {
@@ -759,19 +767,26 @@ impl SatIfSignal {
 
                             // BOC/QMBOC/CBOC pilot subcarrier
                             if is_cboc {
-                                // Galileo E1-C pilot: CBOC(6,1,1/11) in-phase difference
+                                // Galileo E1-C pilot: CBOC(6,1,1/11) in-phase difference (alpha*sc11 - beta*sc61).
+                                // At low Fs the sc61 part aliases, so fall back to pure BOC(1,1) at full power.
                                 let s11 = if (pilot_chip_mod & 1) != 0 { -1.0 } else { 1.0 };
-                                let f = cboc_alpha * s11 - cboc_beta * s6;
+                                let f = if boc61_representable { cboc_alpha * s11 - cboc_beta * s6 } else { s11 };
                                 p_r *= f;
                                 p_i *= f;
                             } else if is_b1c {
                                 // BDS B1C pilot: QMBOC(6,1,4/33) = sqrt(29/33)*sc(1,1) - j*sqrt(4/33)*sc(6,1);
                                 // pilot_signal carries the sc(1,1) amplitude, the BOC(6,1) part is the
-                                // -90deg rotation scaled by sqrt(4/29)
+                                // -90deg rotation scaled by sqrt(4/29). At low Fs the quadrature sc61
+                                // part aliases, so fall back to pure in-phase BOC(1,1).
                                 let s11 = if (pilot_chip_mod & 1) != 0 { -1.0 } else { 1.0 };
-                                let (r, im) = (p_r, p_i);
-                                p_r = r * s11 + im * qmboc_quad * s6;
-                                p_i = im * s11 - r * qmboc_quad * s6;
+                                if boc61_representable {
+                                    let (r, im) = (p_r, p_i);
+                                    p_r = r * s11 + im * qmboc_quad * s6;
+                                    p_i = im * s11 - r * qmboc_quad * s6;
+                                } else {
+                                    p_r *= s11;
+                                    p_i *= s11;
+                                }
                             } else if is_qmboc {
                                 // GPS L1C pilot: TMBOC(6,1,4/33) time multiplex
                                 let mut flip = false;

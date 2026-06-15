@@ -96,11 +96,23 @@ Ready-to-use JSON configurations in `presets/`:
 | `gal_e6.json` | Galileo E6 | 11 MHz |
 | `glo_g1.json` | GLONASS G1 | 10 MHz |
 | `gps_bds_gal_l1.json` | GPS+BDS+GAL L1 | 5 MHz |
+| `gps_bds_gal_l1_300s.json` | GPS+BDS+GAL L1 (over-air, 52 dBHz) | 8 MHz |
 | `quad_l1g1.json` | GPS+BDS+GAL+GLO L1/G1 | 46.5 MHz |
 
-The repository ships 44 presets. Most use the Montana location, 10s duration, elevation mask 5°, full RINEX; the `moscow_*` and `usa_*` presets are longer real-receiver scenarios (60–300s) at their respective locations.
+The repository ships 46 presets. Most use the Montana location, 10s duration, elevation mask 5°, full RINEX; the `moscow_*` and `usa_*` presets are longer real-receiver scenarios (60–300s) at their respective locations.
 
 Custom presets: copy any JSON, edit receiver position (LLA), sample rate, RINEX path, duration, and signal selection.
+
+### Over-the-Air Replay (HackRF / PortaPack → real receiver)
+
+When replaying a generated file over the air into a real receiver (phone, u-blox), the defaults tuned for the software verifier are too weak. For a phone to **acquire and sustain tracking** (decode ephemeris → get a fix):
+
+- **`initPower` ≥ 52 dBHz** in the preset. The AGC normalizes the file to a fixed output RMS regardless of `initPower`, so this sets the in-file CN0 (signal-to-noise margin), not the loudness. The default 45 dBHz acquires in the verifier but a phone cannot hold tracking.
+- **Sample rate ≥ 8 MHz.** HackRF One does 2–20 Msps but `<8 MHz` is out of DAC spec; PortaPack replay is SD-throughput-limited, so ~8–10 Msps is the practical sweet spot.
+- **E1/B1C use pure BOC(1,1) below 12.276 MHz automatically.** The true CBOC/QMBOC BOC(6,1) subcarrier (6.138 MHz) aliases into the data channel at low sample rates and blocks nav-message decode on real receivers; the generator falls back to clean BOC(1,1) (which a phone's narrow L1 front-end uses anyway) and switches to true CBOC only at `Fs ≥ 12.276 MHz`.
+- **BeiDou on phones is B1I (1561.098 MHz), not B1C (1575.42 MHz).** B1I is outside an L1-centered file, so use a dedicated B1I preset for BeiDou on a phone.
+
+`presets/gps_bds_gal_l1_300s.json` is preconfigured for this (8 MHz, 52 dBHz, 300 s).
 
 ## Signal Verification
 

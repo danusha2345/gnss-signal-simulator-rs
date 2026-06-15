@@ -2235,8 +2235,10 @@ impl IFDataGen {
         let total_rms_with_noise =
             (total_rms_amplitude * total_rms_amplitude + noise_sigma * noise_sigma).sqrt();
 
-        // Целевой RMS = 0.25: при гауссовом распределении 3σ ≈ 0.75, ~5% headroom до 1.0
-        let target_rms = 0.25;
+        // Целевой RMS = 0.4: громче для над-эфирного воспроизведения через HackRF/PortaPack
+        // (меньше нужно крутить TX gain). При гауссовом распределении клиппинг на ±1.0 ≈ 2.5σ,
+        // ~1.2% отсчётов — для ГНСС (сигнал глубоко под шумом) это пренебрежимо.
+        let target_rms = 0.4;
         let initial_agc_gain = if total_rms_with_noise > 0.0 {
             target_rms / total_rms_with_noise
         } else {
