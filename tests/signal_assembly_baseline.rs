@@ -97,15 +97,17 @@ fn satellite_signal_component_mapping_matches_supported_modulations() {
             0.0,
         ),
         (
-            // E1-B data on I, E1-C pilot on Q (hardware-confirmed layout, commit 4091adb)
+            // E1-B data AND E1-C pilot BOTH on I (CDMA), per C++ SignalSim SatelliteSignal.cpp.
+            // Hardware-confirmed 2026-06-16: pilot-on-I lets the phone decode I/NAV (Galileo fix);
+            // the prior pilot-on-Q (commit 4091adb) acquired but never decoded.
             "Galileo E1",
             GnssSystem::GalileoSystem,
             SIGNAL_INDEX_E1,
             8,
             std::f64::consts::FRAC_1_SQRT_2,
             0.0,
-            0.0,
             std::f64::consts::FRAC_1_SQRT_2,
+            0.0,
         ),
         (
             "GLONASS G3",
