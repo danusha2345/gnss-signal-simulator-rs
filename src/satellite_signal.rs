@@ -306,7 +306,7 @@ impl SatelliteSignal {
         let frame_number;
         let mut bit_number: usize;
         let bit_pos;
-        let data_bit;
+        let mut data_bit;
         let mut pilot_bit = 0; // По умолчанию 0 для сигналов без пилотной составляющей
 
         if self.sat_system == GnssSystem::GlonassSystem
@@ -429,6 +429,18 @@ impl SatelliteSignal {
             }) * nh_bit;
         } else {
             data_bit = 1; // Should be handled by the time marker logic above
+        }
+
+        // GLONASS L3OCd data-channel Barker-5 meander: BC = 00010 (bipolar +1+1+1-1+1),
+        // clocked at 1000 sps (1 chip per 1 ms primary-code period), per ICD GLONASS CDMA L3.
+        // The data-channel analogue of the L3OCp NH10 pilot overlay. NOTE: the rate-1/2
+        // convolutional FEC and the true L3OC 300-bit nav strings are NOT modelled — the data
+        // content is GNAV; only the Barker meander overlay is applied here.
+        if self.sat_system == GnssSystem::GlonassSystem
+            && self.sat_signal == crate::SIGNAL_INDEX_G3 as i32
+        {
+            const BARKER5: [i32; 5] = [1, 1, 1, -1, 1];
+            data_bit *= BARKER5[transmit_time_adj.MilliSeconds.rem_euclid(5) as usize];
         }
 
         if let Some((secondary_code, secondary_code_length)) =

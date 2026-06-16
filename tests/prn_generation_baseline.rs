@@ -257,7 +257,9 @@ fn supported_signal_codes_have_expected_lengths_attributes_and_binary_chips() {
             chip_rate: 10230,
             data_period: 1,
             pilot_period: 1,
-            required_attributes: PRN_ATTRIBUTE_BOC,
+            // L3OC is BPSK(10), not BOC — the prior PRN_ATTRIBUTE_BOC was a bug that corrupted
+            // the 10230-chip code via `>>1` half-rate indexing. Corrected to 0 (no BOC).
+            required_attributes: 0,
         },
     ];
 

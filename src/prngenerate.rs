@@ -705,7 +705,10 @@ static PRN_ATTRIBUTES: [PrnAttribute; 13] = [
         chip_rate: 10230,
         data_period: 1,
         pilot_period: 1,
-        attribute: PRN_ATTRIBUTE_BOC,
+        // L3OC is BPSK(10), NOT BOC — like L5/E5a/B2a (index 4). PRN_ATTRIBUTE_BOC here was a bug:
+        // is_boc=true indexed the 10230-chip code via `>>1` (only first 5115 chips, each doubled)
+        // and added a spurious sub-carrier sign flip, corrupting the ranging code.
+        attribute: 0,
     },
 ];
 

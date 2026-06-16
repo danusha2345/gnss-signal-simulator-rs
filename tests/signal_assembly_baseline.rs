@@ -110,6 +110,10 @@ fn satellite_signal_component_mapping_matches_supported_modulations() {
             0.0,
         ),
         (
+            // L3OC: data (L3OCd) on I, pilot (L3OCp) on Q. The pilot carries the NH10 overlay
+            // 0000110101; at t=20000 ms the secondary position is 20000 % 10 = 0, symbol 0 = `0`
+            // -> pilot_bit = +1 -> pilot on Q at A½. Prior baseline expected a dead (zero) pilot —
+            // that was the bug (get_pilot_bits returned None for GLONASS, pilot_bit stayed 0).
             "GLONASS G3",
             GnssSystem::GlonassSystem,
             SIGNAL_INDEX_G3,
@@ -117,7 +121,7 @@ fn satellite_signal_component_mapping_matches_supported_modulations() {
             std::f64::consts::FRAC_1_SQRT_2,
             0.0,
             0.0,
-            0.0,
+            std::f64::consts::FRAC_1_SQRT_2,
         ),
     ];
 

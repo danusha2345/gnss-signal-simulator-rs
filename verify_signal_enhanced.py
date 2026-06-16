@@ -77,6 +77,12 @@ GLO_CODE_PERIOD_MS = 1
 GLO_F_BASE = 1602.0e6       # G1 base frequency (Hz)
 GLO_F_STEP = 0.5625e6       # FDMA channel step (Hz)
 
+# GLONASS L3OC (CDMA, single carrier for all SVs)
+FREQ_GLO_G3 = 1202.025e6
+GLO_L3OC_CODE_LENGTH = 10230
+GLO_L3OC_CODE_PERIOD_MS = 1   # 10.23 Mchip/s -> 10230/10.23e6 = 1 ms
+NON_COHERENT_GLO_G3 = 150     # 1 ms code, 50:50 data/pilot (half-power pilot channel)
+
 # GPS L5
 F_L5 = 1176.45e6
 GPS_L5_CODE_LENGTH = 10230
@@ -369,6 +375,32 @@ def generate_glonass_g1_code(svid=None):
         state = (state << 1) | fb
     _GLO_G1_CODE = 1 - 2 * code  # 0/1 → +1/-1
     return _GLO_G1_CODE.copy()
+
+
+_GLO_L3OCP_CODE = {}
+
+def generate_glonass_l3oc_pilot_code(svid):
+    """GLONASS L3OCp pilot ranging code (10230-chip truncated Kasami), per-SV.
+    Bit-exact port of Rust PrnGenerate::get_l3oc_code(j, pilot=True): DC1 = 14-bit LFSR
+    (taps 4,8,13,14; init 00110100111000), DC3 = 7-bit LFSR (taps 6,7; init j+64),
+    output = DC1[14] XOR DC3[7]. Returns +/-1 array."""
+    j = max(0, min(63, svid - 1))
+    if j in _GLO_L3OCP_CODE:
+        return _GLO_L3OCP_CODE[j].copy()
+    N = 10230
+    dc1 = [0, 0, 1, 1, 0, 1, 0, 0, 1, 1, 1, 0, 0, 0]  # IS1, trigger 1..14 left to right
+    is_ = (j + 64) & 0x7f                              # pilot (L3OCp) init = j + 64
+    dc2 = [(is_ >> (6 - i)) & 1 for i in range(7)]     # MSB -> trigger 1
+    code = np.zeros(N, dtype=np.int8)
+    for n in range(N):
+        code[n] = dc1[13] ^ dc2[6]                     # trigger 14 XOR trigger 7
+        fb1 = dc1[3] ^ dc1[7] ^ dc1[12] ^ dc1[13]      # DC1 taps 4,8,13,14
+        dc1 = [fb1] + dc1[:13]
+        fb2 = dc2[5] ^ dc2[6]                           # DC2/DC3 taps 6,7
+        dc2 = [fb2] + dc2[:6]
+    out = 1 - 2 * code  # 0/1 -> +1/-1
+    _GLO_L3OCP_CODE[j] = out
+    return out.copy()
 
 
 # ============================================================
@@ -671,6 +703,8 @@ def parse_preset(preset_path):
             enabled.add('GAL_E6')
         elif sys_name == 'GLONASS' and sig == 'G1':
             enabled.add('GLO')
+        elif sys_name == 'GLONASS' and sig == 'G3':
+            enabled.add('GLO_G3')
 
     # Format 1: systemSelect inside output (flat list with system+signal)
     if 'output' in data and 'systemSelect' in data['output']:
@@ -1372,7 +1406,7 @@ SYS_PREFIX = {
     'GPS L1CA': ('G', 'GPS'), 'GPS L5': ('G', 'GPS_L5'),
     'GPS L2C': ('G', 'GPS_L2C'), 'GPS L1C': ('G', 'GPS_L1C'),
     'BeiDou B1C': ('C', 'BDS'), 'BeiDou B1I': ('C', 'BDS'), 'BeiDou B2a': ('C', 'BDS'),
-    'Galileo E1': ('E', 'GAL'), 'GLONASS G1': ('R', 'GLO'),
+    'Galileo E1': ('E', 'GAL'), 'GLONASS G1': ('R', 'GLO'), 'GLONASS G3': ('R', 'GLO'),
     'Galileo E5a': ('E', 'GAL_E5A'), 'Galileo E5b': ('E', 'GAL_E5B'),
     'Galileo E6': ('E', 'GAL_E6'),
 }
@@ -1655,6 +1689,7 @@ def generate_report(iq_file, signal, sample_rate, rms_values,
             'BeiDou B2a': (BDS_B2A_CODE_LENGTH, 50),
             'Galileo E1': (GAL_CODE_LENGTH, 5),
             'GLONASS G1': (GLO_CODE_LENGTH, 50),
+            'GLONASS G3': (GLO_L3OC_CODE_LENGTH, 50),
             'Galileo E5a': (GAL_E5A_CODE_LENGTH, 50),
             'Galileo E5b': (GAL_E5B_CODE_LENGTH, 50),
             'Galileo E6': (GAL_E6_CODE_LENGTH, 50),
@@ -1853,6 +1888,7 @@ def main():
     bds_range = list(range(1, 64)) if any_bds else []
     any_gal = any(s in enabled for s in ('GAL', 'GAL_E5A', 'GAL_E5B', 'GAL_E6'))
     gal_range = list(range(1, 37)) if any_gal else []
+    glo_g3_range = list(range(1, 25)) if 'GLO_G3' in enabled else []
 
     if args.fast and sat_info:
         print("\n  ** Fast mode: searching only RINEX-visible SVIDs **")
@@ -1865,6 +1901,9 @@ def main():
         if 'GAL' in sat_info and gal_range:
             gal_range = sorted(s for s in sat_info['GAL'] if sat_info['GAL'][s]['visible'])
             print(f"  GAL: {len(gal_range)} SVs")
+        if 'GLO' in sat_info and glo_g3_range:
+            glo_g3_range = sorted(s for s in sat_info['GLO'] if sat_info['GLO'][s]['visible'])
+            print(f"  GLO G3: {len(glo_g3_range)} SVs")
 
     # ---- Acquisition ----
     results_list = []
@@ -1954,6 +1993,13 @@ def main():
                                          sample_rate, NON_COHERENT_GLO, threshold)
             results_list.append(res)
 
+    # GLONASS L3OC (CDMA) acquisition — single carrier (1202.025 MHz), per-SV pilot code
+    if 'GLO_G3' in enabled and glo_g3_range:
+        res = acquire_system(signal, 'GLONASS G3', glo_g3_range, generate_glonass_l3oc_pilot_code,
+                             GLO_L3OC_CODE_PERIOD_MS, sample_rate, NON_COHERENT_GLO_G3, threshold,
+                             carrier_freq=FREQ_GLO_G3)
+        results_list.append(res)
+
     # ---- Summary ----
     total_found = sum(len(r['found']) for r in results_list)
 
@@ -1968,7 +2014,7 @@ def main():
     for res in results_list:
         if res['found']:
             prefix = SYS_PREFIX.get(res['system'], ('?', ''))[0]
-            if 'GLO' in res['system']:
+            if 'freq_num' in res['found'][0]:  # FDMA (GLONASS G1) — show channel k
                 sats_str = ', '.join(
                     f'{prefix}{s["svid"]:02d}(k={s.get("freq_num", 0):+d},z={s["zscore"]:.0f})'
                     for s in sorted(res['found'], key=lambda x: -x['zscore']))

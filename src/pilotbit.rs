@@ -39,6 +39,14 @@ const SIGNAL_E1: usize = SIGNAL_INDEX_E1;
 const SIGNAL_E5A: usize = SIGNAL_INDEX_E5A;
 const SIGNAL_E5B: usize = SIGNAL_INDEX_E5B;
 const SIGNAL_E6: usize = SIGNAL_INDEX_E6;
+const SIGNAL_G3: usize = SIGNAL_INDEX_G3;
+
+/// GLONASS L3OC pilot (L3OCp) secondary/overlay code (10 bits, Neuman-Hofman NH10)
+/// Источник: ICD GLONASS CDMA L3, Edition 1.0 2016 (L3OCp modulation clause); подтверждено
+/// bit-exact против PocketSDR (sec_code_G3OCP) и GNSS-DSP-tools (l3ocp.py).
+/// Код: 0000110101 (symbol 0 в bit 0 → биты {4,5,7,9} = 0x2B0). Одинаков для всех SV.
+/// 1 символ на 1 мс primary-период (10230 чипов @ 10.23 Mcps) → период 10 мс.
+static SECONDARY_CODE_L3OC: [u32; 1] = [0x2B0];
 
 /// GPS L5 secondary code (20 bits)
 /// Источник: IS-GPS-705, Section 3.2.6
@@ -1255,7 +1263,13 @@ pub fn get_pilot_bits(
                 _ => None, // unknown signal
             }
         }
-        GnssSystem::GlonassSystem => None,
+        GnssSystem::GlonassSystem => {
+            match sat_signal {
+                // L3OC pilot (L3OCp) carries the NH10 overlay; G1/G2 (FDMA) have no pilot.
+                SIGNAL_G3 => Some((&SECONDARY_CODE_L3OC, 10)),
+                _ => None,
+            }
+        }
         _ => None, // unknown system
     }
 }
