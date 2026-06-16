@@ -296,24 +296,57 @@ impl FastMath {
         unsafe { (COS_LUT[index], SIN_LUT[index]) }
     }
 
-    // Batch noise generation — инлайн Box-Muller с локальным rng (без unsafe глобалов)
-    // Каждый ComplexNumber = 2 гауссовых значения, Box-Muller генерирует ровно 2 за раз
-    pub fn generate_noise_block(output: &mut [ComplexNumber], sigma: f64) {
-        let mut rng = rand::thread_rng();
+    /// Pre-initialize the sin/cos LUT. Call ONCE before a hot loop that uses
+    /// `lut_cos_sin_fast`, so the per-sample path skips the `Once` guard.
+    #[inline]
+    pub fn ensure_lut_init() {
+        Self::initialize_lut();
+    }
 
-        for sample in output.iter_mut() {
-            let (u1, u2, mag) = loop {
-                let u1 = 2.0 * rng.gen::<f64>() - 1.0;
-                let u2 = 2.0 * rng.gen::<f64>() - 1.0;
-                let mag = u1 * u1 + u2 * u2;
-                if mag < 1.0 && mag != 0.0 {
-                    break (u1, u2, mag);
+    /// LUT lookup WITHOUT the init guard — caller MUST have called `ensure_lut_init()` first.
+    /// `int_phase`: full u32 range = one cycle [0, 2π). Returns (cos, sin).
+    #[inline(always)]
+    pub fn lut_cos_sin_fast(int_phase: u32) -> (f64, f64) {
+        let index = (int_phase >> 16) as usize;
+        unsafe { (COS_LUT[index], SIN_LUT[index]) }
+    }
+
+    // Batch noise generation — инлайн Box-Muller, параллельно по чанкам.
+    // Каждый ComplexNumber = 2 гауссовых значения, Box-Muller генерирует ровно 2 за раз.
+    //
+    // Детерминированный seed на (seed_base, chunk_index): шум воспроизводим (нужно для
+    // строгой bit-проверки оптимизаций), уникален для каждого блока (seed_base = индекс блока,
+    // чтобы НЕ было 50ms-периодичности в спектре) и независим между чанками (каждый чанк —
+    // свой поток SmallRng), поэтому результат не зависит от планировщика rayon.
+    pub fn generate_noise_block(output: &mut [ComplexNumber], sigma: f64, seed_base: u64) {
+        use rand::rngs::SmallRng;
+        use rand::{Rng, SeedableRng};
+        use rayon::prelude::*;
+
+        const CHUNK: usize = 8192;
+        output
+            .par_chunks_mut(CHUNK)
+            .enumerate()
+            .for_each(|(ci, chunk)| {
+                let seed = seed_base
+                    .wrapping_add(1)
+                    .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+                    ^ (ci as u64).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+                let mut rng = SmallRng::seed_from_u64(seed);
+                for sample in chunk.iter_mut() {
+                    let (u1, u2, mag) = loop {
+                        let u1 = 2.0 * rng.gen::<f64>() - 1.0;
+                        let u2 = 2.0 * rng.gen::<f64>() - 1.0;
+                        let mag = u1 * u1 + u2 * u2;
+                        if mag < 1.0 && mag != 0.0 {
+                            break (u1, u2, mag);
+                        }
+                    };
+                    let factor = (-2.0 * mag.ln() / mag).sqrt();
+                    sample.real = u1 * factor * sigma;
+                    sample.imag = u2 * factor * sigma;
                 }
-            };
-            let factor = (-2.0 * mag.ln() / mag).sqrt();
-            sample.real = u1 * factor * sigma;
-            sample.imag = u2 * factor * sigma;
-        }
+            });
     }
 }
 
@@ -358,7 +391,7 @@ mod tests {
     #[test]
     fn test_noise_block() {
         let mut output = vec![ComplexNumber::new(); 100];
-        FastMath::generate_noise_block(&mut output, 1.0);
+        FastMath::generate_noise_block(&mut output, 1.0, 0);
 
         // Check that all values are finite
         for sample in &output {

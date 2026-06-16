@@ -2283,7 +2283,7 @@ impl IFDataGen {
             let generation_start = std::time::Instant::now();
 
             // 1. Noise fills the block buffer first
-            FastMath::generate_noise_block(&mut block_signal[..block_samples], noise_sigma);
+            FastMath::generate_noise_block(&mut block_signal[..block_samples], noise_sigma, block_idx as u64);
 
             // 2. Per-ms signal generation with periodic Kepler updates
             // Kepler propagation every PARAM_UPDATE_INTERVAL_MS (expensive),

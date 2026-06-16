@@ -497,12 +497,16 @@ impl SatIfSignal {
             }
         }
 
-        // Carrier phase: Doppler model (f64 sin/cos)
+        // Carrier phase: integer-phase NCO + LUT (matches get_if_sample_cached)
         let doppler_cycles_per_ms = doppler_hz / 1000.0;
         let n = self.sample_number as f64;
         let phase_step = (doppler_cycles_per_ms + self.if_freq as f64 / 1000.0) / n;
         let frac_phase = self.start_carrier_phase - self.start_carrier_phase.floor();
-        let mut cur_phase = 1.0 - frac_phase;
+        let cur_phase_start = 1.0 - frac_phase;
+        FastMath::ensure_lut_init();
+        const CARRIER_PHASE_SCALE: f64 = 4_294_967_296.0; // 2^32 = one full cycle
+        let mut cur_int_phase = (cur_phase_start * CARRIER_PHASE_SCALE) as i64 as u32;
+        let int_phase_step = (phase_step * CARRIER_PHASE_SCALE).round() as i64 as u32;
 
         // Advance the per-ms carrier anchor by the FULL phase (Doppler + IF). Subtracting
         // only the Doppler part dropped frac(if_freq/1000) cycles every ms, a deterministic
@@ -516,10 +520,9 @@ impl SatIfSignal {
 
             let prn_bit = self.prn_cache.get_prn_bit(chip_index);
 
-            // Carrier phase: f64 sin/cos
-            let angle = cur_phase * std::f64::consts::TAU;
-            let (sin_val, cos_val) = angle.sin_cos();
-            cur_phase += phase_step;
+            // Carrier phase: integer-phase NCO + LUT (matches get_if_sample_cached)
+            let (cos_val, sin_val) = FastMath::lut_cos_sin_fast(cur_int_phase);
+            cur_int_phase = cur_int_phase.wrapping_add(int_phase_step);
 
             self.sample_array[i] = ComplexNumber {
                 real: prn_bit * nav_value * cos_val * amp,
@@ -659,12 +662,21 @@ impl SatIfSignal {
         // BOC flag for subchip modulation
         let is_boc = (code_attribute.attribute & PRN_ATTRIBUTE_BOC) != 0;
 
-        // Carrier phase: Doppler model (f64 sin/cos)
+        // Carrier phase: integer-phase NCO + LUT (C++ SignalSim model), replacing the
+        // per-sample transcendental sin_cos (~45% of generation time). A u32 accumulator
+        // spans one cycle; LUT[phase>>16] returns (cos, sin). The f64 anchor below still
+        // advances per ms, so the NCO is re-seeded from start_carrier_phase each ms and
+        // within-ms integer rounding cannot drift across ms boundaries — phase continuity
+        // (critical for receiver tracking) is preserved bit-for-bit at the ms boundary.
         let doppler_cycles_per_ms = doppler_hz / 1000.0;
         let n = self.sample_number as f64;
         let phase_step = (doppler_cycles_per_ms + self.if_freq as f64 / 1000.0) / n;
         let frac_phase = self.start_carrier_phase - self.start_carrier_phase.floor();
-        let mut cur_phase = 1.0 - frac_phase;
+        let cur_phase_start = 1.0 - frac_phase; // cycles, in (0, 1]
+        FastMath::ensure_lut_init();
+        const CARRIER_PHASE_SCALE: f64 = 4_294_967_296.0; // 2^32 = one full cycle
+        let mut cur_int_phase = (cur_phase_start * CARRIER_PHASE_SCALE) as i64 as u32;
+        let int_phase_step = (phase_step * CARRIER_PHASE_SCALE).round() as i64 as u32;
 
         // Advance the per-ms carrier anchor by the FULL phase (Doppler + IF). The previous
         // code subtracted only the Doppler part, dropping frac(if_freq/1000) cycles every ms
@@ -810,10 +822,9 @@ impl SatIfSignal {
                     }
                 }
 
-                // Carrier phase: f64 sin/cos (Doppler model)
-                let angle = cur_phase * std::f64::consts::TAU;
-                let (sin_val, cos_val) = angle.sin_cos();
-                cur_phase += phase_step;
+                // Carrier phase: integer-phase NCO + LUT (replaces scalar sin_cos)
+                let (cos_val, sin_val) = FastMath::lut_cos_sin_fast(cur_int_phase);
+                cur_int_phase = cur_int_phase.wrapping_add(int_phase_step);
 
                 self.sample_array[i] = ComplexNumber {
                     real: (prn_r * cos_val - prn_i * sin_val) * amp,
