@@ -1,6 +1,6 @@
 {
 	"version": 1.0,
-	"description": "GPS L1CA + BeiDou B1C + Galileo E1 - 8 MHz - 300s - 52 dBHz (over-air)",
+	"description": "GPS L1CA + BeiDou B1C + Galileo E1 - 5 MHz - 300s - 52 dBHz (over-air, <4GiB)",
 	"time": {
 		"type": "UTC",
 		"year": 2025,
@@ -11,7 +11,7 @@
 		"second": 30
 	},
 	"trajectory": {
-		"name": "GPS L1CA + BeiDou B1C + Galileo E1 - 8 MHz - 300s - 52 dBHz (over-air)",
+		"name": "GPS L1CA + BeiDou B1C + Galileo E1 - 5 MHz - 300s - 52 dBHz (over-air, <4GiB)",
 		"initPosition": {
 			"type": "LLA",
 			"format": "d",
@@ -38,7 +38,7 @@
 	"output": {
 		"type": "IFdata",
 		"format": "IQ8",
-		"sampleFreq": 8.0,
+		"sampleFreq": 5.0,
 		"centerFreq": 1575.42,
 		"name": "generated_files/gps_bds_gal_l1_300s.C8",
 		"config": {

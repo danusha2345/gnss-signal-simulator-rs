@@ -49,6 +49,10 @@ F_L1 = 1575.42e6
 # Signal defaults
 DEFAULT_SAMPLE_RATE = 5.0e6
 IF_FREQ = 0.0
+# Центр записанного файла (Гц). Выставляется драйвером из пресета (centerFreq).
+# acquire_system демодулирует каждый сигнал на if_offset = carrier_freq - ACQ_CENTER_FREQ,
+# иначе сигналы не в центре файла (B1I@1561, GPS/GAL@1575 при center 1568) теряются.
+ACQ_CENTER_FREQ = F_L1
 GPS_CODE_LENGTH = 1023
 GPS_CODE_PERIOD_MS = 1
 BDS_CODE_LENGTH = 10230
@@ -1225,6 +1229,8 @@ def acquire_system(signal, system_name, svid_range, code_gen_fn, code_period_ms,
     satisfy ~1/(2T): 250 Hz is fine for 1 ms codes but loses up to 5x for 10 ms codes."""
     samples_per_ms = int(sample_rate * 1e-3)
     samples_per_code = code_period_ms * samples_per_ms
+    # Демодуляция несущей на смещении сигнала от центра файла (B1I -7.16, B1C/GPS/GAL +7.16 МГц).
+    if_offset = carrier_freq - ACQ_CENTER_FREQ
 
     # Double-length blocks for linear (non-circular) correlation: every lag in [0, n)
     # then spans one COMPLETE code period, so secondary-code/NH chip flips at the code
@@ -1239,7 +1245,8 @@ def acquire_system(signal, system_name, svid_range, code_gen_fn, code_period_ms,
     print(f"\n{'=' * 60}")
     print(f"  {system_name} ACQUISITION")
     print(f"{'=' * 60}")
-    print(f"  Doppler: +/-{DOPPLER_RANGE} Hz, step {doppler_step} Hz, z-threshold={threshold}")
+    print(f"  Doppler: +/-{DOPPLER_RANGE} Hz, step {doppler_step} Hz, "
+          f"IF={if_offset / 1e6:+.2f} MHz, z-threshold={threshold}")
 
     for idx, svid in enumerate(svid_range):
         print(f"\r  Searching {system_name} SV{svid:02d}... ({idx + 1}/{total})", end='', flush=True)
@@ -1250,7 +1257,8 @@ def acquire_system(signal, system_name, svid_range, code_gen_fn, code_period_ms,
         local_code = resample_code(code, samples_per_code)
         found, doppler, cp, zscore, _, _, _ = acquire_satellite_generic(
             blocks, local_code, DOPPLER_RANGE, doppler_step,
-            sample_rate, non_coherent, save_heatmap=False, carrier_freq=carrier_freq)
+            sample_rate, non_coherent, save_heatmap=False, carrier_freq=carrier_freq,
+            if_offset=if_offset)
 
         r = {'svid': svid, 'doppler': doppler, 'code_phase': cp, 'zscore': zscore, 'found': found}
         all_results.append(r)
@@ -1279,7 +1287,8 @@ def acquire_system(signal, system_name, svid_range, code_gen_fn, code_period_ms,
         local_code = resample_code(code, samples_per_code)
         _, _, _, _, best_corr, best_heatmap, best_doppler_bins = acquire_satellite_generic(
             blocks, local_code, DOPPLER_RANGE, doppler_step,
-            sample_rate, non_coherent, save_heatmap=True, carrier_freq=carrier_freq)
+            sample_rate, non_coherent, save_heatmap=True, carrier_freq=carrier_freq,
+            if_offset=if_offset)
 
     return {
         'system': system_name,
@@ -1907,6 +1916,9 @@ def main():
 
     # ---- Acquisition ----
     results_list = []
+    # Центр файла из пресета — чтобы acquire_system демодулировал сигналы на их смещении.
+    global ACQ_CENTER_FREQ
+    ACQ_CENTER_FREQ = config.get('center_freq', F_L1)
 
     # GPS L1CA
     if 'GPS' in enabled and gps_range:

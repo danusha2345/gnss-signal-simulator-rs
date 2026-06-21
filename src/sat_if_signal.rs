@@ -696,13 +696,18 @@ impl SatIfSignal {
             let cboc_beta = (1.0f64 / 11.0).sqrt();
             // QMBOC(6,1,4/33): quadrature BOC(6,1) pilot component, sqrt(4/29) of the sc(1,1) part
             let qmboc_quad = (4.0f64 / 29.0).sqrt();
-            // The BOC(6,1) subcarrier is 6*1.023 = 6.138 MHz; it can only be represented if
-            // Fs/2 exceeds it (Fs > 12.276 MHz). At low Fs (e.g. 5 MHz) the 6.138 MHz component
-            // aliases straight into the BOC(1,1) main lobe (~±1.14 MHz), corrupting the E1-B /
-            // B1C *data* channel and blocking nav-message decode on real receivers (acquisition
-            // on the pilot still survives). Fall back to pure BOC(1,1) — the hardware-proven
-            // 5 MHz waveform — when the 6,1 component is not representable.
-            let boc61_representable = (self.sample_number as f64 * 1000.0) > 12.276e6;
+            // The BOC(6,1) subcarrier sits 6*1.023 = 6.138 MHz either side of the signal's
+            // carrier, which lands at if_freq (the signal's offset from the recording centre)
+            // in baseband. It is representable only if the WHOLE component fits the band:
+            // Fs/2 > |if_freq| + 6.138 MHz. This fails either at low Fs (e.g. 5 MHz, |if_freq|=0)
+            // OR when the signal is offset from centre (e.g. E1/B1C at 1575.42 in a file centred
+            // on 1568.26 → |if_freq|≈7.16 MHz, so even Fs=20 MHz is not enough: 10 < 7.16+6.14).
+            // In both cases the 6.138 MHz component aliases into the BOC(1,1) main lobe, corrupting
+            // the E1-B / B1C *data* channel and blocking nav-message decode on real receivers
+            // (pilot acquisition still survives). Fall back to pure BOC(1,1) — the hardware-proven
+            // waveform — when the 6,1 component is not representable.
+            let boc61_representable =
+                (self.sample_number as f64 * 1000.0) / 2.0 > (self.if_freq as f64).abs() + 6.138e6;
             let data_period = code_attribute.data_period;
 
             // BUG 4 FIX: Local copies for mid-sample nav bit transitions
