@@ -40,6 +40,7 @@ pub struct INavBit {
     pub gal_eph_data: [[u32; 20]; 36],
     pub gal_alm_data: [[u32; 16]; 12],
     pub gal_utc_data: [u32; 4],
+    pub gal_ggto_data: [u32; 4],
     pub gal_rs_vector: [[u32; 16]; 36],
 }
 
@@ -413,6 +414,9 @@ impl INavBit {
             gal_eph_data: [[0xAAAAAA; 20]; 36],
             gal_alm_data: [[0xAAAAAA; 16]; 12],
             gal_utc_data: [0xAAAAAA; 4],
+            // Word Type 10 (GGTO). Composed in set_iono_utc() once the GST/GPS
+            // week is known; default to a valid all-zero GGTO (Type=10 in 6 MSB).
+            gal_ggto_data: [0x28000000, 0, 0, 0],
             gal_rs_vector: [[0xAAAAAA; 16]; 36],
         };
 
@@ -496,10 +500,12 @@ impl INavBit {
         if word == 0 {
             data_vec[3] |= (((start_time.Week - 1024) as u32) << 20) + tow as u32;
         } else if word == 5 {
-            data_vec[2] &= 0xff800000; // clear 23LSB
-            data_vec[2] |=
-                ((((start_time.Week - 1024) & 0xfff) as u32) << 11) + ((tow >> 9) as u32);
-            data_vec[3] |= (tow << 23) as u32;
+            // ICD: bits 22-16 = spare(7), bits 15-4 = WN(12), bits 3-0 = TOW[19:16](4)
+            data_vec[2] &= 0xff800000; // clear bits 22-0 (preserve health at 31-23)
+            let wn = ((start_time.Week - 1024) & 0xfff) as u32;
+            data_vec[2] |= (wn << 4) | (((tow >> 16) as u32) & 0xF);
+            // ICD: data_vec[3] bits 31-16 = TOW[15:0](16), bits 15-0 = spare(odd part)
+            data_vec[3] = ((tow as u32) & 0xFFFF) << 16;
         } else if word == 6 {
             data_vec[3] &= 0xff800000; // clear 23LSB
             data_vec[3] |= (tow << 3) as u32;
@@ -673,6 +679,13 @@ impl INavBit {
 
         let utc_copy = *utc_param;
         Self::compose_utcwords(&utc_copy, &mut self.gal_utc_data);
+
+        // Word Type 10 (GGTO). GST == GPST in this generator, so A0G = A1G = 0;
+        // we still must transmit a valid Type-10 page (WN0G/t0G) so the receiver
+        // can tie GST to GPST and use Galileo in a combined fix with GPS.
+        // UtcParam.tot is in 2^12 (4096 s) units; convert to seconds for t0G.
+        let t0g_sec = (utc_param.tot as i32) * 4096;
+        Self::compose_ggto_words(utc_param.WN as i32, t0g_sec, &mut self.gal_ggto_data);
         0
     }
 
@@ -683,7 +696,10 @@ impl INavBit {
                 &self.gal_eph_data[(svid - 1) as usize][(word - 1) as usize * 4..word as usize * 4]
             }
             6 => &self.gal_utc_data,
-            7..=10 => {
+            // Word Type 10 carries GGTO (GST-GPS Time Offset) in all pages, not
+            // almanac. Match it before the 7..=9 almanac range.
+            10 => &self.gal_ggto_data,
+            7..=9 => {
                 &self.gal_alm_data[(subframe / 2) as usize]
                     [(word - 7) as usize * 4..(word - 6) as usize * 4]
             }
@@ -778,62 +794,24 @@ impl INavBit {
         ephdata[17] |= COMPOSE_BITS!(int_value >> 3, 0, 7);
         ephdata[18] = COMPOSE_BITS!(int_value, 29, 3);
 
-        // РЕАЛЬНЫЕ SISA ИНДЕКСЫ: Signal-In-Space Accuracy (8 bits)
-        let sisa_index = if ephemeris.ura <= 1 {
-            0
-        }
-        // < 1m: SISA=0
-        else if ephemeris.ura <= 2 {
-            10
-        }
-        // 1-2m: SISA=10
-        else if ephemeris.ura <= 5 {
-            25
-        }
-        // 2-5m: SISA=25
-        else if ephemeris.ura <= 10 {
-            75
-        }
-        // 5-10m: SISA=75
-        else {
-            255
-        }; // >10m: SISA=255 (No Accuracy Prediction Available)
-        ephdata[18] |= COMPOSE_BITS!(sisa_index, 15, 8);
-
-        // РЕАЛЬНЫЕ HEALTH STATUS: E5b Health Status (2 bits)
+        // Per ICD Table 29 (Word Type 5), data_vec[2] layout:
+        //   bits 31-29: BGD_E5b LSB (3 bits, set above)
+        //   bits 28-27: E5b Signal Health Status (2 bits)
+        //   bit  26:    E1B Data Validity Status (1 bit)
+        //   bit  25:    E5b Data Validity Status (1 bit)
+        //   bits 24-23: E1B Signal Health Status (2 bits)
+        //   bits 22-16: Spare (7 zeros)
+        //   bits 15-4:  WN (set dynamically by get_frame_data)
+        //   bits 3-0:   TOW[19:16] (set dynamically by get_frame_data)
+        // NOTE: SISA is in Word 3, NOT Word 5.
         let health_status = ephemeris.health;
         ephdata[18] |= COMPOSE_BITS!(health_status >> 7, 27, 2); // E5b HS
-        ephdata[18] |= COMPOSE_BITS!(health_status >> 1, 25, 2); // E1B HS
+        ephdata[18] |= COMPOSE_BITS!(health_status >> 1, 25, 2); // E1B DVS + E5b DVS
+        ephdata[18] |= COMPOSE_BITS!(health_status, 23, 2); // E1B HS
 
-        // РЕАЛЬНЫЕ DATA VALIDITY STATUS: Data Validity Flags (1 bit each)
-        ephdata[18] |= COMPOSE_BITS!(health_status >> 5, 24, 1); // E5b DVS
-        ephdata[18] |= COMPOSE_BITS!(health_status, 23, 1); // E1B DVS
-
-        // ДОПОЛНИТЕЛЬНЫЕ INTEGRITY ПАРАМЕТРЫ
-        // WN (Week Number) - 12 bits from ephemeris week
-        let week_number = (ephemeris.week & 0xFFF) as u32;
-        ephdata[18] |= COMPOSE_BITS!(week_number >> 4, 11, 8);
-        ephdata[19] = COMPOSE_BITS!(week_number, 28, 4);
-
-        // IODnav (Issue of Data Navigation) - связываем с IOD ephemeris
-        let iod_nav = (ephemeris.iodc & 0x3FF) as u32; // 10 bits
-        ephdata[19] |= COMPOSE_BITS!(iod_nav, 18, 10);
-
-        // Заполняем оставшиеся биты реальными данными (исправляем типы)
-        let integrity_flags = ((ephemeris.valid as u32 & 1) << 7) |  // Data validity
-                             ((ephemeris.health as u32 & 1) << 6) |  // Satellite health
-                             (sisa_index as u32 & 0x3F); // SISA info
-        ephdata[19] |= COMPOSE_BITS!(integrity_flags, 10, 8);
-
-        // Дополнительные временные параметры для целостности
-        let time_params = ((ephemeris.toe as u32 / 7200) & 0x1F) << 3 | // Time of Ephemeris (5 bits)
-                         ((ephemeris.toc as u32 / 16) & 0x7); // Time of Clock (3 bits)
-        ephdata[19] |= COMPOSE_BITS!(time_params, 2, 8);
-
-        println!("[GALILEO-INTEGRITY-DEBUG] SV{:02} Word5 расширен: SISA={}, Health={:02x}, IODnav={}, Week={}", 
-                ephemeris.svid, sisa_index, health_status, iod_nav, week_number);
-
-        // Финальные integrity значения успешно композированы для каждого спутника
+        // WN and TOW are set dynamically by get_frame_data(), not here.
+        // ephdata[19] bits 31-23 = TOW[8:0], bits 22-0 = spare (zero per ICD)
+        ephdata[19] = 0;
     }
 
     fn compose_almwords(almanac: &[GpsAlmanac], almdata: &mut [u32], week: i32) {
@@ -893,6 +871,34 @@ impl INavBit {
         gal_utc_data[2] |= COMPOSE_BITS!(utc_param.DN >> 1, 0, 2);
         gal_utc_data[3] = COMPOSE_BITS!(utc_param.DN, 31, 1);
         gal_utc_data[3] |= COMPOSE_BITS!(utc_param.TLSF, 23, 8);
+    }
+
+    /// Compose Galileo I/NAV Word Type 10 (GST-GPS Time Offset, GGTO).
+    ///
+    /// Bit layout of the 128-bit word (gnss-sdr `Galileo_INAV.h`, 1-indexed from
+    /// the MSB; verified against Galileo OS SIS ICD v2.1 Word Type 10):
+    ///   bits   1.. 6  : Word Type = 10
+    ///   bits   7..86  : Almanac SVID3 (left as zero — not transmitted here)
+    ///   bits  87..102 : A0G  (16 bit, signed,   LSB 2^-35  s)
+    ///   bits 103..114 : A1G  (12 bit, signed,   LSB 2^-51  s/s)
+    ///   bits 115..122 : t0G  ( 8 bit, unsigned, LSB 3600   s)
+    ///   bits 123..128 : WN0G ( 6 bit, unsigned, weeks)
+    ///
+    /// Because GST == GPST in this generator, A0G = A1G = 0. WN0G is the GPS week
+    /// (mod 64) and t0G is aligned to the nearest 3600 s multiple of `t0g_sec`.
+    fn compose_ggto_words(week_gps: i32, t0g_sec: i32, out: &mut [u32]) {
+        // Type=10 in the 6 MSB of the first u32 (10 << 26 = 0x28000000).
+        out[0] = 0x28000000;
+        out[1] = 0;
+        // A0G = 0, A1G = 0 (GST == GPST): no bits to set for them.
+        // t0G: 8-bit count of 3600 s units, rounded to nearest hour.
+        let t0g_units = (((t0g_sec + 1800) / 3600) & 0xFF) as u32;
+        // WN0G: 6-bit GPS week.
+        let wn0g = (week_gps & 0x3F) as u32;
+        // A0G occupies out[2] bits 9-0 (high 10 bits) + out[3] bits 31-26 (low 6),
+        // both zero here. t0G/WN0G live entirely in out[3] (see layout above).
+        out[2] = 0;
+        out[3] = COMPOSE_BITS!(t0g_units, 6, 8) | COMPOSE_BITS!(wn0g, 0, 6);
     }
 
     fn compose_paritywords(ephdata: &[u32], parity_data: &mut [u32]) {
@@ -1020,6 +1026,81 @@ mod tests {
     fn test_word_allocation() {
         assert_eq!(WORD_ALLOCATION_E1[0], 2);
         assert_eq!(WORD_ALLOCATION_E5[0], 1);
+    }
+
+    /// Read `num` bits starting at 1-indexed-from-MSB position `pos` out of a
+    /// 128-bit word stored as 4×u32 (out[0] = MSB word). Matches gnss-sdr's
+    /// `read_navigation_*` bit numbering for Galileo_INAV.h.
+    fn read_bits_msb(out: &[u32], pos: usize, num: usize) -> u64 {
+        let mut v: u64 = 0;
+        for i in 0..num {
+            let m = (pos - 1) + i; // 0-indexed MSB bit index
+            let word = m / 32;
+            let bit_from_lsb = 31 - (m % 32);
+            let b = (out[word] >> bit_from_lsb) & 1;
+            v = (v << 1) | b as u64;
+        }
+        v
+    }
+
+    #[test]
+    fn test_ggto_word10_round_trip() {
+        // GST == GPST -> A0G = A1G = 0. Use a known week and a t0G that aligns
+        // to an exact hour boundary so the round-trip is exact.
+        let week_gps = 2369; // wraps to 2369 & 0x3F = 33
+        let t0g_sec = 90000; // 25 h -> 25 units of 3600 s
+        let mut out = [0u32; 4];
+        INavBit::compose_ggto_words(week_gps, t0g_sec, &mut out);
+
+        // Word Type field (bits 1..6) must read back as 10.
+        assert_eq!(read_bits_msb(&out, 1, 6), 10, "Word Type must be 10");
+        // A0G (bits 87..102) and A1G (bits 103..114) must be zero.
+        assert_eq!(read_bits_msb(&out, 87, 16), 0, "A0G must be 0 (GST==GPST)");
+        assert_eq!(read_bits_msb(&out, 103, 12), 0, "A1G must be 0 (GST==GPST)");
+        // t0G (bits 115..122): 8-bit count of 3600 s units.
+        assert_eq!(read_bits_msb(&out, 115, 8), 25, "t0G units (90000/3600)");
+        // WN0G (bits 123..128): GPS week mod 64.
+        assert_eq!(
+            read_bits_msb(&out, 123, 6),
+            (week_gps & 0x3F) as u64,
+            "WN0G = GPS week mod 64"
+        );
+
+        // t0G rounds to the nearest hour: 91800 s (= 25.5 h) -> 26 units.
+        let mut out2 = [0u32; 4];
+        INavBit::compose_ggto_words(week_gps, 91800, &mut out2);
+        assert_eq!(read_bits_msb(&out2, 115, 8), 26, "t0G rounds to nearest hour");
+    }
+
+    #[test]
+    fn test_ggto_routed_to_word10() {
+        // set_iono_utc must populate gal_ggto_data, and get_word_data must return
+        // it (not almanac) for word 10 in every page.
+        let mut inav = INavBit::new();
+        let iono = IonoNequick::default();
+        let utc = UtcParam {
+            A0: 0.0,
+            A1: 0.0,
+            A2: 0.0,
+            WN: 33,
+            WNLSF: 0,
+            tot: 21, // 21 * 4096 = 86016 s -> 24 units (rounds to 24h)
+            TLS: 18,
+            TLSF: 18,
+            DN: 0,
+            flag: 0,
+        };
+        inav.set_iono_utc(&iono, &utc);
+
+        // Type field of the composed GGTO word is 10.
+        assert_eq!(read_bits_msb(&inav.gal_ggto_data, 1, 6), 10);
+        assert_eq!(read_bits_msb(&inav.gal_ggto_data, 123, 6), 33, "WN0G");
+
+        // get_word_data(word=10) returns the GGTO buffer, not almanac, for any page.
+        for subframe in 0..24 {
+            let w = inav.get_word_data(1, 10, subframe);
+            assert_eq!(w, &inav.gal_ggto_data[..], "word 10 must be GGTO");
+        }
     }
 
     /// Helper: create realistic Galileo ephemeris (stored in GpsEphemeris struct)
