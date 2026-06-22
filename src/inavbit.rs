@@ -33,6 +33,26 @@ use std::f64::consts::PI;
 const SQRT_A0: f64 = 5_440.588_203_494_177;
 const NORMINAL_I0: f64 = 0.977_384_381_116_824_6;
 
+/// Pack Galileo I/NAV Word Type 5 GST fields (WN 12 bits, TOW 20 bits) into the low bits of the
+/// two affected `data_vec` u32 chunks. Returns `(bits to OR into data_vec[2]` after its low 23
+/// bits are cleared, `bits to OR into data_vec[3])`. Bit map (page-relative, gnss-sdr
+/// `Galileo_INAV.h` WN_5{74,12}/TOW_5{86,20}):
+///   WN        -> data_vec[2] bits 22..11
+///   TOW[19:9] -> data_vec[2] bits 10..0
+///   TOW[8:0]  -> data_vec[3] bits 31..23
+///
+/// ⚠ REGRESSION GUARD (baba727 → 9599b82): there is NO spare(7) before WN. A phantom spare once
+/// shifted WN/TOW +7 bits, so a phone read GST off by ~116 h and dropped Galileo from the combined
+/// fix, while gnss-sdr (orbits decode from words 1-4, not word 5) still reported "ephemeris
+/// received" and hid the bug. This is the 7f99a9a hardware-proven layout. See
+/// `test_inav_word5_wn_tow_layout`. Do not "fix to ICD" by reintroducing the spare.
+pub fn pack_inav_word5(week: i32, tow: i32) -> (u32, u32) {
+    let wn = ((week - 1024) & 0xfff) as u32;
+    let dv2 = (wn << 11) + ((tow >> 9) as u32);
+    let dv3 = (tow << 23) as u32;
+    (dv2, dv3)
+}
+
 #[derive(Clone)]
 pub struct INavBit {
     pub gal_spare_data: [u32; 4],
@@ -500,12 +520,19 @@ impl INavBit {
         if word == 0 {
             data_vec[3] |= (((start_time.Week - 1024) as u32) << 20) + tow as u32;
         } else if word == 5 {
-            // ICD: bits 22-16 = spare(7), bits 15-4 = WN(12), bits 3-0 = TOW[19:16](4)
-            data_vec[2] &= 0xff800000; // clear bits 22-0 (preserve health at 31-23)
-            let wn = ((start_time.Week - 1024) & 0xfff) as u32;
-            data_vec[2] |= (wn << 4) | (((tow >> 16) as u32) & 0xF);
-            // ICD: data_vec[3] bits 31-16 = TOW[15:0](16), bits 15-0 = spare(odd part)
-            data_vec[3] = ((tow as u32) & 0xFFFF) << 16;
+            // Word Type 5 carries GST WN(12)+TOW(20). HARDWARE-PROVEN layout from 7f99a9a (the
+            // commit where a real phone decoded Galileo I/NAV and used it in a fix):
+            //   WN       -> data_vec[2] bits 22..11
+            //   TOW[19:9]-> data_vec[2] bits 10..0
+            //   TOW[8:0] -> data_vec[3] bits 31..23
+            // This matches gnss-sdr Galileo_INAV.h WN_5{74,12}/TOW_5{86,20}.
+            // ⚠ DO NOT insert a spare(7) before WN. That phantom spare (regression baba727 →
+            // 9599b82) shifted WN/TOW +7 bits, so the phone read GST off by ~116 h and dropped
+            // Galileo from the combined fix — while gnss-sdr (orbits come from words 1-4, not
+            // word 5) still reported "ephemeris received", hiding the bug. See pack_inav_word5().
+            let (w5_dv2, w5_dv3) = pack_inav_word5(start_time.Week, tow);
+            data_vec[2] = (data_vec[2] & 0xff800000) | w5_dv2; // preserve health/DVS at 31-23
+            data_vec[3] |= w5_dv3;
         } else if word == 6 {
             data_vec[3] &= 0xff800000; // clear 23LSB
             data_vec[3] |= (tow << 3) as u32;
@@ -1070,6 +1097,38 @@ mod tests {
         let mut out2 = [0u32; 4];
         INavBit::compose_ggto_words(week_gps, 91800, &mut out2);
         assert_eq!(read_bits_msb(&out2, 115, 8), 26, "t0G rounds to nearest hour");
+    }
+
+    #[test]
+    fn test_inav_word5_wn_tow_layout() {
+        // Word Type 5 GST fields decode at gnss-sdr Galileo_INAV.h positions WN_5{74,12} and
+        // TOW_5{86,20}. Guards against the +7-bit phantom-spare regression (baba727 → 9599b82)
+        // that put a phone's GST ~116 h off and dropped Galileo from the combined fix while
+        // gnss-sdr (orbits decode from words 1-4) still reported "ephemeris received".
+        let week = 2369i32; // WN_5 = (2369 - 1024) & 0xfff = 1345
+        let tow = 123457i32; // 20-bit GST TOW
+        let wn = ((week - 1024) & 0xfff) as u64;
+
+        let (dv2, dv3) = pack_inav_word5(week, tow);
+
+        // data_vec[2] occupies page bits 65..96, data_vec[3] occupies 97..128 (1-indexed MSB).
+        // Assemble a page with health/DVS/spare = 0 and the two packed chunks in place.
+        let page = [0u32, 0u32, dv2 & 0x007f_ffff, dv3];
+
+        assert_eq!(
+            read_bits_msb(&page, 74, 12),
+            wn,
+            "WN must decode at page bit 74 (gnss-sdr WN_5{{74,12}}) — no spare(7) before it"
+        );
+        assert_eq!(
+            read_bits_msb(&page, 86, 20),
+            tow as u64,
+            "TOW must decode at page bit 86 (gnss-sdr TOW_5{{86,20}})"
+        );
+
+        // Explicit anti-regression: the broken HEAD packing (wn<<4) must NOT be produced.
+        let broken_dv2 = ((wn as u32) << 4) | (((tow >> 16) as u32) & 0xF);
+        assert_ne!(dv2, broken_dv2, "must not regress to the +7-bit spare layout");
     }
 
     #[test]
