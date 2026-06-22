@@ -88,3 +88,6 @@ test_ephemeris_search_basic
 test_rinex
 test_rinex_validation_simple
 mayhem-firmware/
+
+# Claude Code agent worktrees (leftover isolated repo copies — never commit)
+.claude/
