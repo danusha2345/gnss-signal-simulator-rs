@@ -525,9 +525,9 @@ impl NavBitTrait for FNavBit {
     fn set_almanac(&mut self, alm: &[GpsAlmanac]) {
         self.0.set_almanac(alm);
     }
-    fn set_iono_utc(&mut self, iono_param: Option<&IonoParam>, utc_param: Option<&UtcParam>) {
-        if let (Some(iono), Some(utc)) = (iono_param, utc_param) {
-            self.0.set_iono_utc(iono, utc);
+    fn set_iono_utc(&mut self, _iono_param: Option<&IonoParam>, utc_param: Option<&UtcParam>) {
+        if let Some(utc) = utc_param {
+            self.0.set_utc(utc);
         }
     }
     fn get_type(&self) -> NavDataType {
@@ -1313,8 +1313,8 @@ impl IFDataGen {
             );
         }
         if let Some(ref mut nav_bit) = nav_bit_array[DataBitType::DataBitFNav as usize] {
-            nav_bit.set_iono_utc(
-                self.nav_data.get_galileo_iono(),
+            nav_bit.set_galileo_iono_utc(
+                self.nav_data.get_galileo_nequick(),
                 self.nav_data.get_galileo_utc_param(),
             );
         }

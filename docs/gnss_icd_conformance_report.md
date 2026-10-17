@@ -1,5 +1,52 @@
 # GNSS ICD conformance report
 
+
+## F/NAV E5a: продолжение ревизии 2026-10-17
+
+База предыдущего этапа закоммичена как `24f8580`.
+
+- Исправлена структура: 214 payload + 24 CRC24Q + 6 tail → 488 FEC symbols,
+  затем 12 sync = 500 symbols / 10 с. CRC вычисляется по 214 битам без
+  округления до 32-битной границы.
+- Страницы 1–4 упакованы по ICD MSB-first: SVID/IODnav, clock/orbit/SISA/BGD,
+  E5a HS/DVS, WN/TOW, NeQuick, UTC/GGTO. Страницы 5–6 содержат связанный
+  альманах, включая поле Omega0 второго спутника, разделённое между страницами.
+- F/NAV получает `IonoNequick` через общий Galileo setter; преобразование GPS
+  Klobuchar в NeQuick удалено. UTC использует часы и недели GST.
+- TOW привязан к началу 10-секундной страницы; нормализуются отрицательные
+  миллисекунды и переход недели. Малый выходной буфер/невалидный SVID
+  возвращают ошибку, а не повреждают память. Без эфемериды передаётся dummy.
+- `tests/fnav_decode.rs`: независимый Viterbi (обратное направление регистра,
+  octal 171/133), полиномиальное деление CRC, поля всех страниц, 1200-секундный
+  цикл альманаха, week rollover, ошибочный аргумент, одиночная ошибка канала.
+  Фиксированный 500-символьный вектор и отдельный Python reference encoder —
+  `tests/fixtures/fnav_page1_symbols.txt`, `tests/fixtures/fnav_reference.py`.
+
+Первый IQ-прогон выявил обратное направление интерливинга: тестовый декодер
+повторял ту же перестановку и маскировал ошибку. После исправления теста по
+реальному GNSS-SDR старый код провалил все пять тестов. Исправлено направление:
+запись столбцами в матрицу 8×61, передача строками. Добавленный фиксированный
+вектор предотвращает повторение такой взаимной компенсации encoder/decoder.
+Первый неуспешный прогон сохранён отдельно, он не считается подтверждением.
+
+Источники: [структура E5a](https://raw.githubusercontent.com/gnss-sdr/gnss-sdr/v0.0.20/src/core/system_parameters/Galileo_E5a.h),
+[поля F/NAV](https://raw.githubusercontent.com/gnss-sdr/gnss-sdr/v0.0.20/src/core/system_parameters/Galileo_FNAV.h),
+[независимый приёмник: интерливинг/FEC](https://raw.githubusercontent.com/gnss-sdr/gnss-sdr/v0.0.20/src/algorithms/telemetry_decoder/gnuradio_blocks/galileo_telemetry_decoder_gs.cc).
+
+Полный unit/integration проход: 170 passed, 6 ignored. GPS+Galileo L1/E1
+проверяется отдельным побайтовым golden; NAV-04 (источник RINEX и BGD)
+остаётся самостоятельной открытой задачей.
+
+Программный контроль исправленного E5a: 120 с, 21 MS/s, IQ8, GNSS-SDR 0.0.20.
+57 CRC correct / 0 errors; первый фикс 82,4 с, до 7 спутников, 373 эпохи PVT.
+Горизонтальная ошибка: median 1,68 м, p95 3,46 м. Коррекции ионосферы и
+тропосферы приёмника отключены; медианное отклонение высоты +22,60 м.
+Из IQ подтверждены NeQuick 140.5 / 0.1484375 / 0.011474609375, TLS=18,
+t0t=259200 с, GST WN=1345. Логи и XML:
+`/home/danik/storage/gnss_rust-fnav-review-20261017/fixed/`.
+Файл и настройки на USB: `gnss_rust/fnav_review/USA_E5A.C8`, рядом TXT/JSON
+и verification manifest. Приём аппаратным устройством не проверялся.
+
 ## Ревизия GPS/Galileo от 2026-10-17
 
 Область: RINEX → навигационные слова → параметры спутников → IQ8,

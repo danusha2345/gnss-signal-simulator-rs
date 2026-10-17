@@ -392,8 +392,8 @@ fn galileo_nav_sync_words_are_bit_exact() {
     let mut fnav = FNavBit::new();
     assert_ne!(fnav.set_ephemeris(11, &sample_gps_eph(11)), 0);
     fnav.set_almanac(&alm);
-    fnav.set_iono_utc(&sample_iono(), &utc);
-    let mut fnav_bits = vec![0i32; 600];
+    fnav.set_iono_utc(&sample_nequick(), &utc);
+    let mut fnav_bits = vec![0i32; 500];
     assert_eq!(fnav.get_frame_data(t(1_000), 11, 0, &mut fnav_bits), 0);
     assert_bits("Galileo F/NAV sync", &fnav_bits[0..12], 0xb70);
 }

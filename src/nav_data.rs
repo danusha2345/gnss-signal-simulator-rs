@@ -234,13 +234,24 @@ impl NavData {
     /// Установить ионосферные и UTC параметры
     #[inline]
     pub fn set_galileo_iono_utc(&mut self, iono: Option<&IonoNequick>, utc: Option<&UtcParam>) {
-        if let NavData::INav(nav) = self {
-            if let Some(iono) = iono {
-                nav.set_iono(iono);
+        match self {
+            NavData::INav(nav) => {
+                if let Some(iono) = iono {
+                    nav.set_iono(iono);
+                }
+                if let Some(utc) = utc {
+                    nav.set_utc(utc);
+                }
             }
-            if let Some(utc) = utc {
-                nav.set_utc(utc);
+            NavData::FNav(nav) => {
+                if let Some(iono) = iono {
+                    nav.set_iono(iono);
+                }
+                if let Some(utc) = utc {
+                    nav.set_utc(utc);
+                }
             }
+            _ => {}
         }
     }
 
@@ -291,12 +302,11 @@ impl NavData {
                 0
             }
             NavData::FNav(nav) => {
-                // FNavBit требует обязательные параметры
-                if let (Some(iono), Some(utc)) = (iono_param, utc_param) {
-                    nav.set_iono_utc(iono, utc)
-                } else {
-                    0 // Недостаточно данных
+                // Общий API принимает Klobuchar, поэтому передаём только UTC.
+                if let Some(utc) = utc_param {
+                    nav.set_utc(utc);
                 }
+                0
             }
             NavData::D1D2Nav(nav) => {
                 // D1D2NavBit требует обязательные параметры

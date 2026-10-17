@@ -336,8 +336,8 @@ fn galileo_inav_fnav_form_frames() {
     let mut fnav = FNavBit::new();
     assert_ne!(fnav.set_ephemeris(11, &eph), 0);
     fnav.set_almanac(&alm);
-    fnav.set_iono_utc(&sample_iono(), &sample_utc());
-    let mut bits_fnav = vec![0i32; 600];
+    fnav.set_iono_utc(&sample_nequick(), &sample_utc());
+    let mut bits_fnav = vec![0i32; 500];
     let rc = fnav.get_frame_data(t(1_000), 11, 0, &mut bits_fnav);
     assert_eq!(rc, 0);
     assert_nav_bits("Galileo FNAV frame", &bits_fnav, 0.05);
