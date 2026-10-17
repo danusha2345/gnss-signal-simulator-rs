@@ -367,39 +367,22 @@ impl GnssTimeConverter {
             (((utc_time.Hour * 60) + utc_time.Minute) * 60000 + milli_seconds_f as i32) + 10800000;
         let sub_milli_seconds = milli_seconds_f - milli_seconds_f as i32 as f64;
 
-        let years = utc_time.Year - 1996;
-        let mut days = DAYS_ACC[(utc_time.Month - 1) as usize] + utc_time.Day - 1;
-
-        // Handle leap year correctly
-        let years_in_cycle = years % 4;
-        if years_in_cycle == 0 {
-            // First year of cycle is leap year
-            if days >= 59 {
-                days += 1;
-            }
+        let days_before_year: i32 = if utc_time.Year >= 1996 {
+            (1996..utc_time.Year)
+                .map(|y| if Self::is_leap_year(y) { 366 } else { 365 })
+                .sum()
         } else {
-            // Not first year of cycle - add 1 for non-leap adjustment
-            days += 1;
-            // Add days from previous years in cycle
-            if years_in_cycle >= 1 {
-                days += 366;
-            } // First year was leap
-            if years_in_cycle >= 2 {
-                days += 365;
-            } // Second year
-            if years_in_cycle >= 3 {
-                days += 365;
-            } // Third year
-        }
-
-        // Calculate total day number from epoch
-        let day = days + 1 + (years / 4) * 1461;
-        let leap_year = years / 4;
-
+            -(utc_time.Year..1996)
+                .map(|y| if Self::is_leap_year(y) { 366 } else { 365 })
+                .sum::<i32>()
+        };
+        let day = days_before_year
+            + Self::day_of_year(utc_time.Year, utc_time.Month, utc_time.Day)
+            + milli_seconds.div_euclid(86400000);
         GlonassTime {
             Day: day,
-            LeapYear: leap_year,
-            MilliSeconds: milli_seconds,
+            LeapYear: (day - 1).div_euclid(1461),
+            MilliSeconds: milli_seconds.rem_euclid(86400000),
             SubMilliSeconds: sub_milli_seconds,
         }
     }
@@ -546,7 +529,11 @@ mod tests {
         };
         let utc = GnssTimeConverter::gps_time_to_utc(t, true);
         // ~5000 weeks past 1980-01-06 lands in the mid-2070s — assert a plausible, populated year.
-        assert!((2070..2082).contains(&utc.Year), "unexpected year {}", utc.Year);
+        assert!(
+            (2070..2082).contains(&utc.Year),
+            "unexpected year {}",
+            utc.Year
+        );
     }
 
     #[test]

@@ -155,7 +155,7 @@ fn generation_reports_actual_channels_and_clipping() {
     g.load_config(path.to_str().unwrap()).unwrap();
     let stats = g.generate_data().unwrap();
     assert_eq!(stats.total_samples, 42000);
-    assert_eq!(stats.satellites_processed, 20);
+    assert_eq!(stats.satellites_processed, 19);
     assert_eq!(stats.samples_generated, stats.total_samples);
     assert!(stats.clipped_samples > 0);
     assert_eq!(
@@ -175,4 +175,59 @@ fn legacy_entry_uses_the_same_generation_contract() {
     let legacy = fs::read(f.dir.join("out.C8")).unwrap();
     generator.generate_data().unwrap();
     assert_eq!(fs::read(f.dir.join("out.C8")).unwrap(), legacy);
+}
+
+#[test]
+fn metadata_matches_iq_and_detects_corruption() {
+    let f = Fixture::new();
+    let path = f.write(true);
+    let mut g = IFDataGen::new();
+    g.load_config(path.to_str().unwrap()).unwrap();
+    g.generate_data().unwrap();
+    let iq = f.dir.join("out.C8");
+    gnss_rust::artifact::verify(&iq).unwrap();
+    let manifest: Value =
+        serde_json::from_slice(&fs::read(f.dir.join("out.manifest.json")).unwrap()).unwrap();
+    assert_eq!(manifest["sample_rate_hz"], 4000);
+    assert_eq!(manifest["center_frequency_hz"], 1575420000);
+    assert_eq!(manifest["duration_ms"], 2);
+    assert_eq!(manifest["bytes"], 16);
+    fs::write(f.dir.join("out.TXT"), b"sample_rate=4800000\n").unwrap();
+    assert!(gnss_rust::artifact::verify(&iq)
+        .unwrap_err()
+        .to_string()
+        .contains("TXT"));
+    g.generate_data().unwrap();
+    gnss_rust::artifact::verify(&iq).unwrap();
+    let mut manifest: Value =
+        serde_json::from_slice(&fs::read(f.dir.join("out.manifest.json")).unwrap()).unwrap();
+    manifest["center_frequency_hz"] = 1575435000_u64.into();
+    fs::write(
+        f.dir.join("out.manifest.json"),
+        serde_json::to_vec(&manifest).unwrap(),
+    )
+    .unwrap();
+    assert!(gnss_rust::artifact::verify(&iq)
+        .unwrap_err()
+        .to_string()
+        .contains("TXT settings"));
+    g.generate_data().unwrap();
+    fs::write(&iq, b"corrupted").unwrap();
+    assert!(gnss_rust::artifact::verify(&iq)
+        .unwrap_err()
+        .to_string()
+        .contains("IQ"));
+}
+#[test]
+fn full_boc_rejects_narrow_band_before_generation() {
+    let mut f = Fixture::new();
+    f.config["output"]["bocMode"] = "full".into();
+    let mut g = IFDataGen::new();
+    assert!(g
+        .load_config(f.write(true).to_str().unwrap())
+        .unwrap_err()
+        .to_string()
+        .contains("Full BOC"));
+    f.config["output"]["sampleFreq"] = 20.into();
+    g.load_config(f.write(true).to_str().unwrap()).unwrap();
 }

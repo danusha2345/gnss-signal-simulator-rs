@@ -28,12 +28,12 @@ use crate::types::{
     BeiDouEphemeris, GlonassAlmanac, GlonassEphemeris, GpsAlmanac, GpsEphemeris, UtcParam,
 };
 use crate::utc_to_gps_time;
+use crate::vprintln;
 use crate::{
     bds_time_to_utc, ecef_to_lla, glonass_time_to_utc, gps_time_to_utc, lla_to_ecef,
     speed_ecef_to_local, WGS_OMEGDOTE,
 };
 use crate::{CPowerControl, JsonObject};
-use crate::vprintln;
 use std::os::raw::c_char;
 
 // Временные алиасы для недостающих типов - в будущем нужно реализовать отдельные структуры
@@ -709,628 +709,62 @@ pub fn read_nav_file_limited(nav_data: &mut CNavData, filename: &str, max_per_sy
 /// # Критический процесс:
 /// 1. Открывает RINEX файл и парсит заголовок
 /// 2. Читает строки эфемерид для каждой системы (GPS: G##, GAL: E##, BDS: C##)
-/// 3. Фильтрует эфемериды по времени (выбирает ближайшие к target_time)
-/// 4. Сохраняет отобранные эфемериды в nav_data структуру
+/// 3. Фильтрует системы, сохраняя все эпохи и источники
+/// 4. Выбор эпохи выполняет генератор при старте и обновлениях сценария
 pub fn read_nav_file_filtered(
     nav_data: &mut CNavData,
     filename: &str,
-    target_time: Option<UtcTime>,
+    _target_time: Option<UtcTime>,
     enabled_systems: &[&str],
 ) {
-    use std::fs::File;
     use std::io::{BufRead, BufReader};
-
-    let file = match File::open(filename) {
-        Ok(f) => f,
-        Err(e) => {
-            eprintln!(
-                "Error: Unable to open navigation file: {} - {}",
-                filename, e
-            );
-            eprintln!("Cannot continue without navigation data. Exiting.");
-            std::process::exit(1);
-        }
-    };
-
-    let reader = BufReader::new(file);
-    let mut lines = reader.lines();
-    let mut header_complete = false;
-
-    // Создаём фильтр систем для быстрой проверки
-    let gps_enabled = enabled_systems.contains(&"GPS");
-    let glonass_enabled = enabled_systems.contains(&"GLONASS");
-    let beidou_enabled = enabled_systems.contains(&"BeiDou");
-    let galileo_enabled = enabled_systems.contains(&"Galileo");
-
-    println!(
-        "[INFO] RINEX filtering: GPS={}, GLONASS={}, BeiDou={}, Galileo={}",
-        gps_enabled, glonass_enabled, beidou_enabled, galileo_enabled
-    );
-
-    if !gps_enabled && !glonass_enabled && !beidou_enabled && !galileo_enabled {
-        println!("[WARN] No GNSS systems enabled - skipping RINEX parsing");
+    let Ok(file) = std::fs::File::open(filename) else {
         return;
-    }
-
-    // Временные рамки для фильтрации (±2 часа от целевого времени)
-    // Широкое окно для первичной фильтрации эфемерид GNSS
-    let time_window_hours = 3.0;
-
-    // Счетчики для статистики фильтрации
-    let mut gps_parsed = 0;
-    let mut gps_accepted = 0;
-    let mut beidou_parsed = 0;
-    let mut beidou_accepted = 0;
-    let mut galileo_parsed = 0;
-    let mut galileo_accepted = 0;
-    let mut _other_skipped = 0;
-    let mut total_lines_processed = 0;
-
-    // Кэш эфемерид по эпохам для GPS и BeiDou
-    let mut gps_ephemeris_by_epoch: std::collections::HashMap<
-        i32,
-        std::collections::HashMap<u8, GpsEphemeris>,
-    > = std::collections::HashMap::new();
-    let mut gps_available_epochs: std::collections::HashSet<i32> = std::collections::HashSet::new();
-    let mut beidou_ephemeris_by_epoch: std::collections::HashMap<
-        i32,
-        std::collections::HashMap<u8, BeiDouEphemeris>,
-    > = std::collections::HashMap::new();
-    let mut beidou_available_epochs: std::collections::HashSet<i32> =
-        std::collections::HashSet::new();
-    let mut galileo_ephemeris_by_epoch: std::collections::HashMap<
-        i32,
-        std::collections::HashMap<u8, GpsEphemeris>,
-    > = std::collections::HashMap::new();
-    let mut galileo_available_epochs: std::collections::HashSet<i32> =
-        std::collections::HashSet::new();
-
-    // Оптимизированный RINEX парсер с фильтрацией
-    loop {
-        match lines.next() {
-            Some(Ok(line)) => {
-                total_lines_processed += 1;
-                // Пропустить заголовок до "END OF HEADER"
-                if !header_complete {
-                    header_complete = line.contains("END OF HEADER");
-                    parse_navigation_header(nav_data, &line);
-                    continue;
-                }
-
-                // Определяем тип спутника по первому символу
-                if line.len() < 80 {
-                    continue; // Пропустить короткие строки
-                }
-
-                let system_char = line.chars().next().unwrap_or(' ');
-
-                // Обрабатываем только заголовочные строки записей (как в C версии)
-                // Строки данных эфемерид начинаются с пробелов и читаются внутри parse_gps_ephemeris
-                match system_char {
-                    'G' if gps_enabled => {
-                        // *** КРИТИЧЕСКИЙ БЛОК: GPS ЭФЕМЕРИДЫ ПАРСИНГ ***
-                        // GPS эфемериды (только если GPS включена в enabled_systems)
-                        // Формат строки: "G## YYYY MM DD HH MM SS ..." где ## - SVID спутника
-                        if let Some(eph) = parse_gps_ephemeris(&line, &mut lines, false) {
-                            gps_parsed += 1;
-                            // Parsed GPS ephemeris
-
-                            // *** ВАЖНО: GPS логика группировки эфемерид по эпохам времени (toe) ***
-                            // Проблема может быть здесь! Нужна временная фильтрация для отбора правильных эфемерид
-                            if let Some(target) = target_time {
-                                // ПРОВЕРКА: Проверяем, попадает ли эфемерида в временное окно вокруг target_time
-                                if is_ephemeris_within_time_window(&eph, &target, time_window_hours)
-                                {
-                                    // DEBUG: GPS фильтр отключен для уменьшения вывода
-                                    // println!("[GPS-FILTER] GPS{:02} passed time filter: toe={}", eph.svid, eph.toe);
-                                    // Добавляем эпоху (toe) в список доступных времен
-                                    gps_available_epochs.insert(eph.toe);
-
-                                    // *** КРИТИЧНО: Группируем эфемериды по эпоху времени (toe) ***
-                                    // Каждая эпоха содержит HashMap<svid, ephemeris> для всех спутников этого времени
-                                    let epoch_map =
-                                        gps_ephemeris_by_epoch.entry(eph.toe).or_default();
-                                    epoch_map.insert(eph.svid, eph);
-
-                                    // Accepted GPS ephemeris
-                                } else {
-                                    // Rejected GPS ephemeris (outside time window)
-                                }
-                            } else {
-                                // Без временной фильтрации - просто берем первую эпоху для каждого SVID
-                                gps_available_epochs.insert(eph.toe);
-                                let epoch_map = gps_ephemeris_by_epoch.entry(eph.toe).or_default();
-                                epoch_map.entry(eph.svid).or_insert(eph);
-                                // Accepted GPS ephemeris (no time filtering)
-                            }
-
-                            // УДАЛЕНО: раннее завершение парсера мешает мультисистемной генерации
-                            // BeiDou и Galileo данные находятся в конце RINEX файла после ~93000 строк
-                            // Парсинг должен продолжаться до конца файла для всех систем
-                        }
-                    }
-                    'R' if glonass_enabled => {
-                        // ГЛОНАСС эфемериды (только если GLONASS включена)
-                        if let Some(eph) = parse_glonass_ephemeris_correct(&line, &mut lines) {
-                            nav_data.add_glonass_ephemeris(eph);
-                        }
-                    }
-                    'C' if beidou_enabled => {
-                        // *** КРИТИЧЕСКИЙ БЛОК: BEIDOU ЭФЕМЕРИДЫ ПАРСИНГ ***
-                        // BeiDou эфемериды (только если BeiDou включена в enabled_systems)
-                        // Формат строки: "C## YYYY MM DD HH MM SS ..." где ## - SVID спутника (01-63)
-                        // ВАЖНО: BeiDou данные в RINEX файле начинаются поздно (~строка 93528)
-                        // Found BeiDou ephemeris line
-
-                        if let Some(eph) = parse_beidou_ephemeris(&line, &mut lines) {
-                            beidou_parsed += 1;
-
-                            // *** ВАЖНО: BeiDou логика группировки эфемерид по эпохам времени (toe) ***
-                            // Аналогично GPS, но BeiDou использует свое время системы (BDT)
-                            if let Some(target) = target_time {
-                                // ПРОВЕРКА: Проверяем, попадает ли BeiDou эфемерида в временное окно вокруг target_time
-                                if is_beidou_ephemeris_within_time_window(
-                                    &eph,
-                                    &target,
-                                    time_window_hours,
-                                ) {
-                                    // DEBUG: BDS фильтр отключен для уменьшения вывода
-                                    // println!("[BDS-FILTER] BDS{:02} passed time filter: toe={}", eph.svid, eph.toe);
-                                    // Добавляем эпоху (toe) в список доступных времен BeiDou
-                                    beidou_available_epochs.insert(eph.toe);
-
-                                    // *** КРИТИЧНО: Группируем BeiDou эфемериды по эпохе времени (toe) ***
-                                    // Каждая эпоха содержит HashMap<svid, ephemeris> для всех BeiDou спутников этого времени
-                                    let epoch_map =
-                                        beidou_ephemeris_by_epoch.entry(eph.toe).or_default();
-                                    epoch_map.insert(eph.svid, eph);
-
-                                    beidou_accepted += 1;
-                                    // Accepted BeiDou ephemeris
-                                }
-                            } else {
-                                // Без временной фильтрации - берем все доступные эпохи BeiDou
-                                beidou_available_epochs.insert(eph.toe);
-                                let epoch_map =
-                                    beidou_ephemeris_by_epoch.entry(eph.toe).or_default();
-                                epoch_map.entry(eph.svid).or_insert(eph);
-                                // Accepted BeiDou ephemeris (no time filtering)
-                            }
-                        }
-                    }
-                    'E' if galileo_enabled => {
-                        // *** КРИТИЧЕСКИЙ БЛОК: GALILEO ЭФЕМЕРИДЫ ПАРСИНГ ***
-                        // Используем специализированный парсер Galileo (6 строк данных)
-                        if let Some(eph) = parse_galileo_ephemeris(&line, &mut lines) {
-                            // Структура данных совместима (используется GpsEphemeris как контейнер)
-
-                            galileo_parsed += 1;
-                            // Parsed Galileo ephemeris
-
-                            // *** ВАЖНО: Galileo логика группировки эфемерид по эпохам времени (toe) ***
-                            // Теперь используется та же временная фильтрация как для GPS и BeiDou
-                            if let Some(target) = target_time {
-                                // ПРОВЕРКА: Проверяем, попадает ли эфемерида в временное окно вокруг target_time
-                                if is_ephemeris_within_time_window(&eph, &target, time_window_hours)
-                                {
-                                    // Отладка специальных SVID отключена для уменьшения вывода
-                                    // if [14, 15, 29, 30, 34].contains(&eph.svid) {
-                                    //     println!("[GAL-SPECIAL] Found target SVID {} with toe={}", eph.svid, eph.toe);
-                                    // }
-                                    // println!("[GAL-FILTER] GAL{:02} passed time filter: toe={}", eph.svid, eph.toe);
-                                    // Добавляем эпоху (toe) в список доступных времен
-                                    galileo_available_epochs.insert(eph.toe);
-
-                                    // *** КРИТИЧНО: Группируем эфемериды по эпоху времени (toe) ***
-                                    galileo_ephemeris_by_epoch
-                                        .entry(eph.toe)
-                                        .or_default()
-                                        .insert(eph.svid, eph);
-                                    galileo_accepted += 1;
-                                } else {
-                                    // if [14, 15, 29, 30, 34].contains(&eph.svid) {
-                                    //     println!("[GAL-SPECIAL] Target SVID {} REJECTED by time filter: toe={}", eph.svid, eph.toe);
-                                    // }
-                                }
-                            } else {
-                                // Без временной фильтрации - принимаем все эфемериды Galileo
-                                nav_data.add_galileo_ephemeris(eph);
-                                galileo_accepted += 1;
-                            }
-
-                            // ВАЖНОЕ ЗАМЕЧАНИЕ: Galileo эфемериды добавляются напрямую в nav_data
-                            // в отличие от GPS и BeiDou которые группируются по эпохам (toe)
-                            // Это разное поведение может вызывать проблемы с выбором времени эфемерид
-                        }
-                    }
-                    'G' | ' ' if !gps_enabled => {
-                        // GPS отключена в конфиге - пропускаем эфемериду
-                        _other_skipped += 1;
-                        // ВРЕМЕННО: не вызываем skip_ephemeris_lines для диагностики
-                        continue;
-                    }
-                    'R' if !glonass_enabled => {
-                        // GLONASS отключена в конфиге - пропускаем эфемериду
-                        _other_skipped += 1;
-                        continue;
-                    }
-                    'C' if !beidou_enabled => {
-                        // BeiDou отключена в конфиге - пропускаем эфемериду
-                        _other_skipped += 1;
-                        continue;
-                    }
-                    'E' if !galileo_enabled => {
-                        // Galileo отключена в конфиге - пропускаем эфемериду
-                        _other_skipped += 1;
-                        continue;
-                    }
-                    'S' => {
-                        // SBAS спутники - пропускаем запись целиком (7 строк данных)
-                        // DEBUG: SBAS пропуск отключен для уменьшения вывода
-                        // println!("[DEBUG] Skipping SBAS satellite at line {}", total_lines_processed);
-                        skip_ephemeris_lines(&mut lines);
-                        _other_skipped += 1;
-                        continue;
-                    }
-                    ' ' => {
-                        // Строки данных эфемерид начинаются с пробела - должны читаться внутри parse_*_ephemeris
-                        // В основном цикле их нужно игнорировать (как в C версии)
-                        continue;
-                    }
-                    _ => {
-                        // Неизвестный тип, пропускаем
-                        continue;
-                    }
+    };
+    let mut lines = BufReader::new(file).lines();
+    let mut header = true;
+    while let Some(Ok(line)) = lines.next() {
+        if header {
+            header = !line.contains("END OF HEADER");
+            parse_navigation_header(nav_data, &line);
+            continue;
+        }
+        if line.len() < 3 || !line.as_bytes()[1..3].iter().all(u8::is_ascii_digit) {
+            continue;
+        }
+        let system = line.as_bytes()[0];
+        match system {
+            b'G' if enabled_systems.contains(&"GPS") => {
+                if let Some(e) = parse_gps_ephemeris(&line, &mut lines, false) {
+                    nav_data.gps_ephemeris.push(e);
                 }
             }
-            Some(Err(e)) => {
-                dprintln!(
-                    "[WARN] Error reading line {}: {}",
-                    total_lines_processed + 1,
-                    e
-                );
-                continue; // Продолжаем несмотря на ошибку чтения одной строки
+            b'C' if enabled_systems.contains(&"BeiDou") => {
+                if let Some(e) = parse_beidou_ephemeris(&line, &mut lines) {
+                    nav_data.beidou_ephemeris.push(e);
+                }
             }
-            None => {
-                dprintln!(
-                    "[DEBUG] End of file reached at line {}",
-                    total_lines_processed
-                );
-                break; // Конец файла
+            b'E' if enabled_systems.contains(&"Galileo") => {
+                if let Some(e) = parse_galileo_ephemeris(&line, &mut lines) {
+                    nav_data.galileo_ephemeris.push(e);
+                }
+            }
+            b'R' if enabled_systems.contains(&"GLONASS") => {
+                if let Some(e) = parse_glonass_ephemeris_correct(&line, &mut lines) {
+                    nav_data.glonass_ephemeris.push(e);
+                }
+            }
+            // У R/S три строки орбиты, у остальных RINEX3 — семь.
+            _ => {
+                for _ in 0..if matches!(system, b'R' | b'S') { 3 } else { 7 } {
+                    lines.next();
+                }
             }
         }
     }
-
-    // *** КРИТИЧЕСКАЯ СЕКЦИЯ: ВЫБОР ЕДИНОЙ ЭПОХИ ВРЕМЕНИ ДЛЯ ВСЕХ СПУТНИКОВ ***
-    // Эта логика была добавлена для исправления проблемы разных эпох эфемерид
-    if let Some(target) = target_time {
-        // ШАГ 1: Объединяем все доступные эпохи GPS и BeiDou
-        // ВАЖНО: Galileo НЕ участвует в выборе единой эпохи (потенциальная проблема!)
-        let mut all_available_epochs: std::collections::HashSet<i32> =
-            std::collections::HashSet::new();
-        all_available_epochs.extend(&gps_available_epochs);
-        all_available_epochs.extend(&beidou_available_epochs);
-        all_available_epochs.extend(&galileo_available_epochs);
-
-        dprintln!(
-            "[EPOCH-SELECT] Available GPS epochs: {:?}",
-            gps_available_epochs
-        );
-        dprintln!(
-            "[EPOCH-SELECT] Available BeiDou epochs: {:?}",
-            beidou_available_epochs
-        );
-        dprintln!(
-            "[EPOCH-SELECT] Available Galileo epochs: {:?}",
-            galileo_available_epochs
-        );
-        dprintln!(
-            "[EPOCH-SELECT] Combined epochs for selection: {:?}",
-            all_available_epochs
-        );
-
-        if !all_available_epochs.is_empty() {
-            // ШАГ 2: Находим эпоху ближайшую к target_time из пресета
-            // Преобразуем UTC время пресета в GPS время для сравнения с toe
-            let target_gps = utc_to_gps_time(target, false);
-            let target_seconds =
-                (target_gps.Week as f64) * 604800.0 + (target_gps.MilliSeconds as f64) / 1000.0;
-
-            let mut _best_epoch = 0i32;
-            let mut best_epoch_diff = f64::INFINITY;
-
-            // ШАГ 3: Ищем эпоху с минимальной разницей по времени (ближайшую)
-            for &epoch in &all_available_epochs {
-                // ВАЖНО: toe уже в секундах GPS недели, добавляем текущую неделю
-                let epoch_seconds = (target_gps.Week as f64) * 604800.0 + (epoch as f64);
-                let time_diff = (epoch_seconds - target_seconds).abs();
-
-                dprintln!(
-                    "[EPOCH-SELECT] Checking epoch {} ({}s): target={}s, diff={:.1}h",
-                    epoch,
-                    epoch_seconds,
-                    target_seconds,
-                    time_diff / 3600.0
-                );
-
-                if time_diff < best_epoch_diff {
-                    best_epoch_diff = time_diff;
-                    _best_epoch = epoch;
-                    dprintln!(
-                        "[EPOCH-SELECT] → New closest epoch {} (diff={:.1}h)",
-                        epoch,
-                        time_diff / 3600.0
-                    );
-                }
-            }
-
-            // Selected unified epoch for both systems
-
-            // ШАГ 4: Находим лучшую GPS эпоху отдельно от общей
-            let mut best_gps_epoch = 0i32;
-            let mut best_gps_diff = f64::INFINITY;
-
-            for &epoch in &gps_available_epochs {
-                let epoch_seconds = (target_gps.Week as f64) * 604800.0 + (epoch as f64);
-                let time_diff = (epoch_seconds - target_seconds).abs();
-
-                if time_diff < best_gps_diff {
-                    best_gps_diff = time_diff;
-                    best_gps_epoch = epoch;
-                }
-            }
-
-            // Per-satellite best ephemeris selection (like C++):
-            // For each GPS SVID, find the closest toe across ALL epochs
-            {
-                let mut best_per_sv: std::collections::HashMap<u8, (f64, crate::types::GpsEphemeris)> = std::collections::HashMap::new();
-                for (_epoch, epoch_map) in &gps_ephemeris_by_epoch {
-                    for (&svid, &eph) in epoch_map {
-                        let toe_seconds = (target_gps.Week as f64) * 604800.0 + (eph.toe as f64);
-                        let diff = (toe_seconds - target_seconds).abs();
-                        if let Some((best_diff, _)) = best_per_sv.get(&svid) {
-                            if diff < *best_diff {
-                                best_per_sv.insert(svid, (diff, eph));
-                            }
-                        } else {
-                            best_per_sv.insert(svid, (diff, eph));
-                        }
-                    }
-                }
-                for (_, (_, eph)) in &best_per_sv {
-                    nav_data.add_gps_ephemeris(*eph);
-                    gps_accepted += 1;
-                }
-            }
-
-            // ШАГ 5: Находим лучшую BeiDou эпоху отдельно от общей
-            let mut best_beidou_epoch = 0i32;
-            let mut best_beidou_diff = f64::INFINITY;
-
-            dprintln!(
-                "[BEIDOU-DEBUG] Available BeiDou epochs: {:?}",
-                beidou_available_epochs
-            );
-            for &epoch in &beidou_available_epochs {
-                let epoch_seconds = (target_gps.Week as f64) * 604800.0 + (epoch as f64);
-                let time_diff = (epoch_seconds - target_seconds).abs();
-                let epoch_time_of_day = epoch % 86400;
-                let hours = epoch_time_of_day / 3600;
-                let minutes = (epoch_time_of_day % 3600) / 60;
-                dprintln!(
-                    "[BEIDOU-DEBUG] Epoch toe={} ({:02}:{:02}:00) diff={:.1}min",
-                    epoch,
-                    hours,
-                    minutes,
-                    time_diff / 60.0
-                );
-
-                if time_diff < best_beidou_diff {
-                    best_beidou_diff = time_diff;
-                    best_beidou_epoch = epoch;
-                }
-            }
-
-            // Per-satellite best BeiDou ephemeris selection (like C++)
-            {
-                let mut best_per_sv: std::collections::HashMap<u8, (f64, crate::types::BeiDouEphemeris)> = std::collections::HashMap::new();
-                for (_epoch, epoch_map) in &beidou_ephemeris_by_epoch {
-                    for (&svid, &eph) in epoch_map {
-                        let bds_week_offset = 1356;
-                        let toe_seconds = ((eph.week + bds_week_offset) as f64) * 604800.0 + (eph.toe as f64);
-                        let diff = (toe_seconds - target_seconds).abs();
-                        if let Some((best_diff, _)) = best_per_sv.get(&svid) {
-                            if diff < *best_diff {
-                                best_per_sv.insert(svid, (diff, eph));
-                            }
-                        } else {
-                            best_per_sv.insert(svid, (diff, eph));
-                        }
-                    }
-                }
-                for (_, (_, eph)) in &best_per_sv {
-                    nav_data.add_beidou_ephemeris(*eph);
-                    beidou_accepted += 1;
-                }
-            }
-
-            // ШАГ 6: Находим лучшую Galileo эпоху отдельно от общей
-            let mut best_galileo_epoch = 0i32;
-            let mut best_galileo_diff = f64::INFINITY;
-
-            dprintln!(
-                "[GALILEO-DEBUG] Available Galileo epochs: {:?}",
-                galileo_available_epochs
-            );
-            for &epoch in &galileo_available_epochs {
-                let epoch_seconds = (target_gps.Week as f64) * 604800.0 + (epoch as f64);
-                let time_diff = (epoch_seconds - target_seconds).abs();
-                let epoch_time_of_day = epoch % 86400;
-                let hours = epoch_time_of_day / 3600;
-                let minutes = (epoch_time_of_day % 3600) / 60;
-                dprintln!(
-                    "[GALILEO-DEBUG] Epoch toe={} ({:02}:{:02}:00) diff={:.1}min",
-                    epoch,
-                    hours,
-                    minutes,
-                    time_diff / 60.0
-                );
-
-                if time_diff < best_galileo_diff {
-                    best_galileo_diff = time_diff;
-                    best_galileo_epoch = epoch;
-                }
-            }
-
-            // Per-satellite best Galileo ephemeris selection (like C++)
-            {
-                let mut best_per_sv: std::collections::HashMap<u8, (f64, crate::types::GpsEphemeris)> = std::collections::HashMap::new();
-                for (_epoch, epoch_map) in &galileo_ephemeris_by_epoch {
-                    for (&svid, &eph) in epoch_map {
-                        let toe_seconds = (target_gps.Week as f64) * 604800.0 + (eph.toe as f64);
-                        let diff = (toe_seconds - target_seconds).abs();
-                        if let Some((best_diff, _)) = best_per_sv.get(&svid) {
-                            if diff < *best_diff {
-                                best_per_sv.insert(svid, (diff, eph));
-                            }
-                        } else {
-                            best_per_sv.insert(svid, (diff, eph));
-                        }
-                    }
-                }
-                for (_, (_, eph)) in &best_per_sv {
-                    nav_data.add_galileo_ephemeris(*eph);
-                    galileo_accepted += 1;
-                }
-            }
-        } else {
-            println!(
-                "[ERROR] ❌ No epochs available for selection - GPS or BeiDou parsing failed!"
-            );
-        }
-    } else {
-        // Без временной фильтрации - берем первую доступную эпоху
-        let mut selected_epoch: Option<i32> = None;
-
-        // Приоритет GPS если доступна
-        if let Some((&first_epoch, first_epoch_ephemeris)) = gps_ephemeris_by_epoch.iter().next() {
-            selected_epoch = Some(first_epoch);
-            println!(
-                "[INFO] No time filtering - using first GPS epoch: toe={}",
-                first_epoch
-            );
-            for eph in first_epoch_ephemeris.values() {
-                nav_data.add_gps_ephemeris(*eph);
-                gps_accepted += 1;
-            }
-        }
-
-        // Добавляем BeiDou с той же эпохи если есть, иначе с первой доступной
-        if let Some(epoch) = selected_epoch {
-            if let Some(epoch_ephemeris) = beidou_ephemeris_by_epoch.get(&epoch) {
-                for eph in epoch_ephemeris.values() {
-                    nav_data.add_beidou_ephemeris(*eph);
-                    beidou_accepted += 1;
-                }
-            }
-        } else if let Some((&first_epoch, first_epoch_ephemeris)) =
-            beidou_ephemeris_by_epoch.iter().next()
-        {
-            selected_epoch = Some(first_epoch);
-            println!(
-                "[INFO] No time filtering - using first BeiDou epoch: toe={}",
-                first_epoch
-            );
-            for eph in first_epoch_ephemeris.values() {
-                nav_data.add_beidou_ephemeris(*eph);
-                beidou_accepted += 1;
-            }
-        }
-
-        // Добавляем Galileo с той же эпохи если есть, иначе с первой доступной
-        if let Some(epoch) = selected_epoch {
-            if let Some(epoch_ephemeris) = galileo_ephemeris_by_epoch.get(&epoch) {
-                for eph in epoch_ephemeris.values() {
-                    nav_data.add_galileo_ephemeris(*eph);
-                    galileo_accepted += 1;
-                }
-            }
-        } else if let Some((&first_epoch, first_epoch_ephemeris)) =
-            galileo_ephemeris_by_epoch.iter().next()
-        {
-            println!(
-                "[INFO] No time filtering - using first Galileo epoch: toe={}",
-                first_epoch
-            );
-            for eph in first_epoch_ephemeris.values() {
-                nav_data.add_galileo_ephemeris(*eph);
-                galileo_accepted += 1;
-            }
-        }
-    }
-
-    // ========== ИТОГОВЫЙ ОТЧЁТ О ОТОБРАННЫХ СПУТНИКАХ ==========
-    if crate::logutil::is_verbose() {
-        println!("\n📊 ИТОГОВЫЙ ОТЧЁТ ПО ЭФЕМЕРИДАМ СПУТНИКОВ");
-        println!("═══════════════════════════════════════════════════════");
-    }
-
-    if gps_enabled && gps_accepted > 0 && crate::logutil::is_verbose() {
-        println!("📡 GPS система: {} спутников отобрано", gps_accepted);
-        for eph in &nav_data.gps_ephemeris {
-            println!(
-                "   └─ GPS{:02}: toe={:>6} сек, valid={}, health={}",
-                eph.svid, eph.toe, eph.valid, eph.health
-            );
-        }
-    } else if gps_enabled && crate::logutil::is_verbose() {
-        println!("⚠️  GPS система: НЕТ ОТОБРАННЫХ СПУТНИКОВ");
-    }
-
-    if beidou_enabled && beidou_accepted > 0 && crate::logutil::is_verbose() {
-        println!("📡 BeiDou система: {} спутников отобрано", beidou_accepted);
-        for eph in &nav_data.beidou_ephemeris {
-            println!(
-                "   └─ BDS{:02}: toe={:>6} сек, valid={}, health={}",
-                eph.svid, eph.toe, eph.valid, eph.health
-            );
-        }
-    } else if beidou_enabled && crate::logutil::is_verbose() {
-        println!("⚠️  BeiDou система: НЕТ ОТОБРАННЫХ СПУТНИКОВ");
-    }
-
-    if galileo_enabled && galileo_accepted > 0 && crate::logutil::is_verbose() {
-        println!(
-            "📡 Galileo система: {} спутников отобрано",
-            galileo_accepted
-        );
-        for eph in &nav_data.galileo_ephemeris {
-            println!(
-                "   └─ GAL{:02}: toe={:>6} сек, valid={}, health={}",
-                eph.svid, eph.toe, eph.valid, eph.health
-            );
-        }
-    } else if galileo_enabled && crate::logutil::is_verbose() {
-        println!("⚠️  Galileo система: НЕТ ОТОБРАННЫХ СПУТНИКОВ");
-    }
-
-    if crate::logutil::is_verbose() {
-        println!("═══════════════════════════════════════════════════════");
-        println!(
-            "📈 Статистика парсинга: GPS {}/{}, BeiDou {}/{}, Galileo {}/{}",
-            gps_accepted,
-            gps_parsed,
-            beidou_accepted,
-            beidou_parsed,
-            galileo_accepted,
-            galileo_parsed
-        );
-        println!("🗂️  Источник: {}", filename);
-        println!("═══════════════════════════════════════════════════════\n");
-    }
+    // Сохраняем все эпохи и все data-source записи; отбор выполняется при генерации.
 }
 
-/// Оригинальная функция для обратной совместимости
 pub fn read_nav_file(nav_data: &mut CNavData, filename: &str) {
     // Загружаем все системы без фильтрации (старое поведение)
     read_nav_file_filtered(
@@ -1342,102 +776,6 @@ pub fn read_nav_file(nav_data: &mut CNavData, filename: &str) {
 }
 
 /// *** КРИТИЧЕСКАЯ ФУНКЦИЯ ВРЕМЕННОЙ ФИЛЬТРАЦИИ ЭФЕМЕРИД ***
-///
-/// Проверяет попадает ли эфемерида в временное окно вокруг целевого времени из пресета.
-/// ЭТА ФУНКЦИЯ ОПРЕДЕЛЯЕТ, КАКИЕ ЭФЕМЕРИДЫ БУДУТ ИСПОЛЬЗОВАНЫ ДЛЯ РАСЧЕТА ПОЗИЦИЙ СПУТНИКОВ!
-///
-/// # Параметры
-/// * `eph` - GPS эфемерида (используется также для Galileo и BeiDou через структурную совместимость)
-/// * `target_time` - UTC время из JSON пресета
-/// * `window_hours` - Размер временного окна в часах (по умолчанию 3.0h)
-///
-/// # Критическая логика:
-/// 1. Конвертирует UTC время пресета в GPS время
-/// 2. Сравнивает с toe (time of ephemeris) из RINEX файла
-/// 3. Возвращает true если разница меньше window_hours
-///
-/// # Возможные проблемы:
-/// - GPS эфемериды обновляются каждые 2 часа, окно 3h может быть мало
-/// - BeiDou использует BDT время, может потребоваться коррекция
-/// - Galileo использует GST время, синхронизирован с GPS
-fn is_beidou_ephemeris_within_time_window(
-    eph: &BeiDouEphemeris,
-    target_time: &UtcTime,
-    window_hours: f64,
-) -> bool {
-    // BeiDou временная фильтрация с коррекцией BDT → GPS времени
-    let target_gps = utc_to_gps_time(*target_time, false);
-    let target_seconds =
-        (target_gps.Week as f64) * 604800.0 + (target_gps.MilliSeconds as f64) / 1000.0;
-
-    // ВАЖНО: BeiDou время (BDT) началось 1 января 2006, GPS - 6 января 1980
-    // Разница: 26 лет ≈ 1356 недель. Добавляем коррекцию к BeiDou неделе.
-    const BDT_TO_GPS_WEEK_OFFSET: i32 = 1356;
-    let corrected_bds_week = eph.week + BDT_TO_GPS_WEEK_OFFSET;
-    let eph_seconds = (corrected_bds_week as f64) * 604800.0 + (eph.toe as f64);
-
-    let time_diff_hours = (eph_seconds - target_seconds).abs() / 3600.0;
-    // BeiDou time filtering completed successfully
-    time_diff_hours <= window_hours
-}
-
-fn is_ephemeris_within_time_window(
-    eph: &GpsEphemeris,
-    target_time: &UtcTime,
-    window_hours: f64,
-) -> bool {
-    // Skip debug output for cleaner logs
-
-    // ШАГ 1: Конвертируем UTC время из пресета в GPS время для сравнения
-    // ВАЖНО: utc_to_gps_time учитывает leap seconds и корректирует время
-    let target_gps = utc_to_gps_time(*target_time, false);
-    let target_seconds =
-        (target_gps.Week as f64) * 604800.0 + (target_gps.MilliSeconds as f64) / 1000.0;
-
-    // ШАГ 2: Вычисляем время эфемериды в абсолютных секундах GPS
-    // toe уже в секундах недели, добавляем номер недели
-    let eph_seconds = (eph.week as f64) * 604800.0 + (eph.toe as f64);
-
-    // Time conversion completed
-
-    // ШАГ 3: Вычисляем разность времен и проверяем попадание в окно
-    let time_diff_hours = (eph_seconds - target_seconds).abs() / 3600.0;
-    // Time filtering completed successfully
-    // Time window filtering result (no debug output)
-    time_diff_hours <= window_hours
-}
-
-/// Galileo time-window check: adjusts week number from GST to GPS epoch
-#[allow(dead_code)]
-fn is_galileo_ephemeris_within_time_window(
-    eph: &GpsEphemeris,
-    target_time: &UtcTime,
-    window_hours: f64,
-) -> bool {
-    // Target time in GPS seconds
-    let target_gps = utc_to_gps_time(*target_time, false);
-    let target_seconds =
-        (target_gps.Week as f64) * 604800.0 + (target_gps.MilliSeconds as f64) / 1000.0;
-
-    // Galileo week is relative to GST epoch; align to GPS by adding offset
-    const GAL_TO_GPS_WEEK_OFFSET: i32 = 1024;
-    let corrected_week = eph.week + GAL_TO_GPS_WEEK_OFFSET;
-    let eph_seconds = (corrected_week as f64) * 604800.0 + (eph.toe as f64);
-
-    let time_diff_hours = (eph_seconds - target_seconds).abs() / 3600.0;
-    time_diff_hours <= window_hours
-}
-
-/// Пропускает строки эфемериды (7 строк для GPS/BeiDou/Galileo, 3 для GLONASS)
-fn skip_ephemeris_lines<T: Iterator<Item = Result<String, std::io::Error>>>(lines: &mut T) {
-    // Для универсальности пропускаем максимально 7 строк
-    for _ in 0..7 {
-        if lines.next().is_none() {
-            break;
-        }
-    }
-}
-
 /// Читает альманахи спутников из файла
 /// Поддерживает стандартные форматы альманахов GPS, ГЛОНАСС, BeiDou, Galileo
 fn read_alm_file(nav_data: &mut CNavData, filename: &str) {
@@ -1920,9 +1258,9 @@ fn process_config_param(object: *mut JsonObject, output_param: &mut OutputParam)
                     // "elevationMask"
                     output_param.ElevationMask = deg2rad(get_double_value(current_object));
                 }
-                7 => {
+                7
                     // "maskOut"
-                    if get_object_type(current_object) == 2 {
+                    if get_object_type(current_object) == 2 => {
                         // ValueTypeArray
                         let mut mask_out_array = json_stream_get_first_object(current_object);
                         while !mask_out_array.is_null() {
@@ -1933,7 +1271,6 @@ fn process_config_param(object: *mut JsonObject, output_param: &mut OutputParam)
                             mask_out_array = json_stream_get_next_object(mask_out_array);
                         }
                     }
-                }
                 _ => {}
             }
             current_object = json_stream_get_next_object(current_object);
@@ -3015,7 +2352,7 @@ fn determine_beidou_satellite_type_by_axis(axis: f64) -> u8 {
     use crate::types::*;
 
     if axis < 35_000_000.0 {
-        BDS_SAT_MEO  // a < 35000 km → Medium Earth Orbit
+        BDS_SAT_MEO // a < 35000 km → Medium Earth Orbit
     } else {
         BDS_SAT_IGSO // a ≥ 35000 km → GEO or IGSO (same reference axis in B-CNAV1)
     }
@@ -3101,12 +2438,16 @@ where
     };
     dprintln!(
         "[GAL-PARSE] SV{:02}: data[3]={:.0} (IODnav), iodc={}, toe={}",
-        eph.svid, data[3], eph.iodc, eph.toe
+        eph.svid,
+        data[3],
+        eph.iodc,
+        eph.toe
     );
+    eph.source = data[20] as u16;
     eph.week = data[21] as i32; // Week (GST/GPS-aligned in RINEX 3.x)
                                 // Galileo SISA имеет собственную шкалу, отличную от GPS URA.
     eph.ura = get_sisa_index(data[23]) as i16; // Индекс SISA (8 бит)
-                                              // Health field for Galileo is data[24] in our C reference; use the same index here
+                                               // Health field for Galileo is data[24] in our C reference; use the same index here
     eph.health = data[24] as u16; // Health
 
     // BGD параметры Galileo (в отличие от TGD в GPS)
@@ -3212,7 +2553,9 @@ fn parse_epoch_from_header_line(line: &str) -> Option<UtcTime> {
     // Col 4-7: Year, Col 9-10: Month, Col 12-13: Day
     // Col 15-16: Hour, Col 18-19: Minute, Col 21-22: Second (integer part)
     // Note: seconds and af0 may run together without space (e.g. "00-1.529...")
-    if line.len() < 23 { return None; }
+    if line.len() < 23 {
+        return None;
+    }
     let year = line.get(4..8)?.trim().parse::<i32>().ok()?;
     let month = line.get(9..11)?.trim().parse::<i32>().ok()?;
     let day = line.get(12..14)?.trim().parse::<i32>().ok()?;

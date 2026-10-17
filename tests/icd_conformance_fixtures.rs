@@ -51,9 +51,9 @@ fn assert_nonzero(name: &str, bits: &[i32]) {
 
 fn deinterleave_gps_l1c_payload(bits: &[i32]) -> [i32; 1748] {
     let mut combined = [0i32; 1748];
-    for input_idx in 0..1748 {
+    for (input_idx, bit) in combined.iter_mut().enumerate() {
         let output_idx = 52 + 38 * (input_idx % 46) + (input_idx / 46);
-        combined[input_idx] = bits[output_idx];
+        *bit = bits[output_idx];
     }
     combined
 }
@@ -101,7 +101,7 @@ fn sample_gps_eph(svid: u8) -> GpsEphemeris {
         delta_n: 4.5e-9,
         delta_n_dot: 0.0,
         ecc: 0.01,
-        sqrtA: 5153.795_890_81,
+        sqrtA: 5_153.795_890_81,
         axis_dot: 0.0,
         omega0: 1.0,
         i0: 0.94,
@@ -476,7 +476,7 @@ fn glonass_gnav_time_marker_and_string_padding_are_bit_exact() {
 
     let mut bits = vec![0i32; 100];
     assert_eq!(gnav.get_frame_data(t(30_000), 1, 0, &mut bits), 0);
-    assert_eq!(bits[84], 0, "GLONASS idle bit");
+    assert_eq!(bits[0], 0, "GLONASS idle bit");
     assert!(bits[93..100].iter().all(|&bit| bit == 0));
 
     let mut marker = [0i32; 30];

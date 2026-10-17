@@ -27,7 +27,6 @@ use crate::NavDataType;
 
 const AMPLITUDE_1_2: f64 = std::f64::consts::FRAC_1_SQRT_2;
 const AMPLITUDE_1_4: f64 = 0.5;
-const AMPLITUDE_3_4: f64 = 0.866_025_403_784_438_6;
 const AMPLITUDE_29_44: f64 = 0.811_844_540_519_421_5; // sqrt(29/44) for TMBOC/QMBOC pilot (accounts for BOC(6,1) component)
 
 pub struct SignalAttribute {
@@ -137,8 +136,8 @@ pub struct SatelliteSignal {
     svid: i32,
     current_frame: i32,
     nav_data: Option<crate::nav_data::NavData>,
+    pending_nav_data: Option<Box<crate::nav_data::NavData>>,
     is_in_time_marker: bool,
-    time_marker_bits: [u8; 30],
     data_bits: [u8; 4096], // Adjusted size for safety
     #[allow(dead_code)]
     secondary_code: u32,
@@ -161,8 +160,8 @@ impl SatelliteSignal {
             svid: -1,
             current_frame: -1,
             nav_data: None,
+            pending_nav_data: None,
             is_in_time_marker: false,
-            time_marker_bits: [0; 30],
             data_bits: [0; 4096],
             secondary_code: 0,
             secondary_length: 0,
@@ -250,6 +249,13 @@ impl SatelliteSignal {
         }
     }
 
+    pub(crate) fn take_navigation_data(&mut self) -> Option<crate::nav_data::NavData> {
+        self.nav_data.take()
+    }
+    pub(crate) fn queue_navigation_data(&mut self, nav: Option<crate::nav_data::NavData>) {
+        self.pending_nav_data = nav.map(Box::new);
+    }
+
     pub fn get_satellite_signal(
         &mut self,
         transmit_time: GnssTime,
@@ -304,7 +310,7 @@ impl SatelliteSignal {
 
         let bit_length = self.attribute.code_length * self.attribute.nh_length;
         let frame_number;
-        let mut bit_number: usize;
+        let bit_number: usize;
         let bit_pos;
         let mut data_bit;
         let mut pilot_bit = 0; // По умолчанию 0 для сигналов без пилотной составляющей
@@ -315,41 +321,20 @@ impl SatelliteSignal {
         {
             let string_position = transmit_time_adj.MilliSeconds % 2000;
 
-            if string_position < 300 {
+            if string_position >= 1700 {
                 self.is_in_time_marker = true;
-                if string_position == 0 {
-                    use crate::gnavbit::GNavBit;
-                    let mut time_marker_i32 = vec![0i32; 30];
-                    GNavBit::get_time_marker(&mut time_marker_i32);
-                    for (i, v) in time_marker_i32.iter().enumerate().take(30) {
-                        self.time_marker_bits[i] = (*v) as u8;
-                    }
-                }
-                let time_marker_bit_index = string_position / 10;
-                data_bit = if time_marker_bit_index < 30 {
-                    if self.time_marker_bits[time_marker_bit_index as usize] != 0 {
-                        -1
-                    } else {
-                        1
-                    }
-                } else {
-                    1
-                };
+                let bit = (0x3e375096u32 >> (29 - (string_position - 1700) / 10)) & 1;
                 *data_signal = ComplexNumber {
-                    real: data_bit as f64,
+                    real: if bit == 0 { 1.0 } else { -1.0 },
                     imag: 0.0,
                 };
                 *pilot_signal = ComplexNumber::new();
                 return true;
-            } else {
-                self.is_in_time_marker = false;
-                frame_number = transmit_time_adj.MilliSeconds / self.attribute.frame_length;
-                bit_number = ((string_position - 300) * 85 / 1700) as usize; // ГЛОНАСС: 85 информационных бит за 1700 мс
-                if bit_number >= 85 {
-                    bit_number = 84;
-                } // Ограничить диапазон 0-84
-                bit_pos = ((string_position - 300) % 17) / self.attribute.code_length;
             }
+            self.is_in_time_marker = false;
+            frame_number = transmit_time_adj.MilliSeconds / 2000;
+            bit_number = (string_position / 20) as usize;
+            bit_pos = 0;
         } else {
             let galileo_e1_signal = if self.sat_system == GnssSystem::GalileoSystem
                 && self.sat_signal == crate::SIGNAL_INDEX_E1 as i32
@@ -367,6 +352,9 @@ impl SatelliteSignal {
         }
 
         if frame_number != self.current_frame {
+            if let Some(nav) = self.pending_nav_data.take() {
+                self.nav_data = Some(*nav);
+            }
             let max_svid = match self.sat_system {
                 GnssSystem::BdsSystem => 63,
                 GnssSystem::GalileoSystem => 36,
@@ -389,12 +377,23 @@ impl SatelliteSignal {
                     };
                     let mut data_bits_i32 = [0; 4096];
                     nav_data.get_frame_data(
-                        transmit_time_adj,
+                        if self.sat_system == GnssSystem::GlonassSystem {
+                            transmit_time
+                        } else {
+                            transmit_time_adj
+                        },
                         self.svid,
                         param,
                         &mut data_bits_i32,
                     );
 
+                    if self.sat_system == GnssSystem::GlonassSystem
+                        && matches!(self.sat_signal, G1 | G2)
+                    {
+                        for i in 1..85 {
+                            data_bits_i32[i] ^= data_bits_i32[i - 1];
+                        }
+                    }
                     for (i, val) in data_bits_i32.iter().enumerate() {
                         self.data_bits[i] = (*val) as u8;
                     }
@@ -585,7 +584,12 @@ impl SatelliteSignal {
                 G1 | G2 => {
                     if !self.is_in_time_marker {
                         *data_signal = ComplexNumber {
-                            real: data_bit as f64,
+                            real: data_bit as f64
+                                * if (transmit_time_adj.MilliSeconds / 10) % 2 == 0 {
+                                    1.0
+                                } else {
+                                    -1.0
+                                },
                             imag: 0.0,
                         };
                         *pilot_signal = ComplexNumber::new();
@@ -607,5 +611,37 @@ impl SatelliteSignal {
         }
 
         true
+    }
+}
+
+#[cfg(test)]
+mod handover_tests {
+    use super::*;
+    #[test]
+    fn navigation_update_waits_for_frame_boundary() {
+        let mut s = SatelliteSignal::new();
+        assert!(s.set_signal_attribute(
+            GnssSystem::GpsSystem,
+            crate::SIGNAL_INDEX_L1CA as i32,
+            None,
+            1
+        ));
+        let t = GnssTime {
+            Week: 2369,
+            MilliSeconds: 30001,
+            SubMilliSeconds: 0.0,
+        };
+        let mut data = ComplexNumber::new();
+        let mut pilot = ComplexNumber::new();
+        s.get_satellite_signal(t, &mut data, &mut pilot);
+        s.queue_navigation_data(Some(crate::nav_data::NavData::LNav(
+            crate::lnavbit::LNavBit::new(),
+        )));
+        s.get_satellite_signal(t.add_milliseconds(1.0), &mut data, &mut pilot);
+        assert!(s.pending_nav_data.is_some());
+        assert!(s.nav_data.is_none());
+        s.get_satellite_signal(t.add_milliseconds(30000.0), &mut data, &mut pilot);
+        assert!(s.pending_nav_data.is_none());
+        assert!(s.nav_data.is_some());
     }
 }

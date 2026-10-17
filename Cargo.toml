@@ -28,6 +28,7 @@ name = "decode_iq"
 path = "src/bin/decode_iq.rs"
 
 [dependencies]
+sha2 = "0.11.1"
 rand = { version = "0.8", features = ["small_rng"] }
 rayon = "1.12"
 wide = "0.7"  # SIMD векторизация

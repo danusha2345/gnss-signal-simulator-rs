@@ -74,6 +74,21 @@ pub(crate) fn validate_config(json: &Value) -> Result<UtcTime, String> {
     if !matches!(output["format"].as_str(), Some("IQ8" | "IQ4")) {
         return Err("output.format must be IQ8 or IQ4".into());
     }
+    match output["bocMode"].as_str().unwrap_or("auto") {
+        "auto" | "boc11" => {}
+        "full" => {
+            let has_boc = output["systemSelect"].as_array().is_some_and(|a| {
+                a.iter().any(|e| {
+                    e["enable"] == true
+                        && matches!(e["signal"].as_str(), Some("E1" | "L1C" | "B1C"))
+                })
+            });
+            if has_boc && fs / 2.0 <= (1575.42e6 - center).abs() + 7.161e6 {
+                return Err("Full BOC requires Fs/2 > abs(1575.42MHz-center) + 7.161MHz".into());
+            }
+        }
+        _ => return Err("output.bocMode must be auto, full or boc11".into()),
+    }
     let filename = output["name"].as_str().ok_or("Missing output.name")?;
     if filename.is_empty() || filename.len() >= 256 || filename.contains('\0') {
         return Err("output.name must contain 1..255 bytes without NUL".into());

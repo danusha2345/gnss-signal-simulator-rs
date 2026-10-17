@@ -6,6 +6,7 @@
 //
 //----------------------------------------------------------------------
 
+use crate::avx512_intrinsics::Avx512Accelerator;
 use crate::complex_number::ComplexNumber;
 use crate::constants::*;
 use crate::fastmath::FastMath;
@@ -13,7 +14,6 @@ use crate::prngenerate::*;
 use crate::satellite_param::{get_carrier_phase, get_doppler, get_transmit_time, get_travel_time};
 use crate::satellite_signal::SatelliteSignal;
 use crate::types::{GnssSystem, GnssTime, SatelliteParam};
-use crate::avx512_intrinsics::Avx512Accelerator;
 
 /// Кэш PRN кодов для агрессивной оптимизации
 /// Предвычисляет PRN биты на несколько миллисекунд вперед
@@ -149,7 +149,15 @@ impl ComputationCache {
     /// Обновляет кэш вычислений с code Doppler коррекцией
     /// code_rate = chip_rate * (1 + doppler_hz / carrier_freq_hz)
     /// Это критично для DLL tracking — без code Doppler код дрейфует ~0.002 чипа/мс
-    pub fn update(&mut self, cn0: f64, sample_number: i32, if_freq: f64, chip_rate: f64, doppler_hz: f64, carrier_freq_hz: f64) {
+    pub fn update(
+        &mut self,
+        cn0: f64,
+        sample_number: i32,
+        if_freq: f64,
+        chip_rate: f64,
+        doppler_hz: f64,
+        carrier_freq_hz: f64,
+    ) {
         // C++ compatible amplitude formula: A = sqrt(C/N0_linear / Fs)
         // Matches SignalSim: pow(10, (CN0-3000)/2000.) / sqrt(SampleNumber)
         let cn0_db = cn0 / 100.0;
@@ -177,6 +185,7 @@ impl ComputationCache {
 
 pub struct SatIfSignal {
     sample_number: i32,
+    pub force_boc11: bool,
     if_freq: i32,
     pub system: GnssSystem,
     pub signal_index: i32,
@@ -237,6 +246,7 @@ impl SatIfSignal {
 
         SatIfSignal {
             sample_number: ms_sample_number,
+            force_boc11: false,
             if_freq: sat_if_freq,
             system: sat_system,
             signal_index: sat_signal_index,
@@ -306,15 +316,19 @@ impl SatIfSignal {
         );
     }
 
-    /// Update satellite parameters (position, velocity, doppler) from recalculated SatelliteParam.
-    /// Called every block (~50ms) to keep Doppler and code delay current.
-    ///
-    /// Carrier phase: NO hard re-anchor — phase accumulates continuously via Doppler
-    /// between updates (like C++ SignalSim updates every 1ms). Re-anchoring every 50ms
-    /// caused ~0.003 cycle phase jumps at 20 Hz — comparable to PLL thermal noise at 45 dB-Hz.
-    ///
-    /// Code phase: re-anchored from true transmit time (~0.001 chip jump, filtered by DLL).
-    pub fn update_satellite_params(&mut self, new_param: &SatelliteParam, output_center_freq: f64, cur_time: &GnssTime) {
+    /// Меняем навигационные данные на следующей границе сообщения; NCO остаются непрерывными.
+    pub(crate) fn queue_navigation_from(&mut self, fresh: &mut Self) {
+        self.satellite_signal
+            .queue_navigation_data(fresh.satellite_signal.take_navigation_data());
+    }
+
+    /// Обновляет геометрию и время nav без переустановки фаз carrier/code NCO.
+    pub fn update_satellite_params(
+        &mut self,
+        new_param: &SatelliteParam,
+        output_center_freq: f64,
+        cur_time: &GnssTime,
+    ) {
         self.sat_param = Some(*new_param);
 
         let signal_center_freq = self.get_signal_center_freq();
@@ -343,7 +357,12 @@ impl SatIfSignal {
 
     /// Lightweight per-ms parameter push (for per-ms main loop, matching C++ StepToNextMs).
     /// Updates sat_param, IF freq, and signal_time. Does NOT re-anchor code/carrier phase.
-    pub fn push_sat_param_for_ms(&mut self, new_param: &SatelliteParam, output_center_freq: f64, cur_time: &GnssTime) {
+    pub fn push_sat_param_for_ms(
+        &mut self,
+        new_param: &SatelliteParam,
+        output_center_freq: f64,
+        cur_time: &GnssTime,
+    ) {
         self.sat_param = Some(*new_param);
         let signal_center_freq = self.get_signal_center_freq();
         self.if_freq = (signal_center_freq - output_center_freq) as i32;
@@ -398,7 +417,6 @@ impl SatIfSignal {
             }
         }
     }
-
 
     /// AVX-512 СВЕРХ-ОПТИМИЗИРОВАННАЯ генерация IF сигнала
     /// РЕВОЛЮЦИОННОЕ ускорение: 16x floats обрабатываются одновременно!
@@ -460,10 +478,11 @@ impl SatIfSignal {
         let doppler_hz = get_doppler(p_sat_param, self.signal_index as usize);
         let carrier_freq_hz = self.get_signal_center_freq();
 
-        if self
-            .computation_cache
-            .needs_update(p_sat_param.CN0 as f64, self.sample_number, doppler_hz)
-        {
+        if self.computation_cache.needs_update(
+            p_sat_param.CN0 as f64,
+            self.sample_number,
+            doppler_hz,
+        ) {
             self.computation_cache.update(
                 p_sat_param.CN0 as f64,
                 self.sample_number,
@@ -484,9 +503,17 @@ impl SatIfSignal {
             let r = self.data_signal.real;
             let i = self.data_signal.imag;
             if r.abs() >= i.abs() {
-                if r >= 0.0 { 1.0 } else { -1.0 }
+                if r >= 0.0 {
+                    1.0
+                } else {
+                    -1.0
+                }
             } else {
-                if i >= 0.0 { 1.0 } else { -1.0 }
+                if i >= 0.0 {
+                    1.0
+                } else {
+                    -1.0
+                }
             }
         };
 
@@ -535,7 +562,6 @@ impl SatIfSignal {
             self.start_code_phase = self.start_code_phase.rem_euclid(self.pilot_length as f64);
         }
     }
-
 
     /// 🚀 ПАМЯТЬ-ЭФФЕКТИВНАЯ генерация сигнала для блока времени
     /// Генерирует только заданный блок времени, используя точную логику модуляции
@@ -593,7 +619,6 @@ impl SatIfSignal {
         }
     }
 
-
     /// Генерация IF сигнала с кэшированием
     /// Для GPS L1CA использует быстрый путь с PrnCache + bitmask,
     /// для BOC-сигналов (BDS B1C, GAL E1) — корректный путь с modulo и BOC-обработкой
@@ -636,10 +661,11 @@ impl SatIfSignal {
         let doppler_hz = get_doppler(p_sat_param, self.signal_index as usize);
         let carrier_freq_hz = self.get_signal_center_freq();
 
-        if self
-            .computation_cache
-            .needs_update(p_sat_param.CN0 as f64, self.sample_number, doppler_hz)
-        {
+        if self.computation_cache.needs_update(
+            p_sat_param.CN0 as f64,
+            self.sample_number,
+            doppler_hz,
+        ) {
             self.computation_cache.update(
                 p_sat_param.CN0 as f64,
                 self.sample_number,
@@ -696,18 +722,11 @@ impl SatIfSignal {
             let cboc_beta = (1.0f64 / 11.0).sqrt();
             // QMBOC(6,1,4/33): quadrature BOC(6,1) pilot component, sqrt(4/29) of the sc(1,1) part
             let qmboc_quad = (4.0f64 / 29.0).sqrt();
-            // The BOC(6,1) subcarrier sits 6*1.023 = 6.138 MHz either side of the signal's
-            // carrier, which lands at if_freq (the signal's offset from the recording centre)
-            // in baseband. It is representable only if the WHOLE component fits the band:
-            // Fs/2 > |if_freq| + 6.138 MHz. This fails either at low Fs (e.g. 5 MHz, |if_freq|=0)
-            // OR when the signal is offset from centre (e.g. E1/B1C at 1575.42 in a file centred
-            // on 1568.26 → |if_freq|≈7.16 MHz, so even Fs=20 MHz is not enough: 10 < 7.16+6.14).
-            // In both cases the 6.138 MHz component aliases into the BOC(1,1) main lobe, corrupting
-            // the E1-B / B1C *data* channel and blocking nav-message decode on real receivers
-            // (pilot acquisition still survives). Fall back to pure BOC(1,1) — the hardware-proven
-            // waveform — when the 6,1 component is not representable.
-            let boc61_representable =
-                (self.sample_number as f64 * 1000.0) / 2.0 > (self.if_freq as f64).abs() + 6.138e6;
+            // Главные лепестки BOC(6,1): ±(6.138 + 1.023) MHz. Это не
+            // идеальный anti-alias filter: гармоники прямоугольника шире полосы.
+            let boc61_representable = !self.force_boc11
+                && (self.sample_number as f64 * 1000.0) / 2.0
+                    > (self.if_freq as f64).abs() + 7.161e6;
             let data_period = code_attribute.data_period;
 
             // BUG 4 FIX: Local copies for mid-sample nav bit transitions
@@ -721,7 +740,10 @@ impl SatIfSignal {
                 let chip_f = base_chip_offset + (i as f64) * code_step;
                 let chip_raw = chip_f as i32;
                 // BOC(6,1) subcarrier sign: 6 half-periods per BOC(1,1) subchip (chip_f >= 0)
-                let s6 = if (is_cboc || is_b1c) && boc61_representable && ((chip_f * 6.0) as i64) & 1 != 0 {
+                let s6 = if (is_cboc || is_b1c)
+                    && boc61_representable
+                    && ((chip_f * 6.0) as i64) & 1 != 0
+                {
                     -1.0
                 } else {
                     1.0
@@ -744,7 +766,9 @@ impl SatIfSignal {
                 prev_data_chip = data_chip_idx;
 
                 let data_sign = if let Some(data_prn) = &self.prn_sequence.data_prn {
-                    if (data_chip_idx as usize) < data_prn.len() && data_prn[data_chip_idx as usize] != 0 {
+                    if (data_chip_idx as usize) < data_prn.len()
+                        && data_prn[data_chip_idx as usize] != 0
+                    {
                         -1.0
                     } else {
                         1.0
@@ -762,7 +786,11 @@ impl SatIfSignal {
                     // Galileo E1-B data: CBOC(6,1,1/11) in-phase sum (alpha*sc11 + beta*sc61).
                     // At low Fs the sc61 part aliases, so fall back to pure BOC(1,1) at full power.
                     let s11 = if (chip_mod & 1) != 0 { -1.0 } else { 1.0 };
-                    let f = if boc61_representable { cboc_alpha * s11 + cboc_beta * s6 } else { s11 };
+                    let f = if boc61_representable {
+                        cboc_alpha * s11 + cboc_beta * s6
+                    } else {
+                        s11
+                    };
                     prn_r *= f;
                     prn_i *= f;
                 } else if is_boc && (chip_mod & 1) != 0 {
@@ -774,10 +802,18 @@ impl SatIfSignal {
                 if let Some(pilot_prn) = &self.prn_sequence.pilot_prn {
                     if pilot_length > 0 {
                         let pilot_chip_mod = chip_raw.rem_euclid(pilot_length);
-                        let pilot_chip = if is_boc { (pilot_chip_mod >> 1) as usize } else { pilot_chip_mod as usize };
+                        let pilot_chip = if is_boc {
+                            (pilot_chip_mod >> 1) as usize
+                        } else {
+                            pilot_chip_mod as usize
+                        };
 
                         if pilot_chip < pilot_prn.len() {
-                            let pilot_sign = if pilot_prn[pilot_chip] != 0 { -1.0 } else { 1.0 };
+                            let pilot_sign = if pilot_prn[pilot_chip] != 0 {
+                                -1.0
+                            } else {
+                                1.0
+                            };
                             // BUG 1: Complex pilot modulation
                             let mut p_r = pilot_signal_local.real * pilot_sign;
                             let mut p_i = pilot_signal_local.imag * pilot_sign;
@@ -787,7 +823,11 @@ impl SatIfSignal {
                                 // Galileo E1-C pilot: CBOC(6,1,1/11) in-phase difference (alpha*sc11 - beta*sc61).
                                 // At low Fs the sc61 part aliases, so fall back to pure BOC(1,1) at full power.
                                 let s11 = if (pilot_chip_mod & 1) != 0 { -1.0 } else { 1.0 };
-                                let f = if boc61_representable { cboc_alpha * s11 - cboc_beta * s6 } else { s11 };
+                                let f = if boc61_representable {
+                                    cboc_alpha * s11 - cboc_beta * s6
+                                } else {
+                                    s11
+                                };
                                 p_r *= f;
                                 p_i *= f;
                             } else if is_b1c {
@@ -805,17 +845,9 @@ impl SatIfSignal {
                                     p_i *= s11;
                                 }
                             } else if is_qmboc {
-                                // GPS L1C pilot: TMBOC(6,1,4/33) time multiplex
-                                let mut flip = false;
-                                let symbol_pos = (signal_time_local.MilliSeconds % 330) / 10;
-                                if symbol_pos == 1 || symbol_pos == 5 || symbol_pos == 7 || symbol_pos == 30 {
-                                    let sub_chip_pos = chip_raw.rem_euclid(12);
-                                    if sub_chip_pos >= 6 { flip = true; }
-                                } else if (pilot_chip_mod & 1) != 0 { flip = true; }
-                                if flip {
-                                    p_r = -p_r;
-                                    p_i = -p_i;
-                                }
+                                let sign = l1c_pilot_subcarrier(chip_f, boc61_representable);
+                                p_r *= sign;
+                                p_i *= sign;
                             } else if is_boc && (pilot_chip_mod & 1) != 0 {
                                 p_r = -p_r;
                                 p_i = -p_i;
@@ -849,7 +881,6 @@ impl SatIfSignal {
         }
     }
 
-
     // CRITICAL OPTIMIZATION: Update only phases without expensive orbit calculations
     pub fn fast_update_phases_only(&mut self) {
         if self.sat_param.is_none() {
@@ -876,6 +907,18 @@ impl SatIfSignal {
                 imag: existing_magnitude * rotate_value.imag,
             };
         }
+    }
+}
+
+/// chip_f измеряется в BOC(1,1) получипах. При недостаточной полосе — явный BOC(1,1).
+pub fn l1c_pilot_subcarrier(chip_f: f64, full_band: bool) -> f64 {
+    let chip = (chip_f / 2.0).floor() as i64;
+    let use_boc6 = full_band && matches!(chip.rem_euclid(33), 0 | 4 | 6 | 29);
+    let half = (if use_boc6 { chip_f * 6.0 } else { chip_f }).floor() as i64;
+    if half.rem_euclid(2) == 0 {
+        1.0
+    } else {
+        -1.0
     }
 }
 

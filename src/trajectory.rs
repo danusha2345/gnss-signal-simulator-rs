@@ -134,8 +134,12 @@ impl TrajectorySegmentBase {
     pub fn init_segment(&mut self, prev_segment: Option<&dyn TrajectorySegment>) {
         if let Some(prev) = prev_segment {
             self.start_pos_vel = prev.get_pos_vel(prev.get_time_span());
-            self.local_speed = *prev.get_local_speed();
-            self.convert_matrix = *prev.get_convert_matrix();
+            self.convert_matrix = calc_conv_matrix_lla(&ecef_to_lla(&self.start_pos_vel));
+            speed_ecef_to_local(
+                &self.convert_matrix,
+                &self.start_pos_vel,
+                &mut self.local_speed,
+            );
         }
     }
 }

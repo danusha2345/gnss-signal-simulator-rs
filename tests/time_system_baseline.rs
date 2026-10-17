@@ -112,7 +112,7 @@ fn glonass_corrected_time_applies_three_hour_offset() {
     let glonass = utc_to_glonass_time_corrected(utc_2025_june_5());
 
     assert_eq!(glonass.LeapYear, 7);
-    assert_eq!(glonass.Day, 10_750);
+    assert_eq!(glonass.Day, 10_749);
     assert_eq!(glonass.MilliSeconds, 47_130_250);
     assert_eq!(glonass.SubMilliSeconds, 0.0);
 }
@@ -136,4 +136,32 @@ fn gnss_time_roundtrips_preserve_calendar_date() {
         (2025, 6, 5)
     );
     assert_eq!((galileo_utc.Hour, galileo_utc.Minute), (10, 5));
+}
+
+#[test]
+fn fractional_time_arithmetic_and_transmit_week_rollover() {
+    let time = GnssTime {
+        Week: 2369,
+        MilliSeconds: 0,
+        SubMilliSeconds: 0.25,
+    };
+    let previous = time.add_milliseconds(-0.5);
+    assert_eq!(previous.Week, 2368);
+    assert_eq!(previous.MilliSeconds, 604799999);
+    assert_eq!(previous.SubMilliSeconds, 0.75);
+    let previous = gnss_rust::satellite_param::get_transmit_time(&time, 0.075);
+    assert_eq!(previous.Week, 2368);
+    assert_eq!(previous.MilliSeconds, 604799925);
+    assert_eq!(previous.SubMilliSeconds, 0.25);
+    let utc = UtcTime {
+        Year: 2025,
+        Month: 12,
+        Day: 31,
+        Hour: 23,
+        Minute: 30,
+        Second: 0.0,
+    };
+    let glo = gnss_rust::gnsstime::utc_to_glonass_time_corrected(utc);
+    assert_eq!(glo.MilliSeconds, 9000000);
+    assert_eq!((glo.Day - 1) % 1461 + 1, 732);
 }

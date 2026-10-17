@@ -320,7 +320,9 @@ pub fn get_satellite_param(
     let u_enu = conv.x2u * los[0] + conv.y2u * los[1] + conv.z2u * los[2];
     let elevation = u_enu.atan2((e_enu * e_enu + n_enu * n_enu).sqrt());
     let mut azimuth = e_enu.atan2(n_enu);
-    if azimuth < 0.0 { azimuth += std::f64::consts::TAU; }
+    if azimuth < 0.0 {
+        azimuth += std::f64::consts::TAU;
+    }
 
     // Calculate ionospheric delay
     satellite_param.IonoDelay = gps_iono_delay(
@@ -359,11 +361,7 @@ pub fn get_satellite_param(
             // B2AB
         }
         GnssSystem::GalileoSystem => {
-            satellite_param.GroupDelay[0] = eph.tgd; // E1
-            satellite_param.GroupDelay[1] = eph.tgd_ext[2]; // E5A
-            satellite_param.GroupDelay[2] = eph.tgd_ext[4]; // E5B
-            satellite_param.GroupDelay[3] = (eph.tgd_ext[2] + eph.tgd_ext[4]) / 2.0; // E5
-            satellite_param.GroupDelay[4] = eph.tgd_ext[4]; // E6
+            satellite_param.GroupDelay = crate::galileo::group_delays(eph);
         }
         _ => {}
     }
@@ -565,23 +563,7 @@ pub fn get_doppler(satellite_param: &SatelliteParam, signal_index: usize) -> f64
 
 /// Get transmit time from receiver time and travel time
 pub fn get_transmit_time(receiver_time: &GnssTime, travel_time: f64) -> GnssTime {
-    let mut transmit_time = *receiver_time;
-
-    let travel_time_ms = travel_time * 1000.0;
-    transmit_time.MilliSeconds -= travel_time_ms as i32;
-    let fractional_ms = travel_time_ms - travel_time_ms.floor();
-    transmit_time.SubMilliSeconds -= fractional_ms;
-
-    if transmit_time.SubMilliSeconds < 0.0 {
-        transmit_time.SubMilliSeconds += 1.0;
-        transmit_time.MilliSeconds -= 1;
-    }
-
-    if transmit_time.MilliSeconds < 0 {
-        transmit_time.MilliSeconds += 604800000; // Add one week in milliseconds
-    }
-
-    transmit_time
+    receiver_time.add_milliseconds(-travel_time * 1000.0)
 }
 
 // Helper functions that need to be implemented or imported from coordinate module
@@ -824,15 +806,9 @@ fn glonass_sat_pos_speed_eph(
     // eph.{x,y,z,v,a} уже в СИ (метры, м/с, м/с²) — парсер конвертирует км→м (* 1e3).
     // PZ90_GM / PZ90_AE тоже в метрах, поэтому НИКАКОГО доп. масштабирования (баг ×1000).
     let mut state = [
-        eph.x,
-        eph.y,
-        eph.z, // позиция, м
-        eph.vx,
-        eph.vy,
-        eph.vz, // скорость, м/с
-        eph.ax,
-        eph.ay,
-        eph.az, // ускорение, м/с²
+        eph.x, eph.y, eph.z, // позиция, м
+        eph.vx, eph.vy, eph.vz, // скорость, м/с
+        eph.ax, eph.ay, eph.az, // ускорение, м/с²
     ];
 
     // Интегрирование методом Рунге-Кутта с фиксированным шагом
@@ -973,70 +949,7 @@ fn glonass_clock_correction(eph: &GlonassEphemeris, transmit_time: f64) -> f64 {
     -eph.tn + eph.gamma * time_diff
 }
 
-/// Рассчитывает ионосферную задержку по модели Klobuchar
-/// Применяется для GPS системы, подходит для BeiDou и Galileo
-fn gps_iono_delay(
-    iono_param: &IonoParam,
-    time: f64,
-    lat: f64,
-    lon: f64,
-    elevation: f64,
-    azimuth: f64,
-) -> f64 {
-    use std::f64::consts::PI;
-
-    let el = elevation / PI;
-    let mut lat_semi = lat / PI;
-    let mut lon_semi = lon / PI;
-
-    // Рассчет подспутниковой широты и долготы
-    let psi = 0.0137 / (el + 0.11) - 0.022;
-    lat_semi += psi * azimuth.cos();
-
-    // Ограничение широты
-    lat_semi = lat_semi.clamp(-0.416, 0.416);
-
-    lon_semi += psi * azimuth.sin() / (lat_semi * PI).cos();
-    lat_semi += 0.064 * ((lon_semi - 1.617) * PI).cos();
-
-    // Коэффициент отображения
-    let f = 1.0 + 16.0 * (0.53 - el).powi(3);
-
-    // Период
-    let mut per = iono_param.b0
-        + (iono_param.b1 + (iono_param.b2 + iono_param.b3 * lat_semi) * lat_semi) * lat_semi;
-    if per < 72000.0 {
-        per = 72000.0;
-    }
-
-    // Местное время
-    let mut t = (43200.0 * lon_semi) + time;
-    while t >= 86400.0 {
-        t -= 86400.0;
-    }
-    while t < 0.0 {
-        t += 86400.0;
-    }
-
-    let x = PI * 2.0 * (t - 50400.0) / per;
-    let f_light = f * LIGHT_SPEED;
-
-    if x >= 1.57 || x <= -1.57 {
-        // Ночное время
-        f_light * 5e-9
-    } else {
-        // Амплитуда
-        let amp = iono_param.a0
-            + (iono_param.a1 + (iono_param.a2 + iono_param.a3 * lat_semi) * lat_semi) * lat_semi;
-        if amp < 0.0 {
-            f_light * 5e-9
-        } else {
-            let x2 = x * x;
-            let x1 = 1.0 - x2 / 2.0 + x2 * x2 / 24.0; // Полином Тейлора для cos(x)
-            f_light * (5e-9 + amp * x1)
-        }
-    }
-}
+use crate::coordinate::gps_iono_delay;
 
 /// Рассчитывает тропосферную задержку по упрощенной модели Saastamoinen
 /// Учитывает высоту, широту и угол места
@@ -1309,7 +1222,9 @@ pub fn get_satellite_param_with_prediction(
     let u_enu = conv.x2u * los[0] + conv.y2u * los[1] + conv.z2u * los[2];
     let elevation = u_enu.atan2((e_enu * e_enu + n_enu * n_enu).sqrt());
     let mut azimuth = e_enu.atan2(n_enu);
-    if azimuth < 0.0 { azimuth += std::f64::consts::TAU; }
+    if azimuth < 0.0 {
+        azimuth += std::f64::consts::TAU;
+    }
 
     // Calculate ionospheric delay
     satellite_param.IonoDelay = gps_iono_delay(
@@ -1353,11 +1268,7 @@ pub fn get_satellite_param_with_prediction(
             // B2AB
         }
         GnssSystem::GalileoSystem => {
-            satellite_param.GroupDelay[0] = eph.tgd; // E1
-            satellite_param.GroupDelay[1] = eph.tgd_ext[2]; // E5A
-            satellite_param.GroupDelay[2] = eph.tgd_ext[4]; // E5B
-            satellite_param.GroupDelay[3] = (eph.tgd_ext[2] + eph.tgd_ext[4]) / 2.0; // E5
-            satellite_param.GroupDelay[4] = eph.tgd_ext[4]; // E6
+            satellite_param.GroupDelay = crate::galileo::group_delays(eph);
         }
         _ => {}
     }
@@ -1542,8 +1453,7 @@ impl SatelliteParamCalculator {
                 adjusted_time.MilliSeconds -= 14000;
             }
             GnssSystem::GlonassSystem => {
-                let seconds =
-                    (time.Week as u32) * 604800 + (time.MilliSeconds / 1000) as u32;
+                let seconds = (time.Week as u32) * 604800 + (time.MilliSeconds / 1000) as u32;
                 let leap_second = get_leap_second(seconds);
                 adjusted_time.MilliSeconds =
                     (time.MilliSeconds + 10800000 - leap_second * 1000) % 86400000;
@@ -1551,59 +1461,37 @@ impl SatelliteParamCalculator {
             _ => {}
         }
 
-        let satellite_time = (adjusted_time.MilliSeconds as f64
-            + adjusted_time.SubMilliSeconds)
-            / 1000.0;
+        let satellite_time =
+            (adjusted_time.MilliSeconds as f64 + adjusted_time.SubMilliSeconds) / 1000.0;
 
         // First estimate: compute sat position at nominal time
         if self.system == GnssSystem::GlonassSystem {
             if let Some(ref glo_eph) = self.glo_eph_cur {
-                glonass_sat_pos_speed_eph(
-                    satellite_time,
-                    glo_eph,
-                    &mut self.pos_vel,
-                    None,
-                );
+                glonass_sat_pos_speed_eph(satellite_time, glo_eph, &mut self.pos_vel, None);
             }
         } else if let Some(ref eph) = self.eph_cur {
-            gps_sat_pos_speed_eph(
-                self.system,
-                satellite_time,
-                eph,
-                &mut self.pos_vel,
-                None,
-            );
+            gps_sat_pos_speed_eph(self.system, satellite_time, eph, &mut self.pos_vel, None);
         }
 
-        self.travel_time = geometry_distance(
-            position_ecef,
-            &self.pos_vel,
-            Some(&mut self.los_vector),
-        ) / LIGHT_SPEED;
+        self.travel_time =
+            geometry_distance(position_ecef, &self.pos_vel, Some(&mut self.los_vector))
+                / LIGHT_SPEED;
 
         // Correct for satellite motion during signal travel
         self.pos_vel.x -= self.travel_time * self.pos_vel.vx;
         self.pos_vel.y -= self.travel_time * self.pos_vel.vy;
         self.pos_vel.z -= self.travel_time * self.pos_vel.vz;
 
-        self.travel_time = geometry_distance(
-            position_ecef,
-            &self.pos_vel,
-            Some(&mut self.los_vector),
-        ) / LIGHT_SPEED;
+        self.travel_time =
+            geometry_distance(position_ecef, &self.pos_vel, Some(&mut self.los_vector))
+                / LIGHT_SPEED;
         let sat_time_corrected = satellite_time - self.travel_time;
 
         // Calculate accurate position and clock correction
         if self.system == GnssSystem::GlonassSystem {
             if let Some(ref glo_eph) = self.glo_eph_cur {
-                glonass_sat_pos_speed_eph(
-                    sat_time_corrected,
-                    glo_eph,
-                    &mut self.pos_vel,
-                    None,
-                );
-                self.clock_error =
-                    glonass_clock_correction(glo_eph, sat_time_corrected);
+                glonass_sat_pos_speed_eph(sat_time_corrected, glo_eph, &mut self.pos_vel, None);
+                self.clock_error = glonass_clock_correction(glo_eph, sat_time_corrected);
             }
         } else if let Some(ref eph) = self.eph_cur {
             gps_sat_pos_speed_eph(
@@ -1629,8 +1517,7 @@ impl SatelliteParamCalculator {
                         &mut pos_vel_prev,
                         None,
                     );
-                    clock_error_prev =
-                        glonass_clock_correction(glo_eph_prev, sat_time_corrected);
+                    clock_error_prev = glonass_clock_correction(glo_eph_prev, sat_time_corrected);
                 }
             } else if let Some(ref eph_prev) = self.eph_prev {
                 gps_sat_pos_speed_eph(
@@ -1652,29 +1539,17 @@ impl SatelliteParamCalculator {
                 self.eph_transition -= time_step;
             }
 
-            let weight_prev =
-                self.eph_transition as f64 / TRANSIT_PERIOD_MS as f64;
-            self.pos_vel.x +=
-                (pos_vel_prev.x - self.pos_vel.x) * weight_prev;
-            self.pos_vel.y +=
-                (pos_vel_prev.y - self.pos_vel.y) * weight_prev;
-            self.pos_vel.z +=
-                (pos_vel_prev.z - self.pos_vel.z) * weight_prev;
-            self.pos_vel.vx +=
-                (pos_vel_prev.vx - self.pos_vel.vx) * weight_prev;
-            self.pos_vel.vy +=
-                (pos_vel_prev.vy - self.pos_vel.vy) * weight_prev;
-            self.pos_vel.vz +=
-                (pos_vel_prev.vz - self.pos_vel.vz) * weight_prev;
-            self.clock_error +=
-                (clock_error_prev - self.clock_error) * weight_prev;
+            let weight_prev = self.eph_transition as f64 / TRANSIT_PERIOD_MS as f64;
+            self.pos_vel.x += (pos_vel_prev.x - self.pos_vel.x) * weight_prev;
+            self.pos_vel.y += (pos_vel_prev.y - self.pos_vel.y) * weight_prev;
+            self.pos_vel.z += (pos_vel_prev.z - self.pos_vel.z) * weight_prev;
+            self.pos_vel.vx += (pos_vel_prev.vx - self.pos_vel.vx) * weight_prev;
+            self.pos_vel.vy += (pos_vel_prev.vy - self.pos_vel.vy) * weight_prev;
+            self.pos_vel.vz += (pos_vel_prev.vz - self.pos_vel.vz) * weight_prev;
+            self.clock_error += (clock_error_prev - self.clock_error) * weight_prev;
         }
 
-        let distance = geometry_distance(
-            position_ecef,
-            &self.pos_vel,
-            Some(&mut self.los_vector),
-        );
+        let distance = geometry_distance(position_ecef, &self.pos_vel, Some(&mut self.los_vector));
         let (el, az) = sat_el_az_from_los(&self.los_vector);
         self.elevation = el;
         self.azimuth = az;
@@ -1687,22 +1562,17 @@ impl SatelliteParamCalculator {
             self.elevation,
             self.azimuth,
         );
-        self.tropo_delay_meter =
-            tropo_delay(position_lla.lat, position_lla.alt, self.elevation);
+        self.tropo_delay_meter = tropo_delay(position_lla.lat, position_lla.alt, self.elevation);
         let total_distance = distance + self.tropo_delay_meter;
 
         if self.system == GnssSystem::GlonassSystem {
-            self.travel_time =
-                total_distance / LIGHT_SPEED - self.clock_error;
+            self.travel_time = total_distance / LIGHT_SPEED - self.clock_error;
             if let Some(ref glo_eph) = self.glo_eph_cur {
-                self.relative_speed = sat_relative_speed(
-                    position_ecef,
-                    &self.pos_vel,
-                ) - LIGHT_SPEED * glo_eph.gamma;
+                self.relative_speed =
+                    sat_relative_speed(position_ecef, &self.pos_vel) - LIGHT_SPEED * glo_eph.gamma;
             }
         } else {
-            self.travel_time =
-                total_distance / LIGHT_SPEED - self.clock_error;
+            self.travel_time = total_distance / LIGHT_SPEED - self.clock_error;
             self.group_delay = [0.0; 8];
             if let Some(ref eph) = self.eph_cur {
                 // Group delays per system
@@ -1720,16 +1590,11 @@ impl SatelliteParamCalculator {
                         self.group_delay[3] = 0.0; // B3I
                         self.group_delay[4] = eph.tgd_ext[3]; // B2A
                         self.group_delay[5] = eph.tgd_ext[4]; // B2B
-                        self.group_delay[6] =
-                            (eph.tgd_ext[3] + eph.tgd_ext[4]) / 2.0; // B2AB
+                        self.group_delay[6] = (eph.tgd_ext[3] + eph.tgd_ext[4]) / 2.0;
+                        // B2AB
                     }
                     GnssSystem::GalileoSystem => {
-                        self.group_delay[0] = eph.tgd; // E1
-                        self.group_delay[1] = eph.tgd_ext[2]; // E5A
-                        self.group_delay[2] = eph.tgd_ext[4]; // E5B
-                        self.group_delay[3] =
-                            (eph.tgd_ext[2] + eph.tgd_ext[4]) / 2.0; // E5
-                        self.group_delay[4] = eph.tgd_ext[4]; // E6
+                        self.group_delay = crate::galileo::group_delays(eph);
                     }
                     _ => {}
                 }
@@ -1743,25 +1608,17 @@ impl SatelliteParamCalculator {
 
     // Uses global signal index, maps to local array index for group_delay
     pub fn get_travel_time_calc(&self, signal_index: usize) -> f64 {
-        let array_index =
-            map_signal_to_array_index(self.system, signal_index).unwrap_or(0);
+        let array_index = map_signal_to_array_index(self.system, signal_index).unwrap_or(0);
         self.travel_time
             + self.group_delay[array_index]
-            + get_iono_delay(self.iono_delay_meter, self.system, signal_index)
-                / LIGHT_SPEED
+            + get_iono_delay(self.iono_delay_meter, self.system, signal_index) / LIGHT_SPEED
     }
 
     pub fn get_carrier_phase_calc(&self, signal_index: usize) -> f64 {
-        let array_index =
-            map_signal_to_array_index(self.system, signal_index).unwrap_or(0);
-        let total_travel =
-            self.travel_time + self.group_delay[array_index];
+        let array_index = map_signal_to_array_index(self.system, signal_index).unwrap_or(0);
+        let total_travel = self.travel_time + self.group_delay[array_index];
         let distance = total_travel * LIGHT_SPEED
-            - get_iono_delay(
-                self.iono_delay_meter,
-                self.system,
-                signal_index,
-            );
+            - get_iono_delay(self.iono_delay_meter, self.system, signal_index);
         distance / self.get_wave_length_calc(signal_index)
     }
 
@@ -1779,9 +1636,7 @@ impl SatelliteParamCalculator {
 
     pub fn update_cn0(&mut self, power_list: &[SignalPower]) {
         for power in power_list {
-            if (power.svid == self.svid || power.svid == 0)
-                && power.system == self.system as i32
-            {
+            if (power.svid == self.svid || power.svid == 0) && power.system == self.system as i32 {
                 let new_cn0 = if power.cn0 < 0.0 {
                     let mut cn0 = self.cn0_default;
                     match self.cn0_adjust {
@@ -1828,7 +1683,10 @@ mod wave_length_tests {
         // B2AB must be distinct from B1C (the regression aliased them together).
         let b2ab = get_wave_length(GnssSystem::BdsSystem, SIGNAL_INDEX_B2AB, 0);
         let b1c = get_wave_length(GnssSystem::BdsSystem, SIGNAL_INDEX_B1C, 0);
-        assert!((b2ab - b1c).abs() > 1e-3, "B2AB wavelength must differ from B1C");
+        assert!(
+            (b2ab - b1c).abs() > 1e-3,
+            "B2AB wavelength must differ from B1C"
+        );
     }
 }
 

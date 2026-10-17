@@ -155,25 +155,13 @@ impl GnssTime {
     /// # Возвращает
     /// Новое время ГНСС с корректно обработанными переносами недель
     pub fn add_milliseconds(&self, ms: f64) -> GnssTime {
-        let mut new_ms = self.MilliSeconds as f64 + ms;
-        let mut new_week = self.Week;
-
-        // Обработка переполнения недели (604800000 мс = 1 неделя = 7*24*60*60*1000)
-        while new_ms >= 604800000.0 {
-            new_ms -= 604800000.0;
-            new_week += 1;
-        }
-
-        // Обработка отрицательных значений (переход к предыдущей неделе)
-        while new_ms < 0.0 {
-            new_ms += 604800000.0;
-            new_week -= 1;
-        }
-
+        let fractional = self.SubMilliSeconds + ms;
+        let whole = fractional.floor() as i64;
+        let total = self.MilliSeconds as i64 + whole;
         GnssTime {
-            Week: new_week,
-            MilliSeconds: new_ms as i32,
-            SubMilliSeconds: self.SubMilliSeconds,
+            Week: self.Week + total.div_euclid(604800000) as i32,
+            MilliSeconds: total.rem_euclid(604800000) as i32,
+            SubMilliSeconds: fractional - whole as f64,
         }
     }
 }
@@ -229,7 +217,7 @@ pub struct GpsEphemeris {
     /// Идентификатор спутника (PRN/SVID: 1-32 для GPS, 1-63 для BeiDou)
     pub svid: u8,
     /// Источник данных: LNAV(0), CNAV(1), FNAV(1), или специальные форматы
-    pub source: u8,
+    pub source: u16,
     /// Флаг валидности эфемерид (0 = невалидны, 1 = валидны)
     pub valid: u8,
     /// Дополнительные флаги (системно-специфичные)
@@ -323,7 +311,7 @@ pub struct BeiDouEphemeris {
     pub iodc: u16,   // Issue of Data Clock - проблема данных часов
     pub iode: u8,    // Issue of Data Ephemeris - проблема данных эфемерид
     pub svid: u8,    // Satellite Vehicle ID - идентификатор спутника (1-63)
-    pub source: u8,  // источник данных (D1/D2, B-CNAV1, B-CNAV2, B-CNAV3)
+    pub source: u16, // источник данных (D1/D2, B-CNAV1, B-CNAV2, B-CNAV3)
     pub valid: u8,   // флаг валидности
     pub flag: u16,   // дополнительные флаги
     pub health: u16, // статус здоровья спутника
@@ -384,20 +372,20 @@ pub struct BeiDouEphemeris {
 }
 
 // Definitions for source field
-pub const EPH_SOURCE_LNAV: u8 = 0;
-pub const EPH_SOURCE_D1D2: u8 = 0;
-pub const EPH_SOURCE_INAV: u8 = 0;
-pub const EPH_SOURCE_CNAV: u8 = 1;
-pub const EPH_SOURCE_CNV1: u8 = 1;
-pub const EPH_SOURCE_FNAV: u8 = 1;
-pub const EPH_SOURCE_CNV2: u8 = 2;
-pub const EPH_SOURCE_CNV3: u8 = 3;
+pub const EPH_SOURCE_LNAV: u16 = 0;
+pub const EPH_SOURCE_D1D2: u16 = 0;
+pub const EPH_SOURCE_INAV: u16 = 0;
+pub const EPH_SOURCE_CNAV: u16 = 1;
+pub const EPH_SOURCE_CNV1: u16 = 1;
+pub const EPH_SOURCE_FNAV: u16 = 1;
+pub const EPH_SOURCE_CNV2: u16 = 2;
+pub const EPH_SOURCE_CNV3: u16 = 3;
 
 // BeiDou specific source field definitions
-pub const BDS_SOURCE_D1D2: u8 = 0; // D1/D2 navigation messages (legacy)
-pub const BDS_SOURCE_BCNAV1: u8 = 1; // B-CNAV1 для B1C сигнала
-pub const BDS_SOURCE_BCNAV2: u8 = 2; // B-CNAV2 для B2a сигнала
-pub const BDS_SOURCE_BCNAV3: u8 = 3; // B-CNAV3 для B2b сигнала
+pub const BDS_SOURCE_D1D2: u16 = 0; // D1/D2 navigation messages (legacy)
+pub const BDS_SOURCE_BCNAV1: u16 = 1; // B-CNAV1 для B1C сигнала
+pub const BDS_SOURCE_BCNAV2: u16 = 2; // B-CNAV2 для B2a сигнала
+pub const BDS_SOURCE_BCNAV3: u16 = 3; // B-CNAV3 для B2b сигнала
 
 impl BeiDouEphemeris {
     /// Конвертирует BeiDouEphemeris в GpsEphemeris для обратной совместимости

@@ -27,7 +27,6 @@
 
 #![allow(non_snake_case)]
 
-use crate::gnsstime::utc_to_glonass_time;
 use crate::gps_time_to_utc;
 use crate::types::*;
 use crate::COMPOSE_BITS;
@@ -56,57 +55,44 @@ impl GNavBit {
         _param: i32,
         nav_bits: &mut [i32],
     ) -> i32 {
-        let mut data = [0u32; 3];
-        let mut data_bits = [0i32; 85];
-
-        // Calculate frame and string index from GLONASS time
-        let utc_time = gps_time_to_utc(start_time, true);
-        let glonass_time = utc_to_glonass_time(utc_time);
-        let _frame_idx = (glonass_time.MilliSeconds / 30000) % 5;
-        let string_idx = (glonass_time.MilliSeconds % 30000) / 2000;
-
-        // Get the appropriate data string (ephemeris or almanac)
-        if string_idx < 4 {
-            // Ephemeris strings (1-4)
-            data.copy_from_slice(&self.StringEph[(svid - 1) as usize][string_idx as usize]);
+        if !(1..=24).contains(&svid) || nav_bits.len() < 85 {
+            return -1;
+        }
+        let utc = gps_time_to_utc(start_time, true);
+        let time = crate::gnsstime::utc_to_glonass_time_corrected(utc);
+        let string_idx = (time.MilliSeconds % 30000 / 2000) as usize;
+        let mut data = if string_idx < 4 {
+            self.StringEph[svid as usize - 1][string_idx]
         } else {
-            // Almanac strings (5-15)
-            data.copy_from_slice(&self.StringAlm[(svid - 1) as usize][(string_idx - 4) as usize]);
+            self.StringAlm[svid as usize - 1][string_idx - 4]
+        };
+        Self::glo_set_field(&mut data, 81, 84, string_idx as u32 + 1);
+        Self::glo_set_field(&mut data, 85, 85, 0);
+        if string_idx == 0 {
+            let seconds = time.MilliSeconds / 1000;
+            let tk = ((seconds / 3600) << 7) | ((seconds / 60 % 60) << 1) | ((seconds % 60) / 30);
+            Self::glo_set_field(&mut data, 65, 76, tk as u32);
         }
-
-        // Add checksum to the data bits
-        data[2] |= self.CheckSum(&data);
-
-        // Extract 85 bits from the 3-word data array
-        for i in 0..85 {
-            data_bits[i] = ((data[i / 32] >> (31 - (i % 32))) & 1) as i32;
+        if string_idx == 4 {
+            // Модель синхронизирована с UTC: только дробные tau_c/tau_GPS равны 0.
+            data = [0; 3];
+            Self::glo_set_field(&mut data, 81, 84, 5);
+            Self::glo_set_field(
+                &mut data,
+                70,
+                80,
+                ((time.Day - 1).rem_euclid(1461) + 1) as u32,
+            );
+            Self::glo_set_field(&mut data, 32, 36, (time.LeapYear + 1) as u32);
         }
-
-        // According to GLONASS ICD, the 85th bit is "idle" and always equals 0
-        data_bits[84] = 0;
-
-        // According to GLONASS ICD, navigation data is transmitted directly without relative encoding
-        // Relative encoding was removed to comply with the standard
-        for i in 0..85 {
-            nav_bits[i] = data_bits[i];
+        Self::glo_set_field(&mut data, 1, 8, 0);
+        let checksum = self.CheckSum(&data);
+        Self::glo_set_field(&mut data, 1, 8, checksum);
+        for (i, out) in nav_bits[..85].iter_mut().enumerate() {
+            *out = ((data[i / 32] >> (31 - i % 32)) & 1) as i32;
         }
-
-        // Add 8 Hamming code bits (already included in data through CheckSum)
-        // Hamming code is located in bits 78-85 of the third word data[2]
-        for i in 0..8 {
-            if 85 + i < nav_bits.len() {
-                nav_bits[85 + i] = ((data[2] >> (7 - i)) & 1) as i32;
-            }
-        }
-
-        // Add 7 padding bits (always zeros)
-        for i in 0..7 {
-            if 93 + i < nav_bits.len() {
-                nav_bits[93 + i] = 0;
-            }
-        }
-
-        // Total: 85 information + 8 check + 7 padding = 100 bits
+        // Здесь ровно 85 исходных битов, включая idle первым и 8 check bits последними.
+        // Относительное и bi-binary кодирование выполняет SatelliteSignal.
         0
     }
 
@@ -237,9 +223,11 @@ impl GNavBit {
     /// shifted every field by 10 bits and put coordinates into the velocity field's slot.
     fn glo_set_field(string: &mut [u32; 3], icd_lo: u32, icd_hi: u32, value: u32) {
         for k in 0..=(icd_hi - icd_lo) {
-            if (value >> k) & 1 != 0 {
+            {
                 let j = 85 - (icd_lo + k); // transmission bit index (ICD 85 -> 0)
-                string[(j / 32) as usize] |= 1u32 << (31 - (j % 32));
+                let mask = 1u32 << (31 - (j % 32));
+                string[(j / 32) as usize] =
+                    (string[(j / 32) as usize] & !mask) | (((value >> k) & 1) << (31 - j % 32));
             }
         }
     }
@@ -267,34 +255,99 @@ impl GNavBit {
         // --- String 1: P1, tk, x, vx, ax ---
         Self::glo_set_field(&mut string[0], 77, 78, (ephemeris.P & 0x3) as u32); // P1
         Self::glo_set_field(&mut string[0], 65, 76, ephemeris.tk as u32); // tk = (h<<7)|(m<<1)|s30
-        Self::glo_set_field(&mut string[0], 9, 35, Self::glo_sign_mag(ephemeris.x / 1000.0, -11, 27));
-        Self::glo_set_field(&mut string[0], 41, 64, Self::glo_sign_mag(ephemeris.vx / 1000.0, -20, 24));
-        Self::glo_set_field(&mut string[0], 36, 40, Self::glo_sign_mag(ephemeris.ax / 1000.0, -30, 5));
+        Self::glo_set_field(
+            &mut string[0],
+            9,
+            35,
+            Self::glo_sign_mag(ephemeris.x / 1000.0, -11, 27),
+        );
+        Self::glo_set_field(
+            &mut string[0],
+            41,
+            64,
+            Self::glo_sign_mag(ephemeris.vx / 1000.0, -20, 24),
+        );
+        Self::glo_set_field(
+            &mut string[0],
+            36,
+            40,
+            Self::glo_sign_mag(ephemeris.ax / 1000.0, -30, 5),
+        );
 
         // --- String 2: Bn, P2, tb, y, vy, ay ---
         Self::glo_set_field(&mut string[1], 78, 80, ephemeris.Bn as u32);
         Self::glo_set_field(&mut string[1], 77, 77, ((ephemeris.P >> 2) & 0x1) as u32); // P2
         Self::glo_set_field(&mut string[1], 70, 76, (ephemeris.tb / 900) as u32); // tb: sec -> 15-min units
-        Self::glo_set_field(&mut string[1], 9, 35, Self::glo_sign_mag(ephemeris.y / 1000.0, -11, 27));
-        Self::glo_set_field(&mut string[1], 41, 64, Self::glo_sign_mag(ephemeris.vy / 1000.0, -20, 24));
-        Self::glo_set_field(&mut string[1], 36, 40, Self::glo_sign_mag(ephemeris.ay / 1000.0, -30, 5));
+        Self::glo_set_field(
+            &mut string[1],
+            9,
+            35,
+            Self::glo_sign_mag(ephemeris.y / 1000.0, -11, 27),
+        );
+        Self::glo_set_field(
+            &mut string[1],
+            41,
+            64,
+            Self::glo_sign_mag(ephemeris.vy / 1000.0, -20, 24),
+        );
+        Self::glo_set_field(
+            &mut string[1],
+            36,
+            40,
+            Self::glo_sign_mag(ephemeris.ay / 1000.0, -30, 5),
+        );
 
         // --- String 3: P3, gamma, P, ln, z, vz, az ---
         Self::glo_set_field(&mut string[2], 80, 80, ((ephemeris.P >> 3) & 0x1) as u32); // P3
-        Self::glo_set_field(&mut string[2], 69, 79, Self::glo_sign_mag(ephemeris.gamma, -40, 11));
+        Self::glo_set_field(
+            &mut string[2],
+            69,
+            79,
+            Self::glo_sign_mag(ephemeris.gamma, -40, 11),
+        );
         Self::glo_set_field(&mut string[2], 66, 67, ((ephemeris.P >> 4) & 0x3) as u32); // P
         Self::glo_set_field(&mut string[2], 65, 65, 0); // ln
-        Self::glo_set_field(&mut string[2], 9, 35, Self::glo_sign_mag(ephemeris.z / 1000.0, -11, 27));
-        Self::glo_set_field(&mut string[2], 41, 64, Self::glo_sign_mag(ephemeris.vz / 1000.0, -20, 24));
-        Self::glo_set_field(&mut string[2], 36, 40, Self::glo_sign_mag(ephemeris.az / 1000.0, -30, 5));
+        Self::glo_set_field(
+            &mut string[2],
+            9,
+            35,
+            Self::glo_sign_mag(ephemeris.z / 1000.0, -11, 27),
+        );
+        Self::glo_set_field(
+            &mut string[2],
+            41,
+            64,
+            Self::glo_sign_mag(ephemeris.vz / 1000.0, -20, 24),
+        );
+        Self::glo_set_field(
+            &mut string[2],
+            36,
+            40,
+            Self::glo_sign_mag(ephemeris.az / 1000.0, -30, 5),
+        );
 
         // --- String 4: tau_n, dtau_n, En, P4, FT, NT, n, M ---
-        Self::glo_set_field(&mut string[3], 59, 80, Self::glo_sign_mag(ephemeris.tn, -30, 22));
-        Self::glo_set_field(&mut string[3], 54, 58, Self::glo_sign_mag(ephemeris.dtn, -30, 5));
+        Self::glo_set_field(
+            &mut string[3],
+            59,
+            80,
+            Self::glo_sign_mag(ephemeris.tn, -30, 22),
+        );
+        Self::glo_set_field(
+            &mut string[3],
+            54,
+            58,
+            Self::glo_sign_mag(ephemeris.dtn, -30, 5),
+        );
         Self::glo_set_field(&mut string[3], 49, 53, ephemeris.En as u32);
         Self::glo_set_field(&mut string[3], 34, 34, ((ephemeris.P >> 6) & 0x1) as u32); // P4
         Self::glo_set_field(&mut string[3], 30, 33, ephemeris.Ft as u32);
-        Self::glo_set_field(&mut string[3], 16, 26, ephemeris.day as u32); // NT
+        Self::glo_set_field(
+            &mut string[3],
+            16,
+            26,
+            ((ephemeris.day as u32).saturating_sub(1) % 1461) + 1,
+        ); // NT
         Self::glo_set_field(&mut string[3], 11, 15, ephemeris.n as u32);
         Self::glo_set_field(&mut string[3], 9, 10, ephemeris.M as u32);
 
@@ -366,62 +419,50 @@ impl GNavBit {
     // The checksum is calculated over 85 data bits. The result is 8 parity bits.
     // The bit numbering is from MSB (1) to LSB (85).
     fn CheckSum(&self, data: &[u32; 3]) -> u32 {
-        let mut data_bits = [0i32; 85];
-        let mut parity = [0u8; 8];
-
-        // Extract 85 data bits into a simple array
-        Self::AssignBits(data[0] as i32, 21, &mut data_bits[0..21]);
-        Self::AssignBits(data[1] as i32, 32, &mut data_bits[21..53]);
-        Self::AssignBits(data[2] as i32, 32, &mut data_bits[53..85]);
-
-        // Calculate parity bits p1-p7 based on ICD
-        for i in 0..85 {
-            if ((i + 1) % 2) != 0 {
-                parity[0] ^= data_bits[i] as u8;
-            } // p1
-            if (i.div_ceil(2) % 2) != 0 {
-                parity[1] ^= data_bits[i] as u8;
-            } // p2
-            if (((i + 1) / 4) % 2) != 0 {
-                parity[2] ^= data_bits[i] as u8;
-            } // p3
-            if (((i + 1) / 8) % 2) != 0 {
-                parity[3] ^= data_bits[i] as u8;
-            } // p4
-            if (((i + 1) / 16) % 2) != 0 {
-                parity[4] ^= data_bits[i] as u8;
-            } // p5
-            if (((i + 1) / 32) % 2) != 0 {
-                parity[5] ^= data_bits[i] as u8;
-            } // p6
-            if (((i + 1) / 64) % 2) != 0 {
-                parity[6] ^= data_bits[i] as u8;
-            } // p7
+        // ICD 4.7 parity masks, MSB-first (также test_glostr в RTKLIB).
+        const MASKS: [[u8; 11]; 7] = [
+            [
+                0x55, 0x55, 0x5A, 0xAA, 0xAA, 0xAA, 0xB5, 0x55, 0x6A, 0xD8, 0x08,
+            ],
+            [
+                0x66, 0x66, 0x6C, 0xCC, 0xCC, 0xCC, 0xD9, 0x99, 0xB3, 0x68, 0x10,
+            ],
+            [
+                0x87, 0x87, 0x8F, 0x0F, 0x0F, 0x0F, 0x1E, 0x1E, 0x3C, 0x70, 0x20,
+            ],
+            [
+                0x07, 0xF8, 0x0F, 0xF0, 0x0F, 0xF0, 0x1F, 0xE0, 0x3F, 0x80, 0x40,
+            ],
+            [
+                0xF8, 0x00, 0x0F, 0xFF, 0xF0, 0x00, 0x1F, 0xFF, 0xC0, 0x00, 0x80,
+            ],
+            [
+                0x00, 0x00, 0x0F, 0xFF, 0xFF, 0xFF, 0xE0, 0x00, 0x00, 0x01, 0x00,
+            ],
+            [
+                0xFF, 0xFF, 0xF0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00,
+            ],
+        ];
+        let mut bytes = [0u8; 11];
+        for (i, b) in bytes.iter_mut().enumerate() {
+            *b = (data[i / 4] >> (24 - 8 * (i % 4))) as u8;
         }
-
-        // p8 is the overall parity of data bits + p1-p7
-        parity[7] =
-            parity[0] ^ parity[1] ^ parity[2] ^ parity[3] ^ parity[4] ^ parity[5] ^ parity[6];
-        for i in 0..85 {
-            parity[7] ^= data_bits[i] as u8;
+        bytes[9] &= 0xf8;
+        bytes[10] = 0;
+        let mut parity = 0u32;
+        for (i, mask) in MASKS.iter().enumerate() {
+            let p = bytes
+                .iter()
+                .zip(mask)
+                .fold(0, |acc, (&b, &m)| acc ^ (b & m).count_ones())
+                & 1;
+            parity |= p << i;
         }
-
-        // Assemble the 8-bit checksum
-        let mut checksum = 0u32;
-        for i in 0..8 {
-            checksum |= (parity[i] as u32) << (7 - i);
-        }
-
-        checksum
+        let overall = (bytes.iter().map(|b| b.count_ones()).sum::<u32>() + parity.count_ones()) & 1;
+        parity | (overall << 7)
     }
 
     // Helper functions
-    fn AssignBits(value: i32, bits: usize, output: &mut [i32]) {
-        for i in 0..bits.min(output.len()) {
-            output[i] = (value >> (bits - 1 - i)) & 1;
-        }
-    }
-
     fn UnscaleInt(value: f64, scale: i32) -> i32 {
         let scaled = value * (2.0_f64).powi(scale);
         if scaled >= 0.0 {

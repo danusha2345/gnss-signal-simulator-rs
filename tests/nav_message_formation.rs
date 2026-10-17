@@ -40,7 +40,7 @@ fn sample_gps_eph(svid: u8) -> GpsEphemeris {
         delta_n: 4.5e-9,
         delta_n_dot: 0.0,
         ecc: 0.01,
-        sqrtA: 5153.795_890_81, // ~26_560 km^0.5
+        sqrtA: 5_153.795_890_81, // ~26_560 km^0.5
         axis_dot: 0.0,
         omega0: 1.0,
         i0: 0.94,
@@ -296,7 +296,7 @@ fn glonass_gnav_forms_strings() {
     let rc = gnav.get_frame_data(t(30_000), 1, 0, &mut bits);
     assert_eq!(rc, 0);
     assert_nav_bits("GLONASS GNAV string", &bits, 0.05);
-    assert_eq!(bits[84], 0, "GLONASS GNAV idle bit should be zero");
+    assert_eq!(bits[0], 0, "GLONASS GNAV idle bit should be zero");
     assert!(
         bits[93..100].iter().all(|&bit| bit == 0),
         "GLONASS GNAV padding bits should be zero"

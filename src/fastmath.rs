@@ -47,10 +47,6 @@ static mut SIN_LUT: [f64; 65536] = [0.0; 65536]; // Таблица значен�
 static mut COS_LUT: [f64; 65536] = [0.0; 65536]; // Таблица значений cos(x)
 static INIT: Once = Once::new(); // Гарантия однократной инициализации таблиц
 
-// Статические переменные для генерации гауссовского шума (алгоритм Бокса-Мюллера)
-static mut HAS_SPARE: bool = false; // Флаг наличия кешированного значения
-static mut SPARE: f64 = 0.0; // Кешированное значение для следующего вызова
-
 impl FastMath {
     // Initialize lookup tables
     fn initialize_lut() {
@@ -148,18 +144,8 @@ impl FastMath {
         }
     }
 
-    // Fast noise generation using Box-Muller with cached values
+    // Два независимых гауссовских компонента; обе величины используются сразу.
     pub fn fast_gaussian_noise(sigma: f64) -> ComplexNumber {
-        unsafe {
-            if HAS_SPARE {
-                HAS_SPARE = false;
-                return ComplexNumber {
-                    real: SPARE * sigma,
-                    imag: 0.0,
-                };
-            }
-        }
-
         let mut rng = rand::thread_rng();
         let (u1, u2, mag) = loop {
             let u1 = 2.0 * rng.gen::<f64>() - 1.0;
@@ -171,11 +157,6 @@ impl FastMath {
         };
 
         let factor = (-2.0 * mag.ln() / mag).sqrt();
-
-        unsafe {
-            SPARE = u2 * factor;
-            HAS_SPARE = true;
-        }
 
         ComplexNumber {
             real: u1 * factor * sigma,
@@ -398,5 +379,20 @@ mod tests {
             assert!(sample.real.is_finite());
             assert!(sample.imag.is_finite());
         }
+    }
+}
+
+#[cfg(test)]
+mod scalar_noise_tests {
+    use super::*;
+    #[test]
+    fn consecutive_complex_noise_keeps_both_components() {
+        // Старый общий spare возвращал imag=0 на каждом втором вызове и
+        // повторял предыдущее Q в следующем I; также создавал data race.
+        let nonzero_q = (0..32)
+            .map(|_| FastMath::fast_gaussian_noise(1.0))
+            .filter(|s| s.imag != 0.0)
+            .count();
+        assert!(nonzero_q > 24);
     }
 }
