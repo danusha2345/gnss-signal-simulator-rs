@@ -1,0 +1,13 @@
+{
+  "epochs": 499,
+  "first_fix_s": 39.80000000000291,
+  "last_fix_s": 89.59999999999854,
+  "max_sv": 8,
+  "horizontal_median_m": 2.0049126351042634,
+  "horizontal_p95_m": 3.5759465041764105,
+  "vertical_median_m": 19.152,
+  "max_gap_s": 0.10000000000582077,
+  "crc_correct": 348,
+  "crc_errors": 0,
+  "handover_windows": {}
+}

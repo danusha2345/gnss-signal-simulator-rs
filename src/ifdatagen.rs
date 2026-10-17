@@ -4363,6 +4363,7 @@ impl IFDataGen {
             }
             self.nav_data.gal_nequick = c_nav_data.gal_iono;
             self.nav_data.gal_utc = c_nav_data.gal_utc;
+            self.nav_data.bds_utc = c_nav_data.bds_utc;
             if let Some(utc) = c_nav_data.utc_param {
                 self.nav_data.set_gps_utc(utc);
                 println!(
@@ -4877,6 +4878,7 @@ impl IFDataGen {
             "noise_algorithm":"rand-0.8-SmallRng-BoxMuller-block50ms-chunk8192-v1",
             "galileo_propagation_ionosphere":"GPS-Klobuchar approximation; NOT NeQuick G",
             "galileo_navigation_ionosphere":"RINEX NeQuick coefficients",
+            "beidou_b1c_ionosphere":"BDGIM coefficients unavailable in RINEX3; zero payload, no Klobuchar conversion",
             "boc_mode":self.scenario_config["output"]["bocMode"].as_str().unwrap_or("auto"),
             "boc_full_main_lobe_requirement":"Fs/2 > abs(carrier-center) + 7161000 Hz",
             "config":self.scenario_config

@@ -159,7 +159,7 @@ pub fn get_glonass_satellite_param(
     satellite_param: &mut SatelliteParam,
 ) {
     let mut sat_position = KinematicInfo::default();
-    let satellite_time = time.MilliSeconds as f64 / 1000.0;
+    let satellite_time = (time.MilliSeconds as f64 + time.SubMilliSeconds) / 1000.0;
 
     satellite_param.system = GnssSystem::GlonassSystem;
     satellite_param.svid = glo_eph.n as i32;
@@ -194,12 +194,13 @@ pub fn get_glonass_satellite_param(
         &sat_position,
         Some(&mut satellite_param.LosVector),
     );
-    let (elevation, azimuth) = sat_el_az_from_los(&satellite_param.LosVector);
+    let (elevation, azimuth) = sat_el_az_from_los(position_lla, &satellite_param.LosVector);
 
+    let gps_time = crate::gnsstime::glonass_corrected_to_gps(*time);
     // Calculate ionospheric delay
     satellite_param.IonoDelay = gps_iono_delay(
         iono_param,
-        corrected_satellite_time,
+        (gps_time.MilliSeconds as f64 + gps_time.SubMilliSeconds) / 1000.0 - travel_time,
         position_lla.lat,
         position_lla.lon,
         elevation,
@@ -242,7 +243,7 @@ pub fn get_satellite_param(
     match system {
         GnssSystem::BdsSystem => {
             // Subtract leap second difference for BDS
-            adjusted_time.MilliSeconds -= 14000;
+            adjusted_time = time.add_milliseconds(-14000.0);
         }
         GnssSystem::GlonassSystem => {
             // GLONASS time handling. Compute in i64: Week*604800 overflows i32 for weeks > 3550.
@@ -441,9 +442,9 @@ pub fn get_iono_delay(iono_delay_l1: f64, system: GnssSystem, signal_index: usiz
         }
         GnssSystem::GlonassSystem => {
             match signal_index {
-                SIGNAL_INDEX_G1 => iono_delay_l1 * 1.040594059405941, // (1575.42/1602)^2 for k=-7
-                SIGNAL_INDEX_G2 => iono_delay_l1 * 1.5980663241899555, // (1575.42/1246)^2 for k=-7
-                SIGNAL_INDEX_G3 => iono_delay_l1 * 1.7205547652916243, // (1575.42/1202.025)^2
+                SIGNAL_INDEX_G1 => iono_delay_l1 * (FREQ_GPS_L1 / FREQ_GLO_G1).powi(2), // slot k=0
+                SIGNAL_INDEX_G2 => iono_delay_l1 * (FREQ_GPS_L1 / FREQ_GLO_G2).powi(2), // slot k=0
+                SIGNAL_INDEX_G3 => iono_delay_l1 * (FREQ_GPS_L1 / FREQ_GLO_G3).powi(2),
                 _ => iono_delay_l1,
             }
         }
@@ -493,14 +494,30 @@ pub fn get_wave_length(system: GnssSystem, signal_index: usize, freq_id: i32) ->
     }
 }
 
+/// Масштабирование ионосферы для фактического GLONASS FDMA-канала.
+pub fn get_iono_delay_with_slot(
+    delay: f64,
+    system: GnssSystem,
+    signal: usize,
+    freq_id: i32,
+) -> f64 {
+    if system == GnssSystem::GlonassSystem {
+        let frequency = LIGHT_SPEED / get_wave_length(system, signal, freq_id);
+        delay * (FREQ_GPS_L1 / frequency).powi(2)
+    } else {
+        get_iono_delay(delay, system, signal)
+    }
+}
+
 /// Get travel time including group delay and ionospheric delay
 pub fn get_travel_time(satellite_param: &SatelliteParam, signal_index: usize) -> f64 {
     let array_index = map_signal_to_array_index(satellite_param.system, signal_index).unwrap_or(0); // Используем индекс 0 если не найден маппинг
     let mut travel_time = satellite_param.TravelTime + satellite_param.GroupDelay[array_index];
-    travel_time += get_iono_delay(
+    travel_time += get_iono_delay_with_slot(
         satellite_param.IonoDelay,
         satellite_param.system,
         signal_index,
+        satellite_param.FreqID,
     ) / LIGHT_SPEED;
     travel_time
 }
@@ -547,10 +564,11 @@ pub fn get_carrier_phase(satellite_param: &SatelliteParam, signal_index: usize) 
     let array_index = map_signal_to_array_index(satellite_param.system, signal_index).unwrap_or(0); // Используем индекс 0 если не найден маппинг
     let mut travel_time = satellite_param.TravelTime + satellite_param.GroupDelay[array_index];
     travel_time = travel_time * LIGHT_SPEED
-        - get_iono_delay(
+        - get_iono_delay_with_slot(
             satellite_param.IonoDelay,
             satellite_param.system,
             signal_index,
+            satellite_param.FreqID,
         );
     travel_time / get_wave_length(satellite_param.system, signal_index, satellite_param.FreqID)
 }
@@ -593,12 +611,15 @@ fn sat_el_az(receiver_pos: &KinematicInfo, sat_pos: &KinematicInfo) -> (f64, f64
 }
 
 /// Calculate elevation and azimuth from LOS vector
-fn sat_el_az_from_los(los_vector: &[f64; 3]) -> (f64, f64) {
-    let horizontal_distance =
-        (los_vector[0] * los_vector[0] + los_vector[1] * los_vector[1]).sqrt();
-    let elevation = los_vector[2].atan2(horizontal_distance);
-    let azimuth = los_vector[1].atan2(los_vector[0]);
-    (elevation, azimuth)
+fn sat_el_az_from_los(position: &LlaPosition, los: &[f64; 3]) -> (f64, f64) {
+    let conv = calc_conv_matrix_lla(position);
+    let east = conv.x2e * los[0] + conv.y2e * los[1];
+    let north = conv.x2n * los[0] + conv.y2n * los[1] + conv.z2n * los[2];
+    let up = conv.x2u * los[0] + conv.y2u * los[1] + conv.z2u * los[2];
+    (
+        up.atan2(east.hypot(north)),
+        east.atan2(north).rem_euclid(std::f64::consts::TAU),
+    )
 }
 
 // Calculate relative speed between receiver and satellite
@@ -1145,7 +1166,7 @@ pub fn get_satellite_param_with_prediction(
     match system {
         GnssSystem::BdsSystem => {
             // Subtract leap second difference for BDS
-            adjusted_time.MilliSeconds -= 14000;
+            adjusted_time = time.add_milliseconds(-14000.0);
         }
         GnssSystem::GlonassSystem => {
             // GLONASS time handling. Compute in i64: Week*604800 overflows i32 for weeks > 3550.
@@ -1450,7 +1471,7 @@ impl SatelliteParamCalculator {
         // Adjust time for system
         match self.system {
             GnssSystem::BdsSystem => {
-                adjusted_time.MilliSeconds -= 14000;
+                adjusted_time = time.add_milliseconds(-14000.0);
             }
             GnssSystem::GlonassSystem => {
                 let seconds = (time.Week as u32) * 604800 + (time.MilliSeconds / 1000) as u32;
@@ -1550,13 +1571,18 @@ impl SatelliteParamCalculator {
         }
 
         let distance = geometry_distance(position_ecef, &self.pos_vel, Some(&mut self.los_vector));
-        let (el, az) = sat_el_az_from_los(&self.los_vector);
+        let (el, az) = sat_el_az_from_los(position_lla, &self.los_vector);
         self.elevation = el;
         self.azimuth = az;
 
         // Ionosphere delay via model
         self.iono_delay_meter = self.iono_delay_model.get_delay(
-            sat_time_corrected,
+            if self.system == GnssSystem::GlonassSystem {
+                (time.MilliSeconds as f64 + time.SubMilliSeconds) / 1000.0
+                    - (satellite_time - sat_time_corrected)
+            } else {
+                sat_time_corrected
+            },
             position_lla.lat,
             position_lla.lon,
             self.elevation,
@@ -1611,14 +1637,24 @@ impl SatelliteParamCalculator {
         let array_index = map_signal_to_array_index(self.system, signal_index).unwrap_or(0);
         self.travel_time
             + self.group_delay[array_index]
-            + get_iono_delay(self.iono_delay_meter, self.system, signal_index) / LIGHT_SPEED
+            + get_iono_delay_with_slot(
+                self.iono_delay_meter,
+                self.system,
+                signal_index,
+                self.freq_id,
+            ) / LIGHT_SPEED
     }
 
     pub fn get_carrier_phase_calc(&self, signal_index: usize) -> f64 {
         let array_index = map_signal_to_array_index(self.system, signal_index).unwrap_or(0);
         let total_travel = self.travel_time + self.group_delay[array_index];
         let distance = total_travel * LIGHT_SPEED
-            - get_iono_delay(self.iono_delay_meter, self.system, signal_index);
+            - get_iono_delay_with_slot(
+                self.iono_delay_meter,
+                self.system,
+                signal_index,
+                self.freq_id,
+            );
         distance / self.get_wave_length_calc(signal_index)
     }
 
@@ -1631,7 +1667,12 @@ impl SatelliteParamCalculator {
     }
 
     pub fn get_iono_delay_calc(&self, signal_index: usize) -> f64 {
-        get_iono_delay(self.iono_delay_meter, self.system, signal_index)
+        get_iono_delay_with_slot(
+            self.iono_delay_meter,
+            self.system,
+            signal_index,
+            self.freq_id,
+        )
     }
 
     pub fn update_cn0(&mut self, power_list: &[SignalPower]) {

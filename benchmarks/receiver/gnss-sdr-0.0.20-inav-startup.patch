@@ -1,0 +1,16 @@
+--- a/src/algorithms/telemetry_decoder/gnuradio_blocks/galileo_telemetry_decoder_gs.cc
++++ b/src/algorithms/telemetry_decoder/gnuradio_blocks/galileo_telemetry_decoder_gs.cc
+@@ -407,7 +407,12 @@
+         {
+             // DECODE COMPLETE WORD (even + odd) and TEST CRC
+             d_inav_nav.split_page(std::move(page_String), d_flag_even_word_arrived);
+-            if (d_inav_nav.get_flag_CRC_test() == true)
++            if (d_flag_even_word_arrived == 0)
++                {
++                    DLOG(INFO) << "Galileo I/NAV incomplete pair in channel " << d_channel
++                               << " from satellite " << d_satellite;
++                }
++            else if (d_inav_nav.get_flag_CRC_test() == true)
+                 {
+                     if (d_band == '1')
+                         {

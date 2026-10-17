@@ -290,7 +290,7 @@ impl SatelliteSignal {
         match self.sat_system {
             GnssSystem::BdsSystem => {
                 // subtract leap second difference
-                transmit_time_adj.MilliSeconds -= 14000;
+                transmit_time_adj = transmit_time.add_milliseconds(-14000.0);
             }
             GnssSystem::GlonassSystem => {
                 // subtract leap second, add 3 hours
@@ -445,7 +445,7 @@ impl SatelliteSignal {
         if let Some((secondary_code, secondary_code_length)) =
             get_pilot_bits(self.sat_system, self.sat_signal as usize, self.svid)
         {
-            let secondary_position = (transmit_time.MilliSeconds / self.attribute.code_length)
+            let secondary_position = (transmit_time_adj.MilliSeconds / self.attribute.code_length)
                 % secondary_code_length as i32;
             pilot_bit = if (secondary_code[(secondary_position / 32) as usize]
                 & (1 << (secondary_position & 0x1f)))

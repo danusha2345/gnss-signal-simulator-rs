@@ -191,6 +191,8 @@ pub struct CNavData {
     pub gal_iono: Option<IonoNequick>,
     /// GAUT: WN/WNLSF в неделях GST, tot в часах.
     pub gal_utc: Option<UtcParam>,
+    /// BDUT: недели BDT, tot в единицах 4096 s, leap seconds относительно BDT.
+    pub bds_utc: Option<UtcParam>,
 }
 
 impl Default for CNavData {
@@ -216,6 +218,7 @@ impl CNavData {
             leap_seconds: None,
             gal_iono: None,
             gal_utc: None,
+            bds_utc: None,
         }
     }
 
@@ -1827,6 +1830,16 @@ fn parse_navigation_header(nav: &mut CNavData, line: &str) {
                 }
                 nav.utc_param = Some(utc);
             }
+        } else if line.starts_with("BDUT") {
+            if let Some(mut utc) = parse_time_system_corr(line, 4096, 0) {
+                if let Some(seconds) = line.get(38..45).and_then(|v| v.trim().parse::<f64>().ok()) {
+                    utc.A0 += utc.A1 * (utc.tot as f64 * 4096.0 - seconds);
+                }
+                if let Some(previous) = nav.utc_param.filter(|p| p.flag & 2 != 0) {
+                    copy_bds_leap_seconds(&previous, &mut utc);
+                }
+                nav.bds_utc = Some(utc);
+            }
         } else if line.starts_with("GAUT") {
             if let Some(mut utc) = parse_time_system_corr(line, 3600, 1024) {
                 if let Some(previous) = nav.utc_param.filter(|p| p.flag & 2 != 0) {
@@ -1853,11 +1866,26 @@ fn parse_navigation_header(nav: &mut CNavData, line: &str) {
                 .and_then(|s| s.trim().parse().ok())
                 .unwrap_or(7);
             utc.flag |= 2;
+            if let Some(bds) = &mut nav.bds_utc {
+                copy_bds_leap_seconds(utc, bds);
+            }
             if let Some(gal) = &mut nav.gal_utc {
                 copy_leap_seconds(utc, gal, true);
             }
         }
     }
+}
+
+fn copy_bds_leap_seconds(gps: &UtcParam, bds: &mut UtcParam) {
+    bds.TLS = gps.TLS - 14;
+    bds.TLSF = gps.TLSF - 14;
+    bds.WNLSF = if gps.WNLSF >= 1356 {
+        gps.WNLSF - 1356
+    } else {
+        bds.WN
+    };
+    bds.DN = gps.DN;
+    bds.flag |= 2;
 }
 
 fn copy_leap_seconds(gps: &UtcParam, target: &mut UtcParam, galileo: bool) {
@@ -2321,7 +2349,11 @@ where
 
         // BeiDou специфические параметры (определяем из semi-major axis)
         // MEO: a ≈ 27906 km, GEO/IGSO: a ≈ 42162 km. Threshold at 35000 km.
-        sat_type: determine_beidou_satellite_type_by_axis(gps_eph.axis),
+        sat_type: if gps_eph.svid <= 5 || gps_eph.svid >= 59 {
+            1
+        } else {
+            determine_beidou_satellite_type_by_axis(gps_eph.axis)
+        },
         urai: (gps_eph.ura.clamp(0, 15)) as u8, // URA Index для BeiDou (0-15)
         integrity_flag: 0, // По умолчанию = 0 (будет определено из навигационного сообщения)
 
@@ -2331,7 +2363,12 @@ where
         root_ecc: gps_eph.root_ecc,
         // BeiDou использует CGCS2000_OMEGDOTE вместо WGS_OMEGDOTE
         omega_t: gps_eph.omega0 - CGCS2000_OMEGDOTE * (gps_eph.toe as f64),
-        omega_delta: gps_eph.omega_dot - CGCS2000_OMEGDOTE,
+        // GEO получает вращение Земли отдельной матрицей Rz ниже по тракту.
+        omega_delta: if gps_eph.svid <= 5 || gps_eph.svid >= 59 {
+            gps_eph.omega_dot
+        } else {
+            gps_eph.omega_dot - CGCS2000_OMEGDOTE
+        },
         Ek: gps_eph.Ek,
         Ek_dot: gps_eph.Ek_dot,
     };

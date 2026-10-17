@@ -1,0 +1,23 @@
+{
+  "frames": 42,
+  "per_satellite": {
+    "C22": 6,
+    "C21": 6,
+    "C45": 5,
+    "C38": 5,
+    "C34": 5,
+    "C44": 5,
+    "C36": 5,
+    "C39": 5
+  },
+  "frame_errors": 0,
+  "utc_leap_seconds": 4,
+  "utc_bdt_week": 1013,
+  "pvt_epochs": 57,
+  "first_pvt_s": 63.0,
+  "last_pvt_s": 119.0,
+  "max_sv": 8.0,
+  "horizontal_median_m": 0.45920899245264546,
+  "horizontal_p95_m": 0.7834923862989874,
+  "vertical_median_m": 14.160700000000006
+}

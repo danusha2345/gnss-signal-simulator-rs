@@ -1,5 +1,9 @@
 # GNSS verification report
 
+Последний проход: [разбор Galileo/GLONASS/BeiDou](GNSS_RESIDUAL_REVIEW.md),
+**200 passed / 6 ignored**, независимые LDPC/CRC и решения из IQ.
+
+
 Актуализация 2026-10-17: [полный трекер](PIPELINE_TRACKER.md) и
 [receiver matrix](RECEIVER_MATRIX.md). Финальный проход: 187 passed / 6 ignored,
 тяжёлый code-phase дополнительно PASS, fmt и Clippy для всех targets чистые.

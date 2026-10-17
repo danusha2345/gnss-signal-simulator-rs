@@ -507,6 +507,27 @@ pub fn galileo_time_to_utc(gnss_time: GnssTime) -> UtcTime {
     GnssTimeConverter::galileo_time_to_utc(gnss_time)
 }
 
+/// Перевод внутреннего GLONASS-времени (Day от 1996-01-01) в GPST.
+/// Legacy glonass_time_to_utc принимает другой формат Day/N4; напрямую применять его нельзя.
+pub fn glonass_corrected_to_gps(time: GlonassTime) -> GnssTime {
+    let epoch = utc_to_gps_time(
+        UtcTime {
+            Year: 1996,
+            Month: 1,
+            Day: 1,
+            Hour: 0,
+            Minute: 0,
+            Second: 0.0,
+        },
+        false,
+    );
+    let mut nominal = epoch.add_milliseconds(
+        (time.Day as f64 - 1.0) * 86400000.0 + time.MilliSeconds as f64 - 10800000.0,
+    );
+    nominal.SubMilliSeconds = time.SubMilliSeconds;
+    utc_to_gps_time(gps_time_to_utc(nominal, false), true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

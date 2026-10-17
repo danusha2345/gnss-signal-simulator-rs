@@ -301,29 +301,7 @@ impl BCNav3Bit {
 
     // GF(6) multiplication
     fn gf6_int_mul(&self, a: i32, b: i32) -> i32 {
-        if a == 0 || b == 0 {
-            return 0;
-        }
-
-        // GF(2^6) tables — identical to the verified BCNavBit encoder (bcnavbit.rs).
-        // E2V is the antilog (powers of the primitive element), doubled to 128 entries so
-        // V2E[a]+V2E[b] (≤126) indexes directly without a modulo. The previous tables were
-        // an identity antilog + a non-bijective log, which produced wrong LDPC parity (H13).
-        const E2V_TABLE: [i32; 128] = [
-            1, 2, 4, 8, 16, 32, 3, 6, 12, 24, 48, 35, 5, 10, 20, 40, 19, 38, 15, 30, 60, 59, 53,
-            41, 17, 34, 7, 14, 28, 56, 51, 37, 9, 18, 36, 11, 22, 44, 27, 54, 47, 29, 58, 55, 45,
-            25, 50, 39, 13, 26, 52, 43, 21, 42, 23, 46, 31, 62, 63, 61, 57, 49, 33, 1, 2, 4, 8, 16,
-            32, 3, 6, 12, 24, 48, 35, 5, 10, 20, 40, 19, 38, 15, 30, 60, 59, 53, 41, 17, 34, 7, 14,
-            28, 56, 51, 37, 9, 18, 36, 11, 22, 44, 27, 54, 47, 29, 58, 55, 45, 25, 50, 39, 13, 26,
-            52, 43, 21, 42, 23, 46, 31, 62, 63, 61, 57, 49, 33, 1, 2,
-        ];
-        const V2E_TABLE: [i32; 64] = [
-            0, 1, 2, 7, 3, 13, 8, 27, 4, 33, 14, 36, 9, 49, 28, 19, 5, 25, 34, 17, 15, 53, 37, 55,
-            10, 46, 50, 39, 29, 42, 20, 57, 6, 63, 26, 12, 35, 32, 18, 48, 16, 24, 54, 52, 38, 45,
-            56, 41, 11, 62, 47, 31, 51, 23, 40, 44, 30, 61, 43, 22, 21, 60, 58, 59,
-        ];
-
-        E2V_TABLE[(V2E_TABLE[a as usize] + V2E_TABLE[b as usize]) as usize]
+        crate::ldpc::gf6_int_mul(a, b)
     }
 
     /// Drops the leading 8-bit IODE from a B1C-style "IODE + Ephemeris I" block (packed
@@ -598,6 +576,7 @@ mod gf6_tests {
         let id = (1..64)
             .find(|&e| (1..64).all(|a| b3.gf6_int_mul(a, e) == a))
             .expect("GF(2^6) must have a multiplicative identity");
+        assert_eq!(id, 1, "полиномиальное представление GF64: единица = 1");
         for a in 1..64 {
             assert_eq!(b3.gf6_int_mul(a, id), a);
             for b in 1..64 {

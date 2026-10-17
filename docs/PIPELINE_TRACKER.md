@@ -226,3 +226,28 @@ GPS+Galileo / Galileo-only 300 с получал до 14 / 7 спутников 
   BOC mode, проверяемые артефакты и оптимизация CPU. Общая очистка lint/формата,
   воспроизводимый dependency benchmark и итоговые отчёты вынесены следующим
   отдельным коммитом. Push не выполняется в рамках этого запроса.
+
+
+## Дополнительный проход: Galileo CRC, GLONASS и BeiDou
+
+Запрос пользователя: установить причины пяти CRC сообщений и 10-метрового
+смещения GLONASS; дополнительно проверить BeiDou. Итоговый подробный отчёт:
+[GNSS_RESIDUAL_REVIEW.md](GNSS_RESIDUAL_REVIEW.md).
+
+| ID | Статус | Причина и проверка |
+| --- | --- | --- |
+| RES-GAL | DONE | 5 сообщений GNSS-SDR соответствуют старту с неполной парой; reproduction показывает 0 вызовов CRC. Тот же IQ: PocketSDR 1306 страниц / 0 ошибок. Подготовлен диагностический патч, системный receiver не заменён |
+| RES-GLO | DONE | ECEF вместо ENU, зеркальный азимут, неверное время/масштаб ионосферы. 9.44 → 2.00 м median, 348 GNAV correct / 0 errors |
+| RES-BDS-GEO | DONE | Двойное вращение Земли в GEO; ECEF C01 расходился на 1027 км. После исправления независимый RTKLIB reference <2 см; B1I 19 SV, 756 PVT эпох, median 3.41 м |
+| RES-BDS-CNAV | DONE | SVID BCH off-by-one, CRC24Q, GF64 log offset, filler вместо данных, SF3 layout, BDT pilot epoch/UTC. B1C 42 кадра / 0 ошибок / 0 FEC corrections; offline RTKLIB по данным из IQ: 8 SV, median 0.46 м |
+
+Границы: PVT B1C проверен отдельным адаптером PocketSDR→RTKLIB, не нативным
+PVT PocketSDR. Источник RINEX не подмешивался в решение. BDGIM coefficients
+в RINEX3 отсутствуют; физическая модель BDGIM не реализована. B2a/B2b получили
+исправление общей GF64/CRC арифметики, отдельный полный IQ/PVT ещё не проверен.
+Аппаратного приёма и передачи RF в этом проходе не было.
+
+Финальные проверки этого продолжения: 200 passed / 6 ignored, fmt,
+Clippy all-targets -D warnings и release build проходят; GPS/Galileo golden
+не изменился. Три финальных IQ/TXT/manifest проверены с USB, хеши сохранены
+в `docs/evidence/residual-artifacts.json`.

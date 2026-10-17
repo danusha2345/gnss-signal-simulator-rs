@@ -433,23 +433,15 @@ const BCH_SOH_TABLE: [u64; 256] = [
 #[derive(Clone)]
 pub struct BCNav1Bit {
     base: BCNavBit,
-    bds_subframe3: [[u32; 11]; 63],
+    health_flags: [u32; 63],
 }
 
 impl BCNav1Bit {
     pub fn new() -> Self {
-        let mut bcnav = BCNav1Bit {
+        Self {
             base: BCNavBit::new(),
-            bds_subframe3: [[0; 11]; 63],
-        };
-
-        // Initialize page type IDs for all 4 pages
-        bcnav.update_subframe3_page1();
-        bcnav.update_subframe3_page2();
-        bcnav.update_subframe3_page3();
-        bcnav.update_subframe3_page4();
-
-        bcnav
+            health_flags: [0; 63],
+        }
     }
 
     pub fn get_frame_data(
@@ -459,14 +451,13 @@ impl BCNav1Bit {
         __param: i32,
         nav_bits: &mut [i32],
     ) -> i32 {
-        if !(1..=63).contains(&svid) {
+        if !(1..=63).contains(&svid) || nav_bits.len() < 1800 {
             return 1;
         }
 
         let page = start_time.MilliSeconds / 18000; // frames from week epoch
         let how = page / 200;
         let soh = page % 200;
-        let page = (page % 4) as usize; // assume subframe 3 broadcast page 1 to 4 cyclically
 
         let mut frame2_data = [0u32; 25];
         self.compose_subframe2(start_time.Week - 1356, how, svid, &mut frame2_data);
@@ -492,7 +483,8 @@ impl BCNav1Bit {
         }
 
         // Generate CRC for subframe3
-        let mut data = self.bds_subframe3[page];
+        let flags = self.health_flags[svid as usize - 1];
+        let mut data = self.compose_subframe3(soh, flags, 0);
         self.base.append_crc(&mut data, 11);
 
         // Assign each 6bit into Symbol3 array
@@ -509,22 +501,6 @@ impl BCNav1Bit {
 
         let mut bits3 = [0i32; 528];
 
-        // DEBUG: проверим заполненность BeiDou B1C субкадров
-        let mut _frame2_density = 0;
-        for word in &frame2_data {
-            _frame2_density += word.count_ones();
-        }
-
-        let mut _frame3_density = 0;
-        for word in &data {
-            _frame3_density += word.count_ones();
-        }
-
-        // DEBUG: BDS stream отключен для уменьшения вывода
-        // println!("[BDS-STREAM-DEBUG] SV{:02} frame2: {} битов из {} ({:.1}%)",
-        //         svid, frame2_density, 25*24, (frame2_density as f32 / (25.0*24.0)) * 100.0);
-        // println!("[BDS-STREAM-DEBUG] SV{:02} frame3: {} битов из {} ({:.1}%)",
-        //         svid, frame3_density, 11*24, (frame3_density as f32 / (11.0*24.0)) * 100.0);
         for i in 0..88 {
             self.assign_bits(symbol3[i], 6, &mut bits3[i * 6..]);
         }
@@ -572,11 +548,7 @@ impl BCNav1Bit {
         }
 
         // Add subframe 1
-        self.assign_bits(
-            BCH_PRN_TABLE[(svid - 1) as usize] as i32,
-            21,
-            &mut nav_bits[0..],
-        );
+        self.assign_bits(BCH_PRN_TABLE[svid as usize] as i32, 21, &mut nav_bits[0..]);
         let value = (BCH_SOH_TABLE[soh as usize] >> 32) as u32;
         self.assign_bits(value as i32, 19, &mut nav_bits[21..]);
         let value = BCH_SOH_TABLE[soh as usize] as u32;
@@ -588,10 +560,10 @@ impl BCNav1Bit {
     fn compose_subframe2(&self, week: i32, how: i32, svid: i32, frame2_data: &mut [u32; 25]) {
         let svid_idx = (svid - 1) as usize;
 
-        // Максимально заполним все слова для повышения плотности сигнала (как в GPS)
-        frame2_data.iter_mut().take(25).for_each(|w| *w = 0xAAAAAA);
+        // Нулевые резервные биты: OR применяется только к незанятым полям.
+        frame2_data.fill(0);
 
-        // Insert WN and HOW for Subframe2 (используем |= для сохранения заполнения)
+        // WN/HOW и IODC занимают непересекающиеся поля.
         frame2_data[0] |= self.base.compose_bits(week as u32, 11, 13);
         frame2_data[0] |= self.base.compose_bits(how as u32, 3, 8);
         frame2_data[0] |= self
@@ -620,9 +592,6 @@ impl BCNav1Bit {
             69,
         );
 
-        // РАСШИРЕННЫЕ TGD ПАРАМЕТРЫ: Максимально заполняем frame2 доступными данными
-        // TODO: Интегрировать с реальными эфемеридами BeiDou когда будет доступна правильная архитектура
-
         // TGD1 и TGD2 данные из базового массива
         frame2_data[22] |= self
             .base
@@ -633,55 +602,6 @@ impl BCNav1Bit {
         frame2_data[23] |= self
             .base
             .compose_bits(self.base.tgs_isc_param[svid_idx][0], 7, 17);
-
-        // Дополнительные TGD параметры для B2a/B2b (из других источников)
-        let tgd_b2a = if svid_idx < self.base.tgs_isc_param.len()
-            && self.base.tgs_isc_param[svid_idx].len() > 2
-        {
-            self.base.tgs_isc_param[svid_idx][2]
-        } else {
-            0
-        };
-        frame2_data[23] |= self.base.compose_bits(tgd_b2a, 17, 7);
-
-        let tgd_b2b = if svid_idx < self.base.tgs_isc_param.len()
-            && self.base.tgs_isc_param[svid_idx].len() > 3
-        {
-            // Массив имеет только 3 элемента (индексы 0,1,2), используем запасное значение
-            0 // Пока используем 0, так как индекс 3 не существует
-        } else {
-            0
-        };
-        frame2_data[23] |= self.base.compose_bits(tgd_b2b, 10, 7);
-
-        // Satellite type determination (based on SVID ranges)
-        let sat_type = if svid <= 5 {
-            0
-        }
-        // GEO: C01-C05
-        else if svid <= 17 {
-            1
-        }
-        // IGSO: C06-C17
-        else {
-            2
-        }; // MEO: C18-C63
-        frame2_data[23] |= self.base.compose_bits(sat_type, 7, 3);
-
-        // URAI и integrity flags из доступных источников
-        let urai = if svid_idx < self.base.integrity_flags.len() {
-            self.base.integrity_flags[svid_idx] & 0xF
-        } else {
-            8
-        }; // default URA = 8
-        frame2_data[24] |= self.base.compose_bits(urai, 20, 4);
-
-        let integrity_flag = if svid_idx < self.base.integrity_flags.len() {
-            self.base.integrity_flags[svid_idx] >> 4
-        } else {
-            0
-        };
-        frame2_data[24] |= self.base.compose_bits(integrity_flag, 16, 4);
     }
 
     #[allow(dead_code)]
@@ -689,207 +609,86 @@ impl BCNav1Bit {
         (value * 2.0_f64.powi(-scale_factor)).round() as i32
     }
 
+    /// Klobuchar не преобразуется в BDGIM. UTC: недели BDT, tot в единицах 4096 s.
     pub fn set_iono_utc(
         &mut self,
-        iono_param: Option<&IonoParam>,
+        _iono_param: Option<&IonoParam>,
         utc_param: Option<&UtcParam>,
     ) -> i32 {
-        // Set ionospheric parameters from Klobuchar model to BDGIM format
-        if let Some(iono) = iono_param {
-            if (iono.flag & 1) != 0 {
-                // Convert Klobuchar parameters to BDGIM format
-                self.base.bd_gim_iono[0] =
-                    (((iono.a0 * (1u64 << 30) as f64) as i32 & 0xFF) << 16) as u32;
-                self.base.bd_gim_iono[0] |=
-                    (((iono.a1 * (1u64 << 27) as f64) as i32 & 0xFF) << 8) as u32;
-                self.base.bd_gim_iono[0] |= ((iono.a2 * (1u64 << 24) as f64) as i32 & 0xFF) as u32;
-                self.base.bd_gim_iono[1] =
-                    (((iono.a3 * (1u64 << 24) as f64) as i32 & 0xFF) << 24) as u32;
-
-                self.base.bd_gim_iono[1] |=
-                    (((iono.b0 / (1u64 << 11) as f64) as i32 & 0xFF) << 16) as u32;
-                self.base.bd_gim_iono[1] |=
-                    (((iono.b1 / (1u64 << 14) as f64) as i32 & 0xFF) << 8) as u32;
-                self.base.bd_gim_iono[1] |= ((iono.b2 / (1u64 << 16) as f64) as i32 & 0xFF) as u32;
-                self.base.bd_gim_iono[2] =
-                    (((iono.b3 / (1u64 << 16) as f64) as i32 & 0xFF) << 24) as u32;
-
-                self.update_subframe3_page1();
+        self.base.bd_gim_iono.fill(0);
+        self.base.bdt_utc_param.fill(0);
+        if let Some(utc) = utc_param.filter(|u| u.flag & 1 != 0) {
+            let values = [
+                ((utc.A0 * 2f64.powi(35)).round() as i64 as u64, 16),
+                ((utc.A1 * 2f64.powi(51)).round() as i64 as u64, 13),
+                (0, 7),
+                (utc.TLS as i64 as u64, 8),
+                (utc.tot as u64 * 256, 16),
+                (utc.WN as u64, 13),
+                (utc.WNLSF as u64, 13),
+                (utc.DN as u64, 3),
+                (utc.TLSF as i64 as u64, 8),
+            ];
+            let mut offset = 0;
+            for (value, width) in values {
+                for bit in (0..width).rev() {
+                    self.base.bdt_utc_param[offset / 24] |=
+                        (((value >> bit) & 1) as u32) << (23 - offset % 24);
+                    offset += 1;
+                }
             }
         }
-
-        // Set UTC parameters
-        if let Some(utc) = utc_param {
-            if (utc.flag & 1) != 0 {
-                self.base.bdt_utc_param[0] = (utc.A0 * (1u64 << 30) as f64) as u32;
-                self.base.bdt_utc_param[1] =
-                    ((utc.A1 * (1u64 << 50) as f64) as u32 & 0xFFFFFF) << 8;
-                self.base.bdt_utc_param[1] |= utc.tot as u32;
-                self.base.bdt_utc_param[2] = (utc.WN as u32 & 0xFF) << 24;
-                self.base.bdt_utc_param[2] |= ((utc.TLS as u32) & 0xFF) << 16;
-                self.base.bdt_utc_param[2] |= ((utc.WNLSF as u32) & 0xFF) << 8;
-                self.base.bdt_utc_param[2] |= ((utc.DN & 0x7) << 5) as u32;
-                self.base.bdt_utc_param[3] = ((utc.TLSF as u32) & 0xFF) << 24;
-
-                self.update_subframe3_page2();
-            }
-        }
-
         0
     }
 
-    fn update_subframe3_page1_internal(&mut self) {
-        // Page Type 1: Ionosphere parameters (Message Type ID = 1)
-        // Максимально заполним все слова для повышения плотности сигнала (как в GPS)
-        for i in 0..11 {
-            self.bds_subframe3[0][i] = 0xAAAAAA; // ~50% заполнение битов для стабильной модуляции
-        }
-
-        self.bds_subframe3[0][0] = 1 << 17; // Message Type ID in bits 22-17
-
-        // Copy BDGIM ionosphere parameters
-        if self.base.bd_gim_iono[0] != 0
-            || self.base.bd_gim_iono[1] != 0
-            || self.base.bd_gim_iono[2] != 0
-        {
-            self.bds_subframe3[0][0] |= (self.base.bd_gim_iono[0] >> 8) & 0x1FFFF;
-            self.bds_subframe3[0][1] = ((self.base.bd_gim_iono[0] & 0xFF) << 16)
-                | ((self.base.bd_gim_iono[1] >> 16) & 0xFFFF);
-            self.bds_subframe3[0][2] = ((self.base.bd_gim_iono[1] & 0xFFFF) << 8)
-                | ((self.base.bd_gim_iono[2] >> 24) & 0xFF);
-            self.bds_subframe3[0][3] = self.base.bd_gim_iono[2] & 0xFFFFFF;
-        }
-
-        self.bds_subframe3[0][3] |= 0; // Placeholder for SISAI_B1C, SISAI_B2a, etc.
-    }
-
-    fn update_subframe3_page2_internal(&mut self) {
-        // Page Type 2: UTC parameters (Message Type ID = 2)
-        // Максимально заполним все слова для повышения плотности сигнала (как в GPS)
-        for i in 0..11 {
-            self.bds_subframe3[1][i] = 0xAAAAAA; // ~50% заполнение битов для стабильной модуляции
-        }
-
-        self.bds_subframe3[1][0] = 2 << 17; // Message Type ID in bits 22-17
-
-        // Copy BDT-UTC parameters
-        if self.base.bdt_utc_param[0] != 0 || self.base.bdt_utc_param[1] != 0 {
-            self.bds_subframe3[1][0] |= (self.base.bdt_utc_param[0] >> 15) & 0x1FFFF;
-            self.bds_subframe3[1][1] = ((self.base.bdt_utc_param[0] & 0x7FFF) << 9)
-                | ((self.base.bdt_utc_param[1] >> 23) & 0x1FF);
-            self.bds_subframe3[1][2] = ((self.base.bdt_utc_param[1] & 0x7FFFFF) << 1)
-                | ((self.base.bdt_utc_param[2] >> 31) & 0x1);
-            self.bds_subframe3[1][3] = (self.base.bdt_utc_param[2] & 0x7FFFFFFF) >> 7;
-            self.bds_subframe3[1][4] = ((self.base.bdt_utc_param[2] & 0x7F) << 17)
-                | ((self.base.bdt_utc_param[3] >> 7) & 0x1FFFF);
-        }
-    }
-
-    fn update_subframe3_page3_internal(&mut self) {
-        // Page Type 3: EOP and BGTO parameters (Message Type ID = 3)
-        // Максимально заполним все слова для повышения плотности сигнала (как в GPS)
-        for i in 0..11 {
-            self.bds_subframe3[2][i] = 0xAAAAAA; // ~50% заполнение битов для стабильной модуляции
-        }
-
-        self.bds_subframe3[2][0] |= 3 << 17; // Message Type ID in bits 22-17
-
-        // РЕАЛЬНЫЕ EOP ПАРАМЕТРЫ: Заполняем Earth Orientation Parameters
-        if self.base.eop_param[0] != 0 || self.base.eop_param[1] != 0 {
-            // X-pole position (масштаб: 2^-20 arcsec)
-            self.bds_subframe3[2][0] |= (self.base.eop_param[0] >> 7) & 0x1FFFF;
-            self.bds_subframe3[2][1] |= ((self.base.eop_param[0] & 0x7F) << 17)
-                | ((self.base.eop_param[1] >> 15) & 0x1FFFF);
-
-            // Y-pole position (масштаб: 2^-20 arcsec)
-            self.bds_subframe3[2][2] |=
-                ((self.base.eop_param[1] & 0x7FFF) << 9) | ((self.base.eop_param[2] >> 23) & 0x1FF);
-            self.bds_subframe3[2][3] |= (self.base.eop_param[2] & 0x7FFFFF) << 1;
-
-            // UT1-UTC (масштаб: 2^-24 seconds)
-            self.bds_subframe3[2][3] |= (self.base.eop_param[3] >> 23) & 0x1;
-            self.bds_subframe3[2][4] |= (self.base.eop_param[3] & 0x7FFFFF) << 1;
-        }
-
-        // РЕАЛЬНЫЕ BGTO ПАРАМЕТРЫ: BDS-GPS Time Offset параметры
-        for i in 0..7 {
-            if i < 3 && self.base.bgto_param[i][0] != 0 {
-                // BGTO A0, A1, A2 параметры для разных GNSS систем
-                let bgto_word = ((i + 5) as u32) << 21; // Word positions 5-7
-                self.bds_subframe3[2][i + 5] |= bgto_word;
-                self.bds_subframe3[2][i + 5] |= (self.base.bgto_param[i][0] >> 3) & 0x1FFFFF;
-                self.bds_subframe3[2][i + 5 + 1] |= ((self.base.bgto_param[i][0] & 0x7) << 21)
-                    | ((self.base.bgto_param[i][1] >> 11) & 0x1FFFFF);
-            }
-        }
-    }
-
-    fn update_subframe3_page4_internal(&mut self) {
-        // Page Type 4: Reduced almanac (Message Type ID = 4)
-        // Максимально заполним все слова для повышения плотности сигнала (как в GPS)
-        for i in 0..11 {
-            self.bds_subframe3[3][i] = 0xAAAAAA; // ~50% заполнение битов для стабильной модуляции
-        }
-
-        self.bds_subframe3[3][0] |= 4 << 17; // Message Type ID in bits 22-17
-
-        // РЕАЛЬНЫЙ REDUCED ALMANAC: Заполняем сокращенным альманахом для всех видимых спутников
-        // Reduced almanac содержит только самые важные орбитальные параметры
-
-        // Almanac week number (WN_alm)
-        self.bds_subframe3[3][0] |= (self.base.almanac_week & 0x1FFF) << 4; // 13 bits
-
-        // Time of Almanac (TOA)
-        self.bds_subframe3[3][0] |= (self.base.almanac_toa >> 4) & 0xF;
-        self.bds_subframe3[3][1] |= (self.base.almanac_toa & 0xF) << 20;
-
-        // Заполняем данные reduced almanac для первых 8-10 спутников
-        let mut word_idx = 1;
-        let mut bit_offset = 0;
-
-        for sat_idx in 0..10.min(self.base.reduced_almanac.len()) {
-            if word_idx >= 11 {
-                break;
-            } // Защита от переполнения массива
-
-            if self.base.reduced_almanac[sat_idx][0] != 0 {
-                // SVID (6 bits) + Health (1 bit) + sqrt(A) reduced (11 bits)
-                let svid = (sat_idx + 1) as u32;
-                let health = (self.base.reduced_almanac[sat_idx][0] >> 31) & 0x1;
-                let sqrt_a_reduced = (self.base.reduced_almanac[sat_idx][0] >> 20) & 0x7FF;
-
-                let almanac_data = (svid << 12) | (health << 11) | sqrt_a_reduced;
-
-                if bit_offset + 18 <= 24 {
-                    // Поместится в текущее слово
-                    self.bds_subframe3[3][word_idx] |= almanac_data << (24 - bit_offset - 18);
-                    bit_offset += 18;
-                } else {
-                    // Разделить между текущим и следующим словом
-                    let bits_in_current = 24 - bit_offset;
-                    self.bds_subframe3[3][word_idx] |= almanac_data >> (18 - bits_in_current);
-                    word_idx += 1;
-                    if word_idx < 11 {
-                        self.bds_subframe3[3][word_idx] |= (almanac_data
-                            & ((1 << (18 - bits_in_current)) - 1))
-                            << (24 - (18 - bits_in_current));
-                        bit_offset = 18 - bits_in_current;
-                    }
+    /// ICD B1C: 6-bit PageID, общие flags/SISAI, затем данные конкретной страницы.
+    fn compose_subframe3(&self, soh: i32, flags: u32, accuracy: u32) -> [u32; 11] {
+        let index = soh.rem_euclid(100) as usize;
+        let mut d = [0u32; 11];
+        d[0] = flags << 9;
+        if index.is_multiple_of(10) {
+            d[0] |= 1 << 18;
+            self.base
+                .append_word(&mut d, 20, &self.base.bd_gim_iono, 96);
+            d[0] |= (accuracy >> 18) & 0xf;
+            d[1] |= (accuracy & 0x3ffff) << 6;
+            self.base
+                .append_word(&mut d[4..], 20, &self.base.bdt_utc_param, 97);
+        } else if index % 10 == 5 {
+            d[0] |= 3 << 18;
+            self.base.append_word(&mut d, 20, &self.base.eop_param, 138);
+            self.base
+                .append_word(&mut d[6..], 14, &self.base.bgto_param[0], 68);
+        } else if index % 5 == 1 && index < 80 {
+            d[0] |= 2 << 18;
+            d[0] |= (accuracy >> 13) & 0x1ff;
+            d[1] = (accuracy & 0x1fff) << 11 | (self.base.almanac_week >> 2) & 0x7ff;
+            d[2] = (self.base.almanac_week & 3) << 22 | (self.base.almanac_toa & 0xff) << 14;
+            let sv = index / 5 * 4;
+            for (offset, start, j) in [(2, 10, sv), (4, 0, sv + 1), (5, 14, sv + 2), (7, 4, sv + 3)]
+            {
+                if j < 63 {
+                    self.base.append_word(
+                        &mut d[offset..],
+                        start,
+                        &self.base.reduced_almanac[j],
+                        38,
+                    );
                 }
             }
-
-            if bit_offset >= 24 {
-                word_idx += 1;
-                bit_offset = 0;
-            }
+        } else if index != 99 {
+            d[0] |= 4 << 18;
+            d[0] |= (accuracy >> 13) & 0x1ff;
+            d[1] = (accuracy & 0x1fff) << 11;
+            let sv = if index < 80 {
+                index / 5 * 3 + index % 5 - 2
+            } else {
+                index / 5 * 4 + index % 5 - 17
+            };
+            self.base
+                .append_word(&mut d[1..], 13, &self.base.midi_almanac[sv], 156);
         }
-
-        // Заполняем оставшиеся биты дополнительными параметрами
-        if word_idx < 11 {
-            // Добавляем reference week и reference TOA для синхронизации
-            self.bds_subframe3[3][word_idx] |=
-                ((self.base.almanac_week & 0xFF) << 16) | (self.base.almanac_toa & 0xFFFF);
-        }
+        d
     }
 
     fn assign_bits(&self, value: i32, bits: usize, output: &mut [i32]) {
@@ -900,22 +699,11 @@ impl BCNav1Bit {
         }
     }
 
-    // Public wrapper methods for compatibility
-    pub fn update_subframe3_page1(&mut self) {
-        self.update_subframe3_page1_internal();
-    }
-
-    pub fn update_subframe3_page2(&mut self) {
-        self.update_subframe3_page2_internal();
-    }
-
-    pub fn update_subframe3_page3(&mut self) {
-        self.update_subframe3_page3_internal();
-    }
-
-    pub fn update_subframe3_page4(&mut self) {
-        self.update_subframe3_page4_internal();
-    }
+    // Совместимость API: страницы теперь формируются из актуальных полей при запросе.
+    pub fn update_subframe3_page1(&mut self) {}
+    pub fn update_subframe3_page2(&mut self) {}
+    pub fn update_subframe3_page3(&mut self) {}
+    pub fn update_subframe3_page4(&mut self) {}
 
     // Interface methods required by NavBitTrait
     pub fn get_frame_data_immutable(
@@ -945,6 +733,7 @@ impl BCNav1Bit {
         // Note: Using GPS structure for compatibility, but in production
         // would convert time references and coordinate system parameters
         let bds_eph = *eph;
+        self.health_flags[svid as usize - 1] = if eph.health == 0 { 0 } else { 0x80 };
 
         // Note: toe/top must stay as multiples of 300 for B-CNAV1 encoding
         // (bcnavbit.rs requires toe % 300 == 0). Do NOT subtract 14 seconds here.

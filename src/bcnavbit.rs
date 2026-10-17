@@ -128,23 +128,6 @@ impl BCNavBit {
         0xD11CCE00, 0x57503500, 0x5BC9C300, 0xDD853800,
     ];
 
-    // E2V table
-    const E2V_TABLE: [u32; 128] = [
-        1, 2, 4, 8, 16, 32, 3, 6, 12, 24, 48, 35, 5, 10, 20, 40, 19, 38, 15, 30, 60, 59, 53, 41,
-        17, 34, 7, 14, 28, 56, 51, 37, 9, 18, 36, 11, 22, 44, 27, 54, 47, 29, 58, 55, 45, 25, 50,
-        39, 13, 26, 52, 43, 21, 42, 23, 46, 31, 62, 63, 61, 57, 49, 33, 1, 2, 4, 8, 16, 32, 3, 6,
-        12, 24, 48, 35, 5, 10, 20, 40, 19, 38, 15, 30, 60, 59, 53, 41, 17, 34, 7, 14, 28, 56, 51,
-        37, 9, 18, 36, 11, 22, 44, 27, 54, 47, 29, 58, 55, 45, 25, 50, 39, 13, 26, 52, 43, 21, 42,
-        23, 46, 31, 62, 63, 61, 57, 49, 33, 1, 2,
-    ];
-
-    // V2E table
-    const V2E_TABLE: [u32; 64] = [
-        0, 1, 2, 7, 3, 13, 8, 27, 4, 33, 14, 36, 9, 49, 28, 19, 5, 25, 34, 17, 15, 53, 37, 55, 10,
-        46, 50, 39, 29, 42, 20, 57, 6, 63, 26, 12, 35, 32, 18, 48, 16, 24, 54, 52, 38, 45, 56, 41,
-        11, 62, 47, 31, 51, 23, 40, 44, 30, 61, 43, 22, 21, 60, 58, 59,
-    ];
-
     pub fn new() -> Self {
         BCNavBit {
             ephemeris1: [[0; 9]; 63],
@@ -451,13 +434,13 @@ impl BCNavBit {
         for i in 0..(length - 1) as usize {
             let mut data = data_stream[i] << 8; // move data to MSB
             let index = ((data >> 24) ^ (crc_result >> 16)) as u8 as usize;
-            crc_result = (crc_result << 8) ^ Self::CRC24Q[index];
+            crc_result = (crc_result << 8) ^ (Self::CRC24Q[index] >> 8);
             data <<= 8;
             let index = ((data >> 24) ^ (crc_result >> 16)) as u8 as usize;
-            crc_result = (crc_result << 8) ^ Self::CRC24Q[index];
+            crc_result = (crc_result << 8) ^ (Self::CRC24Q[index] >> 8);
             data <<= 8;
             let index = ((data >> 24) ^ (crc_result >> 16)) as u8 as usize;
-            crc_result = (crc_result << 8) ^ Self::CRC24Q[index];
+            crc_result = (crc_result << 8) ^ (Self::CRC24Q[index] >> 8);
         }
         data_stream[length as usize - 1] = crc_result & 0xffffff;
 
@@ -495,12 +478,7 @@ impl BCNavBit {
     }
 
     pub fn gf6_int_mul(&self, a: i32, b: i32) -> i32 {
-        if a != 0 && b != 0 {
-            Self::E2V_TABLE[(Self::V2E_TABLE[a as usize] + Self::V2E_TABLE[b as usize]) as usize]
-                as i32
-        } else {
-            0
-        }
+        crate::ldpc::gf6_int_mul(a, b)
     }
 
     fn fill_bds_almanac_page(

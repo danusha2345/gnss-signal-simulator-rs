@@ -1,0 +1,23 @@
+{
+  "USA_GLO": {
+    "iq_sha256": "965fc08319062cb20ed17372d0cfa00835f10f2f676522582fff3c5d2a6186e3",
+    "bytes": 1800000000,
+    "sample_rate_hz": 10000000,
+    "center_frequency_hz": 1602000000,
+    "duration_ms": 90000
+  },
+  "CHN_FIX": {
+    "iq_sha256": "7d1fc0957560bcc805e1fa4888bc420674039d3002c5729342fd871905bb1be3",
+    "bytes": 2016000000,
+    "sample_rate_hz": 8400000,
+    "center_frequency_hz": 1561098000,
+    "duration_ms": 120000
+  },
+  "CHN_CFIX": {
+    "iq_sha256": "d33059d5cdbb8e7085ec42d6be12b3d6169495527ecfba7e6e0683e4046ceb89",
+    "bytes": 1008000000,
+    "sample_rate_hz": 4200000,
+    "center_frequency_hz": 1575420000,
+    "duration_ms": 120000
+  }
+}

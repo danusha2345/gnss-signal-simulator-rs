@@ -12,17 +12,17 @@ GNSS-SDR 0.0.20. Полоса, C/N0 и режим атмосферы сущес�
 | GPS L2C | Unit | Не выполнено | Не выполнено | Unit CNAV, не IQ | Не выполнено |
 | GPS L2P | Unit; открытая P-code модель | Не выполнено | Не выполнено | Не выполнено | Не выполнено |
 | GPS L5 | Unit | Не выполнено | Не выполнено | Unit CNAV/FEC, не IQ | Не выполнено |
-| Galileo E1 | Unit + независимый Viterbi | Да, dynamic300 | I/NAV, эфемериды | 558 верных / 5 ошибок | Да, до 14 SV вместе с GPS |
+| Galileo E1 | Unit + независимый Viterbi | Да, dynamic300 | I/NAV, эфемериды | GNSS-SDR 558/5 сообщений; PocketSDR 1306/0, пояснение ниже | Да, до 14 SV вместе с GPS |
 | Galileo E5a | Unit + независимый Viterbi | Да, повтор NAV-04 120 s | F/NAV, эфемериды | 62 / 0 | Да, до 8 SV |
 | Galileo E5b | Unit | Не выполнено | Не выполнено | I/NAV unit, не IQ E5b | Не выполнено |
 | Galileo E6 | PRN/сборка unit | Не выполнено | Специальный E6 nav encoder отсутствует | Не заявляется | Не заявляется |
-| BeiDou B1I | Unit, PRN reference | Исторический acquisition, не повторён здесь | Не выполнено | D1/D2 unit, не IQ | Не выполнено |
-| BeiDou B1C | Unit, PRN/LDPC reference | Исторический acquisition, не повторён здесь | Не выполнено | BCNAV1 unit, не IQ | Не выполнено |
+| BeiDou B1I | Unit, PRN reference | Да, 120 s | D1/D2 из IQ | 1393 / 0 | Да, до 19 SV |
+| BeiDou B1C | Unit + внешний LDPC decoder | Да, 120 s | BCNAV1 из IQ | 42 кадра / 0 errors | Адаптер PocketSDR→RTKLIB: 8 SV |
 | BeiDou B2I | Unit | Не выполнено | Не выполнено | D1/D2 unit, не IQ | Не выполнено |
 | BeiDou B3I | Unit | Не выполнено | Не выполнено | D1/D2 unit, не IQ | Не выполнено |
 | BeiDou B2a | Unit | Не выполнено | Не выполнено | BCNAV2 unit, не IQ | Не выполнено |
 | BeiDou B2b | Unit | Не выполнено | Не выполнено | BCNAV3 unit, не IQ | Не выполнено |
-| GLONASS G1 | Unit + independent Hamming | Да, 90 s | GNAV, эфемериды | Финальный повтор 306 / 0 | Да, до 7 SV |
+| GLONASS G1 | Unit + independent Hamming | Да, 90 s | GNAV, эфемериды | После исправления ENU 348 / 0 | Да, до 8 SV |
 | GLONASS G2 | Общие GNAV/relative/Manchester unit | Не выполнено | Не выполнено | GNAV unit, не IQ G2 | Не выполнено |
 | GLONASS G3 | PRN/сборка unit | Не выполнено | Путь использует GNAV; соответствие CDMA nav не доказано | Не заявляется | Не заявляется |
 
@@ -86,3 +86,13 @@ IQ SHA-256 `b16e88b02a12020a2950fd8a03e1e35ac1ff45a9808ed4f492d6ad08ecfdb2b1`,
 Финальный GLONASS IQ: 1 800 000 000 bytes,
 SHA-256 `4be87810ecb4fb714c9c6899e642cdae8400adab478feb0ac7874f8fee6babe0`.
 Финальные E5a/GLO IQ/TXT/manifest прошли `verify_artifact` после записи.
+
+## Уточнение причин и новые результаты
+
+[Разбор остаточных ошибок](GNSS_RESIDUAL_REVIEW.md) дополняет исторические
+прогоны выше. Пять сообщений Galileo возникали при старте с неполной I/NAV
+парой; воспроизведение исходного receiver-кода показало, что CRC при этом
+не вызывается. На том же IQ независимый PocketSDR принял 1306 страниц без ошибок.
+GLONASS после исправления ENU/GPST/FDMA: median/p95 2.00/3.58 м, GNAV 348/0.
+B1I после GEO fix: 19 SV, median 3.41 м. B1C после BCH/CRC/GF64/layout fix:
+42 кадра без ошибок, отдельное PVT по принятым параметрам — median 0.46 м.

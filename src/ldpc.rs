@@ -17,13 +17,13 @@ const E2V_TABLE: [u32; 128] = [
 /// Таблица значение в экспоненту для GF(64)
 #[allow(dead_code)]
 const V2E_TABLE: [u32; 64] = [
-    0, 1, 2, 7, 3, 13, 8, 27, 4, 33, 14, 36, 9, 49, 28, 19, 5, 25, 34, 17, 15, 53, 37, 55, 10, 46,
-    50, 39, 29, 42, 20, 57, 6, 63, 26, 12, 35, 32, 18, 48, 16, 24, 54, 52, 38, 45, 56, 41, 11, 62,
-    47, 31, 51, 23, 40, 44, 30, 61, 43, 22, 21, 60, 58, 59,
+    0, 0, 1, 6, 2, 12, 7, 26, 3, 32, 13, 35, 8, 48, 27, 18, 4, 24, 33, 16, 14, 52, 36, 54, 9, 45,
+    49, 38, 28, 41, 19, 56, 5, 62, 25, 11, 34, 31, 17, 47, 15, 23, 53, 51, 37, 44, 55, 40, 10, 61,
+    46, 30, 50, 22, 39, 43, 29, 60, 42, 21, 20, 59, 57, 58,
 ];
 
 /// Умножение в поле Галуа GF(64) в представлении BeiDou ICD/SignalSim.
-fn gf6_int_mul(a: i32, b: i32) -> i32 {
+pub(crate) fn gf6_int_mul(a: i32, b: i32) -> i32 {
     if a == 0 || b == 0 {
         0
     } else {
@@ -88,12 +88,36 @@ mod tests {
         // Тест базовых случаев
         assert_eq!(gf6_int_mul(0, 5), 0);
         assert_eq!(gf6_int_mul(5, 0), 0);
-        assert_eq!(gf6_int_mul(1, 1), 4);
+        assert_eq!(gf6_int_mul(1, 1), 1);
 
         // Тест некоторых значений
-        assert_eq!(gf6_int_mul(2, 3), 24);
-        assert_eq!(gf6_int_mul(7, 9), 57);
-        assert_eq!(gf6_int_mul(5, 11), 26);
+        assert_eq!(gf6_int_mul(2, 3), 6);
+        assert_eq!(gf6_int_mul(7, 9), 63);
+        assert_eq!(gf6_int_mul(5, 11), 39);
+    }
+
+    #[test]
+    fn field_multiplication_matches_polynomial_arithmetic() {
+        let base = crate::bcnavbit::BCNavBit::new();
+        for a in 0..64 {
+            for b in 0..64 {
+                let mut x = a;
+                let mut y = b;
+                let mut expected = 0;
+                while y != 0 {
+                    if y & 1 != 0 {
+                        expected ^= x;
+                    }
+                    y >>= 1;
+                    x <<= 1;
+                    if x & 64 != 0 {
+                        x ^= 0x43;
+                    }
+                }
+                assert_eq!(gf6_int_mul(a, b), expected);
+                assert_eq!(base.gf6_int_mul(a, b), expected);
+            }
+        }
     }
 
     #[test]
