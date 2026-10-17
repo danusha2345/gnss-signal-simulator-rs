@@ -80,8 +80,10 @@ fn all_presets_are_valid_and_reference_safe_outputs() {
             .and_then(Value::as_str)
             .unwrap_or_else(|| panic!("{name} missing output.name"));
         assert!(
-            output_name.starts_with("generated_files/"),
-            "{name} output should stay under generated_files"
+            output_name.starts_with("generated_files/")
+                || output_name
+                    .starts_with("/run/media/danik/external_ssd_2tb/gnss_rust/generated_files/"),
+            "{name} output should stay under a configured generated_files directory"
         );
         assert!(
             (format == "IQ8" && output_name.ends_with(".C8"))

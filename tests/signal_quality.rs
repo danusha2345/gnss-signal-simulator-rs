@@ -128,9 +128,9 @@ fn test_carrier_phase_continuity() {
                 }
                 // Expect phase difference close to one sample step (small)
                 // A hard re-anchor would cause a large jump
-                if phase_diff > max_phase_jump {
-                    max_phase_jump = phase_diff;
-                }
+                // Удаляем BPSK-переворот для КАЖДОЙ границы: максимум около π
+                // не должен скрывать другой скачок, например 0.5 рад.
+                max_phase_jump = max_phase_jump.max(bpsk_phase_residual(phase_diff));
             }
 
             let n = sig.sample_array.len();
@@ -140,18 +140,7 @@ fn test_carrier_phase_continuity() {
         // Phase jumps can be ~π (nav bit transitions in BPSK) or small (continuous carrier).
         // Filter out π jumps (nav data modulation) and check remaining jumps are small.
         // A broken re-anchor causes non-π jumps > 0.1 rad.
-        let max_non_nav_jump = {
-            // Recompute excluding jumps near π
-            let mut max_j = 0.0_f64;
-            // (we already computed max_phase_jump but need the non-π version)
-            // For simplicity, just report the max_phase_jump and check if it's π or small
-            if (max_phase_jump - std::f64::consts::PI).abs() < 0.1 {
-                // π jump = nav bit transition, acceptable
-                0.0
-            } else {
-                max_phase_jump
-            }
-        };
+        let max_non_nav_jump = max_phase_jump;
         let status = if max_non_nav_jump < 0.1 { "OK" } else { "FAIL" };
         println!("PRN {:02}: max phase jump = {:.4} rad ({:.4} cycles), non-nav = {:.4} — {}",
                  svid, max_phase_jump, max_phase_jump / std::f64::consts::TAU, max_non_nav_jump, status);
@@ -1051,6 +1040,13 @@ fn test_galileo_inav_viterbi_decode() {
     assert!(loaded, "Failed to load Galileo ephemeris for E{:02}", svid);
     println!("Loaded Galileo E{:02} ephemeris", svid);
 
+    let mut unified = NavData::INav(inav);
+    unified.set_galileo_iono_utc(nav_data.gal_iono.as_ref(), nav_data.gal_utc.as_ref());
+    let NavData::INav(mut inav) = unified else {
+        unreachable!()
+    };
+    let mut utc_pages = 0;
+
     // -------------------------------------------------------------------------
     // Viterbi decoder structures
     // -------------------------------------------------------------------------
@@ -1162,11 +1158,22 @@ fn test_galileo_inav_viterbi_decode() {
     let mut all_ok = true;
 
     // Generate 15 I-NAV pages with different TOWs (odd values for E1)
-    for page_idx in 0..15 {
-        let tow = page_idx * 2 + 1; // 1, 3, 5, 7, ..., 29
+    for ms in (0..15)
+        .map(|i| (2 * i + 1) * 1000)
+        .chain([-1000, 0, 604800000, 604801000])
+    {
+        // E1 страница относится к нечётной секунде, в том числе перед границей недели.
+        let absolute = 2369_i64 * 604800 + ms as i64 / 1000;
+        let page_seconds = if absolute % 2 == 0 {
+            absolute - 1
+        } else {
+            absolute
+        };
+        let expected_week = (page_seconds / 604800 - 1024) as u32;
+        let tow = (page_seconds % 604800) as i32;
         let time = GnssTime {
             Week: 2369,
-            MilliSeconds: tow * 1000,
+            MilliSeconds: ms,
             SubMilliSeconds: 0.0,
         };
 
@@ -1197,6 +1204,47 @@ fn test_galileo_inav_viterbi_decode() {
         // --- Step 3f: De-interleave and Viterbi decode odd part (positions 260..500) ---
         let odd_symbols = deinterleave(&nav_bits[260..500]);
         let odd_decoded = viterbi_decode(&odd_symbols, &transitions);
+
+        // Проверяем семантику времени в реально переданном и FEC-декодированном Word 0.
+        let payload: Vec<u8> = even_decoded[2..114]
+            .iter()
+            .chain(odd_decoded[2..18].iter())
+            .copied()
+            .collect();
+        let field = |start: usize, len: usize| {
+            payload[start..start + len]
+                .iter()
+                .fold(0u32, |acc, &bit| (acc << 1) | bit as u32)
+        };
+        if field(0, 6) == 0 && field(6, 2) == 2 {
+            assert_eq!(
+                field(96, 12),
+                expected_week,
+                "Word 0 WN corrupted by filler"
+            );
+            assert_eq!(field(108, 20), tow as u32, "Word 0 TOW corrupted by filler");
+        }
+
+        if field(0, 6) == 5 {
+            assert_eq!(field(73, 12), expected_week);
+            assert_eq!(field(85, 20), tow as u32);
+            // Реальные NeQuick из GAL заголовка: 140.5, 0.14844, 0.011475.
+            assert_eq!(field(6, 11), 562);
+            assert_eq!(field(17, 11), 38);
+            assert_eq!(field(28, 14), 376);
+        }
+        if field(0, 6) == 6 {
+            utc_pages += 1;
+            assert_eq!(field(6, 32), 0); // GAUT A0, а не GPUT
+            assert_eq!(field(38, 24), 0);
+            assert_eq!(field(62, 8), 18);
+            assert_eq!(field(70, 8), 72); // 259200 / 3600, не /4096
+            assert_eq!(field(78, 8), 1345 & 255);
+            assert_eq!(field(86, 8), 905 & 255);
+            assert_eq!(field(94, 3), 7);
+            assert_eq!(field(97, 8), 18);
+            assert_eq!(field(105, 20), tow as u32);
+        }
 
         let odd_tail = &odd_decoded[114..120];
         let odd_tail_ok = odd_tail.iter().all(|&b| b == 0);
@@ -1310,6 +1358,21 @@ fn test_galileo_inav_viterbi_decode() {
     }
 
     println!("\nSummary: {}/{} pages CRC OK", pages_crc_ok, pages_tested);
+    assert!(utc_pages > 0, "UTC Word 6 must actually be transmitted");
     assert!(all_ok, "Galileo I-NAV Viterbi decode/CRC verification failed for some pages");
     assert_eq!(pages_crc_ok, pages_tested, "Not all pages passed CRC24Q verification");
+}
+
+fn bpsk_phase_residual(phase: f64) -> f64 {
+    let phase = phase.rem_euclid(std::f64::consts::PI);
+    phase.min(std::f64::consts::PI - phase)
+}
+
+#[test]
+fn phase_reset_is_not_hidden_by_a_navigation_bit_flip() {
+    let residual = [0.5, std::f64::consts::PI]
+        .into_iter()
+        .map(bpsk_phase_residual)
+        .fold(0.0_f64, f64::max);
+    assert!((residual - 0.5).abs() < 1e-12);
 }

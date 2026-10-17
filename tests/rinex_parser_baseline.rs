@@ -175,3 +175,16 @@ fn galileo_week_survives_trimmed_orbit_lines() {
         );
     }
 }
+
+#[test]
+fn rinex_accuracy_and_orbital_constants_follow_each_constellation() {
+    let nav = load_limited(MERGED_RINEX, 10000);
+    let gps = nav.gps_ephemeris.iter().find(|e| e.svid == 1).unwrap();
+    let gal = nav.galileo_ephemeris.iter().find(|e| e.svid == 2).unwrap();
+    assert_eq!(gps.ura, 0); // RINEX 2.0 m
+    assert_eq!(gal.ura, 107); // RINEX 3.12 m
+    for (eph, mu) in [(gps, 3.986005e14_f64), (gal, 3.986004418e14_f64)] {
+        let recovered_mu = (eph.n - eph.delta_n).powi(2) * eph.sqrtA.powi(6);
+        assert!((recovered_mu / mu - 1.0).abs() < 1e-14);
+    }
+}

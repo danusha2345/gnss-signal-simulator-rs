@@ -675,29 +675,33 @@ impl TrajectorySegment for TrajectoryHorizontalCircular {
         let cos_angle = angle.cos();
         let sin_angle = angle.sin();
 
-        // Get horizontal velocity components (assuming z is up)
-        let vh_x = self.base.start_pos_vel.vx;
-        let vh_y = self.base.start_pos_vel.vy;
-        let vh_z = self.base.start_pos_vel.vz;
-
-        // Rotate velocity vector
-        let new_vx = vh_x * cos_angle - vh_y * sin_angle;
-        let new_vy = vh_x * sin_angle + vh_y * cos_angle;
-        let new_vz = vh_z; // Vertical component unchanged
-
-        // Calculate position change (integration of rotated velocity)
-        let radius = self.base.local_speed.speed / self.angular_rate;
-        let dx = radius * sin_angle;
-        let dy = radius * (1.0 - cos_angle);
-
-        KinematicInfo {
-            x: self.base.start_pos_vel.x + dx,
-            y: self.base.start_pos_vel.y + dy,
-            z: self.base.start_pos_vel.z + new_vz * relative_time,
-            vx: new_vx,
-            vy: new_vy,
-            vz: new_vz,
-        }
+        // Круг задаётся в локальной горизонтальной плоскости ENU, а не в осях ECEF.
+        let mut initial = LocalSpeed::default();
+        speed_ecef_to_local(
+            &self.base.convert_matrix,
+            &self.base.start_pos_vel,
+            &mut initial,
+        );
+        let displacement = LocalSpeed {
+            ve: (initial.ve * sin_angle + initial.vn * (cos_angle - 1.0)) / self.angular_rate,
+            vn: (initial.ve * (1.0 - cos_angle) + initial.vn * sin_angle) / self.angular_rate,
+            vu: initial.vu * relative_time,
+            ..Default::default()
+        };
+        let mut delta = KinematicInfo::default();
+        speed_local_to_ecef(&self.base.convert_matrix, &displacement, &mut delta);
+        let velocity = LocalSpeed {
+            ve: initial.ve * cos_angle - initial.vn * sin_angle,
+            vn: initial.ve * sin_angle + initial.vn * cos_angle,
+            vu: initial.vu,
+            ..Default::default()
+        };
+        let mut result = self.base.start_pos_vel;
+        result.x += delta.vx;
+        result.y += delta.vy;
+        result.z += delta.vz;
+        speed_local_to_ecef(&self.base.convert_matrix, &velocity, &mut result);
+        result
     }
 
     fn get_trajectory_type(&self) -> TrajectoryType {

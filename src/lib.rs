@@ -48,6 +48,8 @@ pub mod galileo_pilot;
 pub mod gps_pilot;
 pub mod gnsstime;
 pub mod ifdatagen;
+mod config_validation;
+mod atomic_output;
 pub mod inavbit;
 pub mod json_interpreter; // Восстановлено для RINEX парсинга
 pub mod json_parser;

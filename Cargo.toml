@@ -29,10 +29,10 @@ path = "src/bin/decode_iq.rs"
 
 [dependencies]
 rand = { version = "0.8", features = ["small_rng"] }
-rayon = "1.8"
+rayon = "1.12"
 wide = "0.7"  # SIMD векторизация
-serde_json = "1.0"  # JSON parsing
-# МАКСИМАЛЬНОЕ АППАРАТНОЕ УСКОРЕНИЕ: GPU + AVX-512  
+serde_json = "1.0.154"  # JSON parsing
+# МАКСИМАЛЬНОЕ АППАРАТНОЕ УСКОРЕНИЕ: GPU + AVX-512
 cudarc = { version = "0.11", features = ["f16", "cuda-12050"], optional = true }
 
 [features]
@@ -42,7 +42,7 @@ avx512 = []
 
 [profile.release]
 opt-level = 3
-lto = "fat" 
+lto = "fat"
 codegen-units = 1
 panic = "abort"
 # КРИТИЧЕСКИЕ ФЛАГИ ДЛЯ МАКСИМАЛЬНОЙ ПРОИЗВОДИТЕЛЬНОСТИ

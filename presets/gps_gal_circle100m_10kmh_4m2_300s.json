@@ -1,0 +1,80 @@
+{
+  "version": 1.0,
+  "description": "GPS L1CA + Galileo E1, IQ8 4.2 МГц, 300 с; R=100 м, 10 км/ч; Монтана, США, высота 100 м; высокий C/N0: GPS 68, Galileo 74 dBHz; исправленные Word 0 и signalPower",
+  "time": {
+    "type": "UTC",
+    "year": 2025,
+    "month": 6,
+    "day": 5,
+    "hour": 10,
+    "minute": 5,
+    "second": 30
+  },
+  "trajectory": {
+    "name": "Монтана, США: окружность 100 м, 10 км/ч",
+    "initPosition": {
+      "type": "LLA",
+      "format": "d",
+      "longitude": -114.2847,
+      "latitude": 48.4928,
+      "altitude": 100.0
+    },
+    "initVelocity": {
+      "type": "SCU",
+      "speedUnit": "km/h",
+      "speed": 10.0,
+      "course": 90.0,
+      "up": 0.0
+    },
+    "trajectoryList": [
+      {
+        "type": "Circular",
+        "time": 300.0,
+        "radius": 100.0
+      }
+    ]
+  },
+  "ephemeris": {
+    "type": "RINEX",
+    "name": "Rinex_Data/BRDC00IGS_R_20251560000_01D_MN.rnx"
+  },
+  "output": {
+    "type": "IFdata",
+    "format": "IQ8",
+    "sampleFreq": 4.2,
+    "centerFreq": 1575.42,
+    "name": "/run/media/danik/external_ssd_2tb/gnss_rust/generated_files/USA_CIRCLE.C8",
+    "config": {
+      "elevationMask": 5
+    },
+    "systemSelect": [
+      {
+        "system": "GPS",
+        "signal": "L1CA",
+        "enable": true
+      },
+      {
+        "system": "Galileo",
+        "signal": "E1",
+        "enable": true
+      }
+    ]
+  },
+  "power": {
+    "noiseFloor": -172,
+    "initPower": {
+      "unit": "dBHz",
+      "value": 68
+    },
+    "elevationAdjust": true,
+    "signalPower": [
+      {
+        "system": "Galileo",
+        "powerValue": {
+          "unit": "dBHz",
+          "value": 74
+        }
+      }
+    ]
+  }
+}

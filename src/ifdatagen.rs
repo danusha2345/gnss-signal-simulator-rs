@@ -30,7 +30,7 @@ use wide::f64x4;
 
 use crate::complex_number::ComplexNumber;
 use crate::constants::*;
-use crate::coordinate::{calc_conv_matrix_lla, ecef_to_lla, lla_to_ecef, speed_local_to_ecef};
+use crate::coordinate::{ecef_to_lla, lla_to_ecef};
 #[cfg(feature = "gpu")]
 use crate::cuda_acceleration::HybridAccelerator;
 use crate::gnsstime::{
@@ -42,7 +42,6 @@ use crate::navdata::NavDataType;
 use crate::powercontrol::{CPowerControl, SignalPower};
 use crate::pvt;
 use crate::trajectory::CTrajectory;
-use crate::types::IonoNequick as INavIonoNequick;
 use crate::types::SatelliteParam;
 use crate::types::*;
 use crate::{
@@ -77,7 +76,7 @@ pub struct NavData {
     gps_utc: Option<UtcParam>,
     bds_iono: Option<IonoParam>,
     bds_utc: Option<UtcParam>,
-    gal_iono: Option<IonoParam>,
+    gal_nequick: Option<IonoNequick>,
     gal_utc: Option<UtcParam>,
 
     // Эфемериды для всех ГНСС систем
@@ -106,7 +105,7 @@ impl NavData {
             gps_utc: None,
             bds_iono: None,
             bds_utc: None,
-            gal_iono: None,
+            gal_nequick: None,
             gal_utc: None,
             gps_almanac: Vec::new(),
             bds_almanac: Vec::new(),
@@ -138,8 +137,12 @@ impl NavData {
     pub fn get_bds_utc_param(&self) -> Option<&UtcParam> {
         self.bds_utc.as_ref()
     }
+    pub fn get_galileo_nequick(&self) -> Option<&IonoNequick> {
+        self.gal_nequick.as_ref()
+    }
+    // Модель распространения пока Klobuchar; NeQuick сюда передавать нельзя.
     pub fn get_galileo_iono(&self) -> Option<&IonoParam> {
-        self.gal_iono.as_ref()
+        None
     }
     pub fn get_galileo_utc_param(&self) -> Option<&UtcParam> {
         self.gal_utc.as_ref()
@@ -479,17 +482,10 @@ impl NavBitTrait for INavBit {
     fn set_almanac(&mut self, alm: &[GpsAlmanac]) {
         self.0.set_almanac(alm);
     }
-    fn set_iono_utc(&mut self, iono_param: Option<&IonoParam>, utc_param: Option<&UtcParam>) {
-        if let (Some(iono), Some(utc)) = (iono_param, utc_param) {
-            // Convert IonoParam to IonoNequick (assume Galileo NeQuick model)
-            let inav_iono = INavIonoNequick {
-                ai0: iono.a0, // Use alpha parameters as ai parameters
-                ai1: iono.a1,
-                ai2: iono.a2,
-                flag: iono.flag,
-            };
-
-            self.0.set_iono_utc(&inav_iono, utc);
+    fn set_iono_utc(&mut self, _iono_param: Option<&IonoParam>, utc_param: Option<&UtcParam>) {
+        // Общий trait принимает Klobuchar, не NeQuick. Не подменяем коэффициенты.
+        if let Some(utc) = utc_param {
+            self.0.set_utc(utc);
         }
     }
     fn get_type(&self) -> NavDataType {
@@ -792,6 +788,7 @@ pub enum DataBitType {
 }
 
 pub struct IFDataGen {
+    scenario_time: Option<UtcTime>,
     pub trajectory: CTrajectory,
     pub power_control: CPowerControl,
     pub nav_data: NavData,
@@ -875,6 +872,7 @@ const SIGNAL_CENTER_FREQ: [[f64; 8]; 4] = [
 impl IFDataGen {
     pub fn new() -> Self {
         IFDataGen {
+            scenario_time: None,
             trajectory: CTrajectory::new(),
             power_control: CPowerControl::new(),
             nav_data: NavData::new(),
@@ -909,231 +907,19 @@ impl IFDataGen {
         }
     }
 
+    /// Legacy API использует тот же проверенный путь, что и основной CLI.
     pub fn main(&mut self, args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
-        println!(
-            "\n================================================================================"
-        );
-        println!("                          IF SIGNAL GENERATION ");
-        println!(
-            "================================================================================"
-        );
-
-        // Read JSON file and assign parameters
-        let json_file = if args.len() > 1 {
-            if args[1] == "--help" {
-                println!("Usage: {} [optional JSON file path]", args[0]);
-                return Ok(());
-            }
-            &args[1]
-        } else {
-            "IfGenTest.json" // Default JSON file
-        };
-
-        // ВРЕМЕННО: не используем JSON парсинг в initialize (используется load_config)
-        if crate::logutil::is_verbose() {
-            println!("[INFO]\tSkipping JSON parsing (handled by load_config)");
+        let config = args.get(1).map(String::as_str).unwrap_or("config.json");
+        if config == "--help" {
+            println!("Usage: gnss_rust [JSON_CONFIG_FILE]");
+            return Ok(());
         }
-
-        // Используем значения по умолчанию
-        let mut utc_time = UtcTime::default();
-        let start_pos = LlaPosition::default();
-        let start_vel = LocalSpeed::default();
-
-        // Значения по умолчанию для тестирования
-        utc_time.Year = 2025;
-        utc_time.Month = 6;
-        utc_time.Day = 5;
-        utc_time.Hour = 10;
-        utc_time.Minute = 5;
-        utc_time.Second = 30.0;
-
-        // TODO: Установить правильное время из JSON пресета
-        // Пока используем хардкод что время симуляции 10 секунд
-
-        if crate::logutil::is_verbose() {
-            println!(
-                "[INFO]\tParsed time from preset: {}-{:02}-{:02} {:02}:{:02}:{:02.0}",
-                utc_time.Year,
-                utc_time.Month,
-                utc_time.Day,
-                utc_time.Hour,
-                utc_time.Minute,
-                utc_time.Second
-            );
-        }
-        let _start_pos = LlaPosition::default();
-        // keep defaults placeholders minimal
-
-        // Старый код удалён - используем новый чистый Rust JSON парсинг ниже
-
-        // Reset satellite masks to allow all satellites
-        self.output_param.GpsMaskOut = 0;
-        self.output_param.BdsMaskOut = 0;
-        self.output_param.GalileoMaskOut = 0;
-        self.output_param.GlonassMaskOut = 0;
-
-        // Set reasonable elevation mask (5 degrees)
-        self.output_param.ElevationMask = 5.0_f64.to_radians();
-
-        // Load RINEX ephemeris data with smart filtering
-        // Читаем путь к RINEX файлу из JSON конфигурации
-        let mut rinex_file = String::from("Rinex_Data/rinex_v3_20251560000.rnx"); // По умолчанию
-
-        // Парсим JSON для получения пути к RINEX файлу
-        if let Ok(json_content) = std::fs::read_to_string(json_file) {
-            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&json_content) {
-                if let Some(ephemeris) = json.get("ephemeris") {
-                    if let Some(name) = ephemeris.get("name").and_then(|v| v.as_str()) {
-                        rinex_file = String::from(name);
-                    }
-                }
-            }
-        }
-        if std::path::Path::new(&rinex_file).exists() {
-            if crate::logutil::is_verbose() {
-                println!("[INFO]\tLoading RINEX ephemeris file: {}", rinex_file);
-            }
-
-            // Создаем CNavData для загрузки эфемерид
-            let mut c_nav_data = crate::json_interpreter::CNavData::default();
-
-            // Определяем включенные системы из JSON конфигурации (CompactConfig)
-            let mut enabled_systems = Vec::new();
-            if self.output_param.CompactConfig.should_parse_gps() {
-                enabled_systems.push("GPS");
-            }
-            if self.output_param.CompactConfig.should_parse_glonass() {
-                enabled_systems.push("GLONASS");
-            }
-            if self.output_param.CompactConfig.should_parse_bds() {
-                enabled_systems.push("BeiDou");
-            }
-            if self.output_param.CompactConfig.should_parse_galileo() {
-                enabled_systems.push("Galileo");
-            }
-
-            // Используем оптимизированную загрузку RINEX с фильтрацией систем из JSON
-            crate::json_interpreter::read_nav_file_filtered(
-                &mut c_nav_data,
-                &rinex_file,
-                Some(utc_time), // Фильтрация по времени
-                &enabled_systems,
-            );
-
-            // Первичная загрузка: выбираем per-satellite, чтобы не расходиться с C-версией
-            self.select_per_satellite_and_fill(&c_nav_data, utc_time);
-
-            // CRITICAL: Transfer ionospheric and UTC parameters from CNavData to NavData
-            // Without this, LNAV subframe 4 page 18 is empty → receiver has no iono/UTC corrections → NO FIX
-            if let (Some(alpha), Some(beta)) = (c_nav_data.gps_iono_alpha, c_nav_data.gps_iono_beta)
-            {
-                self.nav_data.set_gps_iono(IonoParam {
-                    a0: alpha[0],
-                    a1: alpha[1],
-                    a2: alpha[2],
-                    a3: alpha[3],
-                    b0: beta[0],
-                    b1: beta[1],
-                    b2: beta[2],
-                    b3: beta[3],
-                    flag: 1,
-                });
-                println!(
-                    "[INFO] GPS iono parameters transferred to NavData: alpha={:?}, beta={:?}",
-                    alpha, beta
-                );
-            }
-            if let Some(utc) = c_nav_data.utc_param {
-                self.nav_data.set_gps_utc(utc);
-                println!(
-                    "[INFO] GPS UTC parameters transferred to NavData: A0={}, A1={}, TLS={}",
-                    utc.A0, utc.A1, utc.TLS
-                );
-            }
-        } else {
-            println!("[ERROR]\tRINEX file not found: {}", rinex_file);
-        }
-
-        // Initialize variables
-        self.trajectory.reset_trajectory_time();
-        self.cur_time = utc_to_gps_time(utc_time, false); // Use false for leap seconds flag
-        let glonass_time = utc_to_glonass_time_corrected(utc_time);
-        let bds_time = utc_to_bds_time(utc_time);
-        let cur_pos = lla_to_ecef(&start_pos);
-        let convert_matrix = calc_conv_matrix_lla(&start_pos);
-        let mut pos_vel = KinematicInfo {
-            x: cur_pos.x,
-            y: cur_pos.y,
-            z: cur_pos.z,
-            ..Default::default()
-        };
-        speed_local_to_ecef(&convert_matrix, &start_vel, &mut pos_vel);
-
-        let filename_binding = String::from_utf8_lossy(&self.output_param.filename);
-        let filename_str = filename_binding.trim_end_matches('\0');
-        if crate::logutil::is_verbose() {
-            println!("[INFO]\tOpening output file: {}", filename_str);
-        }
-        let mut if_file = match File::create(filename_str) {
-            Ok(file) => {
-                if crate::logutil::is_verbose() {
-                    println!("[INFO]\tOutput file opened successfully.");
-                }
-                BufWriter::with_capacity(1 << 20, file)
-            }
-            Err(_) => {
-                let filename_str = String::from_utf8_lossy(&self.output_param.filename);
-                eprintln!(
-                    "[ERROR]\tFailed to open output file: {}",
-                    filename_str.trim_end_matches('\0')
-                );
-                return Err("Failed to open output file".into());
-            }
-        };
-
-        // Initialize satellite CN0 values
-        for i in 0..TOTAL_GPS_SAT {
-            self.gps_sat_param[i].CN0 = (self.power_control.init_cn0 * 100.0 + 0.5) as i32;
-        }
-        for i in 0..TOTAL_BDS_SAT {
-            self.bds_sat_param[i].CN0 = (self.power_control.init_cn0 * 100.0 + 0.5) as i32;
-        }
-        for i in 0..TOTAL_GAL_SAT {
-            self.gal_sat_param[i].CN0 = (self.power_control.init_cn0 * 100.0 + 0.5) as i32;
-        }
-        for i in 0..TOTAL_GLO_SAT {
-            self.glo_sat_param[i].CN0 = (self.power_control.init_cn0 * 100.0 + 0.5) as i32;
-        }
-
-        // Create navigation bit instances
-        let mut nav_bit_array = self.create_nav_bit_instances();
-
-        self.setup_navigation_data(
-            nav_bit_array.as_mut_slice(),
-            utc_time,
-            glonass_time,
-            bds_time,
-        )?;
-        self.calculate_visible_satellites(cur_pos, glonass_time)?;
-        if crate::logutil::is_verbose() {}
-
-        let mut sat_if_signals = self.create_satellite_signals(&nav_bit_array[..], cur_pos)?;
-        if crate::logutil::is_verbose() {}
-
-        // Парсим время траектории из JSON пресета (используем хардкод пока)
-        let trajectory_time_s = self
-            .parse_trajectory_time_from_json(&self.output_param.config_filename)
-            .unwrap_or(10.0);
-        self.generate_if_signal(
-            &mut if_file,
-            &mut sat_if_signals,
-            cur_pos,
-            trajectory_time_s,
-        )?;
-
-        println!("[INFO]\tIF Signal generation completed!");
+        self.load_config(config)?;
+        self.initialize()?;
+        self.generate_data()?;
         Ok(())
     }
+
     fn create_nav_bit_instances(&self) -> Vec<Option<UnifiedNavData>> {
         let mut nav_bit_array: Vec<Option<UnifiedNavData>> = Vec::with_capacity(14);
 
@@ -1521,8 +1307,8 @@ impl IFDataGen {
             );
         }
         if let Some(ref mut nav_bit) = nav_bit_array[DataBitType::DataBitINav as usize] {
-            nav_bit.set_iono_utc(
-                self.nav_data.get_galileo_iono(),
+            nav_bit.set_galileo_iono_utc(
+                self.nav_data.get_galileo_nequick(),
                 self.nav_data.get_galileo_utc_param(),
             );
         }
@@ -2117,14 +1903,14 @@ impl IFDataGen {
         sat_if_signals: &mut Vec<Option<Box<SatIfSignal>>>,
         _cur_pos: KinematicInfo,
         trajectory_duration_s: f64,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<GenerationStats, Box<dyn std::error::Error>> {
         // Расчет количества выборок на миллисекунду
         // SampleFreq в Hz (например, 5_000_000 Hz = 5000 выборок/мс)
         // Определяет временное разрешение цифрового приемника
         let samples_per_ms = (self.output_param.SampleFreq as f64 / 1000.0) as usize;
         // Calculate total data size and setup progress tracking
         // Используем переданное время траектории из JSON пресета
-        let total_duration_ms = (trajectory_duration_s * 1000.0) as i32;
+        let total_duration_ms = (trajectory_duration_s * 1000.0).round() as i32;
         println!(
             "[INFO]\tUsing trajectory duration: {:.1}s ({} ms)",
             trajectory_duration_s, total_duration_ms
@@ -2182,7 +1968,7 @@ impl IFDataGen {
         total_duration_ms: i32,
         samples_per_ms: usize,
         start_time_gnss: GnssTime,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<GenerationStats, Box<dyn std::error::Error>> {
         println!("🚀 ПАМЯТЬ-ЭФФЕКТИВНЫЙ РЕЖИМ: Потоковая параллелизация!");
         println!(
             "📊 Параметры: {} ms сигнала, {} samples/ms, {} спутников",
@@ -2207,7 +1993,15 @@ impl IFDataGen {
         );
 
         let start_generation = std::time::Instant::now();
-        let active_satellites = sat_if_signals.iter().filter(|s| s.is_some()).count();
+        let mut processing_ms = 0.0;
+        // Состав каналов неизменен в пределах этого запуска. Не сканируем 128
+        // Option-слотов на каждом IQ-отсчёте; сохраняем исходный порядок сложения.
+        let active_indices: Vec<usize> = sat_if_signals
+            .iter()
+            .enumerate()
+            .filter_map(|(i, signal)| signal.as_ref().map(|_| i))
+            .collect();
+        let active_satellites = active_indices.len();
         println!("🛰️  Активных спутников: {}", active_satellites);
 
         // ========== ИНТЕЛЛЕКТУАЛЬНАЯ AGC (AUTOMATIC GAIN CONTROL) СИСТЕМА ==========
@@ -2220,40 +2014,16 @@ impl IFDataGen {
         // перед квантованием в 8-бит IQ, как в реальном приёмнике.
         //
 
-        // РАСЧЕТ НАЧАЛЬНОГО AGC GAIN
-        // Используем ту же формулу амплитуды что и реальная генерация (ComputationCache::update):
-        // A = sqrt(2 * 10^(CN0_dB/10) / Fs), где Fs = samples_per_ms * 1000
-        let init_cn0 = self.power_control.init_cn0; // типично 47.0 dB-Hz
-        let cn0_linear = 10.0_f64.powf(init_cn0 / 10.0);
-        let fs = samples_per_ms as f64 * 1000.0;
-        let single_sat_amplitude = (cn0_linear / fs).sqrt();
-
-        // RMS суммы некоррелированных спутников: A_total = sqrt(N) * A_single
-        let total_rms_amplitude = (active_satellites as f64).sqrt() * single_sat_amplitude;
-
+        // Начальный gain измеряем по первому готовому блоку: учитываем реальные
+        // CN0 всех систем, модуляцию и обе независимые компоненты шума I/Q.
         let noise_sigma = 1.0;
-        let total_rms_with_noise =
-            (total_rms_amplitude * total_rms_amplitude + noise_sigma * noise_sigma).sqrt();
-
-        // Целевой RMS = 0.4: громче для над-эфирного воспроизведения через HackRF/PortaPack
-        // (меньше нужно крутить TX gain). При гауссовом распределении клиппинг на ±1.0 ≈ 2.5σ,
-        // ~1.2% отсчётов — для ГНСС (сигнал глубоко под шумом) это пренебрежимо.
         let target_rms = 0.4;
-        let initial_agc_gain = if total_rms_with_noise > 0.0 {
-            target_rms / total_rms_with_noise
-        } else {
-            1.0
-        };
-
-        let mut agc_gain = initial_agc_gain.clamp(0.001, 100.0);
+        let mut agc_gain = 1.0;
 
         // СЧЕТЧИКИ ДЛЯ СТАТИСТИКИ
         let mut total_clipped_samples = 0i64;
         let mut total_samples_written = 0i64;
         let mut total_bytes_written = 0i64;
-
-        println!("[AGC] Начальный gain: {:.3} (спутников: {}, RMS сигнала: {:.4}, RMS+шум: {:.4}, целевой RMS: {:.2})",
-                 agc_gain, active_satellites, total_rms_amplitude, total_rms_with_noise, target_rms);
 
         // ОСНОВНОЙ ЦИКЛ: Обработка по блокам
         let num_blocks = (total_duration_ms + BLOCK_SIZE_MS - 1) / BLOCK_SIZE_MS;
@@ -2263,6 +2033,8 @@ impl IFDataGen {
         let mut block_signal = vec![ComplexNumber::from_parts(0.0, 0.0); max_block_samples];
         let mut quant_data = vec![0u8; max_block_samples * bytes_per_sample];
 
+        self.trajectory.reset_trajectory_time();
+        let mut receiver_pos = lla_to_ecef(&self.start_pos);
         for block_idx in 0..num_blocks {
             let block_start_ms = block_idx * BLOCK_SIZE_MS;
             let block_end_ms = std::cmp::min(block_start_ms + BLOCK_SIZE_MS, total_duration_ms);
@@ -2290,22 +2062,30 @@ impl IFDataGen {
             // but sample generation every 1ms (cheap) — matches C++ accuracy
             const PARAM_UPDATE_INTERVAL_MS: i32 = 1; // C++ SignalSim updates every 1ms
             let center_freq = self.output_param.CenterFreq as f64;
-            let position_ecef = lla_to_ecef(&self.start_pos);
             for ms_offset in 0..block_duration_ms {
                 let ms_time = start_time_gnss.add_milliseconds((block_start_ms + ms_offset) as f64);
 
                 // Update orbital params periodically (Kepler propagation is expensive)
                 let global_ms = block_start_ms + ms_offset;
+                let step = if global_ms == 0 { 0.0 } else { 0.001 };
+                if !self
+                    .trajectory
+                    .get_next_pos_vel_ecef(step, &mut receiver_pos)
+                {
+                    return Err("Trajectory ended before signal generation completed".into());
+                }
                 // `.max(1)` keeps this a runtime divisor (avoids the modulo-by-1 lint while the
                 // interval is hardcoded to 1) and stays correct if the interval is ever bumped.
                 let update_interval = PARAM_UPDATE_INTERVAL_MS.max(1);
                 if ms_offset == 0 || global_ms % update_interval == 0 {
-                    // C++ UpdateSatParamList: GetPowerControlList(1) + CalculateParam + UpdateCN0
-                    let (power_slice, power_count) = self.power_control.get_power_control_list(1);
+                    // События относятся к началу текущей миллисекунды, включая t=0.
+                    let elapsed_step = global_ms - self.power_control.time_elaps_ms;
+                    let (power_slice, power_count) =
+                        self.power_control.get_power_control_list(elapsed_step);
                     let power_list_owned: Vec<SignalPower> = power_slice.to_vec();
                     self.update_sat_param_list(
                         ms_time,
-                        position_ecef,
+                        receiver_pos,
                         power_count,
                         &power_list_owned,
                         None,
@@ -2378,7 +2158,8 @@ impl IFDataGen {
                     .par_iter_mut()
                     .enumerate()
                     .for_each(|(sample_idx, sample)| {
-                        for sig in sat_if_signals.iter().flatten() {
+                        for &index in &active_indices {
+                            let sig = sat_if_signals[index].as_ref().unwrap();
                             if sample_idx < sig.sample_array.len() {
                                 sample.real += sig.sample_array[sample_idx].real;
                                 sample.imag += sig.sample_array[sample_idx].imag;
@@ -2388,6 +2169,18 @@ impl IFDataGen {
             }
 
             let generation_duration = generation_start.elapsed();
+            processing_ms += generation_duration.as_secs_f64() * 1000.0;
+
+            if block_idx == 0 {
+                let power: f64 = block_signal[..block_samples]
+                    .iter()
+                    .map(|s| s.real * s.real + s.imag * s.imag)
+                    .sum::<f64>()
+                    / block_samples as f64;
+                if power > 0.0 {
+                    agc_gain = (target_rms / power.sqrt()).clamp(0.001, 100.0);
+                }
+            }
 
             // 3. Применяем AGC ко ВСЕМУ блоку (шум + сигнал) — как в реальном приёмнике
             for i in 0..block_samples {
@@ -2438,7 +2231,7 @@ impl IFDataGen {
                 (sum_sq / block_samples as f64).sqrt()
             };
 
-            // Адаптируем gain: целевой RMS = 0.25 (3σ ≈ 0.75, ~5% headroom до 1.0)
+            // Адаптируем gain к целевому комплексному RMS.
             if rms > 0.0 {
                 let correction = target_rms / rms;
                 // Плавная коррекция: двигаемся к цели на 50% за блок
@@ -2519,7 +2312,18 @@ impl IFDataGen {
         }
 
         if_file.flush()?;
-        Ok(())
+        Ok(GenerationStats {
+            total_samples: total_samples_written as u64,
+            clipped_samples: total_clipped_samples as u64,
+            file_size_mb: Some(total_bytes_written as f64 / 1048576.0),
+            total_time_ms: start_generation.elapsed().as_secs_f64() * 1000.0,
+            signal_processing_time_ms: processing_ms,
+            samples_generated: total_samples_written as u64,
+            satellites_processed: active_satellites as u32,
+            // В этом пути нет вызовов специализированных AVX-512/CUDA kernels.
+            avx512_accelerated: false,
+            cuda_accelerated: false,
+        })
     }
 
     fn quantize_samples_iq4(samples: &[ComplexNumber], quant_data: &mut [u8]) -> u64 {
@@ -3251,14 +3055,27 @@ impl IFDataGen {
     fn update_sat_param_list(
         &mut self,
         cur_time: GnssTime,
-        _cur_pos: KinematicInfo,
+        cur_pos: KinematicInfo,
         _list_count: usize,
         power_list: &[SignalPower],
         _iono_param: Option<&IonoParam>,
     ) {
-        // Convert receiver LLA position to ECEF for satellite parameter computation
-        let position_ecef = lla_to_ecef(&self.start_pos);
-        let position_lla = self.start_pos;
+        let position_ecef = cur_pos;
+        let position_lla = ecef_to_lla(&cur_pos);
+
+        // События мощности остаются действующими после своей миллисекунды.
+        // Последняя применимая запись имеет приоритет над предыдущими.
+        let applied = self.power_control.next_index;
+        let active_power: Vec<SignalPower> = self.power_control.power_control_array[..applied]
+            .iter()
+            .rev()
+            .copied()
+            .collect();
+        let power_list = if active_power.is_empty() {
+            power_list
+        } else {
+            &active_power
+        };
 
         let default_iono = IonoParam {
             a0: 0.0,
@@ -3844,6 +3661,7 @@ impl IFDataGen {
 
     // Методы для соответствия интерфейсу main.rs
     pub fn load_config(&mut self, config_file: &str) -> Result<(), Box<dyn std::error::Error>> {
+        self.scenario_time = None;
         // println!("[UNIQUE-DEBUG] load_config called with: {}", config_file);
         println!("[INFO]\tLoading JSON file: {}", config_file);
 
@@ -3858,10 +3676,27 @@ impl IFDataGen {
 
         println!("[INFO]\tJSON file read successfully: {}", config_file);
 
+        let json_content = std::fs::read_to_string(config_file)?;
+        let json: serde_json::Value = serde_json::from_str(&json_content)?;
+        let validated_time = crate::config_validation::validate_config(&json)?;
+        if let Ok(output_path) = std::fs::canonicalize(json["output"]["name"].as_str().unwrap()) {
+            let rinex_path = json["ephemeris"]["name"]
+                .as_str()
+                .unwrap_or("Rinex_Data/rinex_v3_20251560000.rnx");
+            for input in [config_file, rinex_path] {
+                if std::fs::canonicalize(input).ok().as_ref() == Some(&output_path) {
+                    return Err("Output file must not overwrite the preset or RINEX input".into());
+                }
+            }
+        }
+        // Не сохраняем эфемериды и iono/UTC от предыдущего пресета.
+        self.nav_data = NavData::new();
+        self.power_control = CPowerControl::new();
+
         // Парсим параметры из JSON используя чистый Rust
-        let mut utc_time = UtcTime::default();
+        let utc_time = validated_time;
         let mut start_pos = LlaPosition::default();
-        let start_vel = LocalSpeed::default();
+        let mut start_vel = LocalSpeed::default();
 
         // println!("[UNIQUE-JSON-START] Starting pure Rust JSON parsing");
 
@@ -3870,37 +3705,11 @@ impl IFDataGen {
                                                                                   // Стратегия выбора эпох: per_sat (по умолчанию, как в C) или global
         let epoch_selection = String::from("per_sat");
 
-        // УПРОЩЕННЫЙ JSON ПАРСИНГ - читаем файл напрямую и парсим нужные параметры
-        if let Ok(json_content) = std::fs::read_to_string(config_file) {
+        // Используем уже разобранный JSON для заполнения параметров.
+        {
             // println!("[UNIQUE-JSON-READ] File read successfully, length: {}", json_content.len());
-            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&json_content) {
+            {
                 // println!("[UNIQUE-JSON-PARSE] JSON parsed successfully");
-                // Парсим время из JSON
-                if let Some(time) = json.get("time") {
-                    if let (
-                        Some(year),
-                        Some(month),
-                        Some(day),
-                        Some(hour),
-                        Some(minute),
-                        Some(second),
-                    ) = (
-                        time.get("year").and_then(|v| v.as_i64()),
-                        time.get("month").and_then(|v| v.as_i64()),
-                        time.get("day").and_then(|v| v.as_i64()),
-                        time.get("hour").and_then(|v| v.as_i64()),
-                        time.get("minute").and_then(|v| v.as_i64()),
-                        time.get("second").and_then(|v| v.as_f64()),
-                    ) {
-                        utc_time.Year = year as i32;
-                        utc_time.Month = month as i32;
-                        utc_time.Day = day as i32;
-                        utc_time.Hour = hour as i32;
-                        utc_time.Minute = minute as i32;
-                        utc_time.Second = second;
-                    }
-                }
-
                 // Парсим координаты из initPosition
                 if let Some(trajectory) = json.get("trajectory") {
                     if let Some(init_pos) = trajectory.get("initPosition") {
@@ -3966,19 +3775,20 @@ impl IFDataGen {
                     // Парсим имя файла
                     if let Some(filename) = output.get("name").and_then(|v| v.as_str()) {
                         let filename_bytes = filename.as_bytes();
-                        let len = filename_bytes.len().min(255);
+                        let len = filename_bytes.len();
+                        self.output_param.filename.fill(0);
                         self.output_param.filename[..len].copy_from_slice(&filename_bytes[..len]);
                         self.output_param.filename[len] = 0; // Null terminator
                     }
 
                     // Парсим частоту дискретизации (sampleFreq в MHz -> Hz)
                     if let Some(sample_freq) = output.get("sampleFreq").and_then(|v| v.as_f64()) {
-                        self.output_param.SampleFreq = (sample_freq * 1e6) as i32;
+                        self.output_param.SampleFreq = (sample_freq * 1e6).round() as i32;
                     }
 
                     // Парсим центральную частоту (centerFreq в MHz -> Hz)
                     if let Some(center_freq) = output.get("centerFreq").and_then(|v| v.as_f64()) {
-                        self.output_param.CenterFreq = (center_freq * 1_000_000.0) as i32;
+                        self.output_param.CenterFreq = (center_freq * 1_000_000.0).round() as i32;
                     }
 
                     // Парсим формат
@@ -4091,15 +3901,42 @@ impl IFDataGen {
                     }
                 }
 
-                // Парсим длительность траектории
-                if let Some(traj) = json.get("trajectory") {
-                    if let Some(traj_list) = traj.get("trajectoryList").and_then(|v| v.as_array()) {
-                        if let Some(first_traj) = traj_list.first() {
-                            if let Some(time) = first_traj.get("time").and_then(|v| v.as_f64()) {
-                                self.output_param.Interval = (time * 1000.0) as i32;
-                                // секунды -> мс
-                            }
+                if let Some(velocity) = json.get("trajectory").and_then(|t| t.get("initVelocity")) {
+                    let kind = velocity
+                        .get("type")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("SCU");
+                    match kind {
+                        "SCU" => {
+                            let unit = velocity
+                                .get("speedUnit")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("m/s");
+                            let factor = match unit {
+                                "m/s" => 1.0,
+                                "km/h" => 1.0 / 3.6,
+                                _ => return Err(format!("Unsupported speedUnit: {unit}").into()),
+                            };
+                            start_vel.speed = velocity
+                                .get("speed")
+                                .and_then(|v| v.as_f64())
+                                .unwrap_or(0.0)
+                                * factor;
+                            start_vel.course = velocity
+                                .get("course")
+                                .and_then(|v| v.as_f64())
+                                .unwrap_or(0.0)
+                                .to_radians();
+                            start_vel.vu =
+                                velocity.get("up").and_then(|v| v.as_f64()).unwrap_or(0.0);
                         }
+                        _ => return Err(format!("Unsupported initVelocity type: {kind}").into()),
+                    }
+                    if !start_vel.speed.is_finite()
+                        || start_vel.speed < 0.0
+                        || !start_vel.vu.is_finite()
+                    {
+                        return Err("Invalid trajectory velocity".into());
                     }
                 }
             }
@@ -4118,15 +3955,60 @@ impl IFDataGen {
             utc_time.Minute,
             utc_time.Second
         );
+
+        // Загружаем сегменты, чтобы координаты и скорость действительно менялись при синтезе.
+        let mut new_trajectory = crate::trajectory::CTrajectory::new();
+        new_trajectory.set_init_pos_vel_lla(self.start_pos, start_vel, false);
+        if let Some(name) = json["trajectory"]["name"].as_str() {
+            new_trajectory.set_trajectory_name(name);
+        }
+        let segments = json["trajectory"]["trajectoryList"]
+            .as_array()
+            .ok_or("Missing trajectoryList")?;
+        if segments.is_empty() {
+            return Err("Empty trajectoryList".into());
+        }
+        for segment in segments {
+            use crate::trajectory::{TrajectoryDataType as Data, TrajectoryType as Kind};
+            let duration = segment["time"].as_f64().ok_or("Missing trajectory time")?;
+            if !duration.is_finite() || duration <= 0.0 {
+                return Err("Invalid trajectory duration".into());
+            }
+            let (kind, data_type, value) = match segment["type"].as_str() {
+                Some("Const") => (
+                    Kind::TrajTypeConstSpeed,
+                    Data::TrajDataSpeed,
+                    start_vel.speed,
+                ),
+                Some("Circular") => (
+                    Kind::TrajTypeHorizontalCircular,
+                    Data::TrajDataRadius,
+                    segment["radius"]
+                        .as_f64()
+                        .ok_or("Missing circular radius")?,
+                ),
+                other => return Err(format!("Unsupported trajectory type: {other:?}").into()),
+            };
+            if !value.is_finite() {
+                return Err("Invalid trajectory parameter".into());
+            }
+            let status = new_trajectory.append_trajectory(
+                kind,
+                Data::TrajDataTimeSpan,
+                duration,
+                data_type,
+                value,
+            );
+            if status != crate::trajectory::TRAJECTORY_NO_ERR {
+                return Err(format!("Invalid trajectory segment: error {status}").into());
+            }
+        }
+        self.output_param.Interval = (new_trajectory.get_time_length() * 1000.0).round() as i32;
+        self.trajectory = new_trajectory;
         println!(
             "[INFO]\t  Duration: {:.1} s",
             self.output_param.Interval as f64 / 1000.0
         );
-
-        // Создаем новую траекторию
-        let mut new_trajectory = crate::trajectory::CTrajectory::new();
-        new_trajectory.set_init_pos_vel_lla(start_pos, start_vel, false);
-        self.trajectory = new_trajectory;
 
         // Reset satellite masks to allow all satellites
         self.output_param.GpsMaskOut = 0;
@@ -4136,8 +4018,8 @@ impl IFDataGen {
 
         // Применяем elevationMask из JSON, если задан; иначе дефолт 5°
         // Ищем output.config.elevationMask (в градусах)
-        if let Ok(json_content) = std::fs::read_to_string(config_file) {
-            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&json_content) {
+        {
+            {
                 if let Some(cfg) = json.get("output").and_then(|o| o.get("config")) {
                     if let Some(deg) = cfg.get("elevationMask").and_then(|v| v.as_f64()) {
                         self.output_param.ElevationMask = deg.to_radians();
@@ -4166,6 +4048,64 @@ impl IFDataGen {
                             };
                             self.power_control.set_init_cn0(cn0);
                         }
+                    }
+                    if let Some(entries) = power.get("signalPower").and_then(|v| v.as_array()) {
+                        for entry in entries {
+                            let (system, max_svid) = match entry["system"].as_str() {
+                                Some("GPS") => (0, 32),
+                                Some("BDS") => (1, 63),
+                                Some("Galileo") => (2, 36),
+                                Some("GLONASS") => (3, 24),
+                                other => {
+                                    return Err(format!("Invalid power system: {other:?}").into())
+                                }
+                            };
+                            let svids = match entry.get("svid") {
+                                None => vec![0],
+                                Some(serde_json::Value::Array(items)) => items
+                                    .iter()
+                                    .map(|v| v.as_i64().ok_or("Invalid power svid"))
+                                    .collect::<Result<Vec<_>, _>>()?,
+                                Some(value) => vec![value.as_i64().ok_or("Invalid power svid")?],
+                            };
+                            if svids.iter().any(|&sv| sv < 0 || sv > max_svid) {
+                                return Err("Power svid out of range".into());
+                            }
+                            let values = entry.get("powerValue").ok_or("Missing powerValue")?;
+                            let values: Vec<&serde_json::Value> = match values.as_array() {
+                                Some(values) => values.iter().collect(),
+                                None => vec![values],
+                            };
+                            for value in values {
+                                let raw = value["value"].as_f64().ok_or("Missing power value")?;
+                                let cn0 = match value["unit"].as_str().unwrap_or("dBHz") {
+                                    "dBHz" => raw,
+                                    "dBm" => raw - self.power_control.noise_floor,
+                                    "dBW" => raw + 30.0 - self.power_control.noise_floor,
+                                    other => {
+                                        return Err(format!("Invalid power unit: {other}").into())
+                                    }
+                                };
+                                let seconds =
+                                    value.get("time").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                                if !cn0.is_finite()
+                                    || !seconds.is_finite()
+                                    || seconds < 0.0
+                                    || seconds * 1000.0 > i32::MAX as f64
+                                {
+                                    return Err("Invalid power value/time".into());
+                                }
+                                for &svid in &svids {
+                                    self.power_control.add_control_element(&SignalPower {
+                                        system,
+                                        svid: svid as i32,
+                                        time: (seconds * 1000.0).round() as i32,
+                                        cn0,
+                                    });
+                                }
+                            }
+                        }
+                        self.power_control.sort();
                     }
                     // elevationAdjust: true/false
                     if let Some(adj) = power.get("elevationAdjust").and_then(|v| v.as_bool()) {
@@ -4281,6 +4221,8 @@ impl IFDataGen {
                     alpha, beta
                 );
             }
+            self.nav_data.gal_nequick = c_nav_data.gal_iono;
+            self.nav_data.gal_utc = c_nav_data.gal_utc;
             if let Some(utc) = c_nav_data.utc_param {
                 self.nav_data.set_gps_utc(utc);
                 println!(
@@ -4317,6 +4259,7 @@ impl IFDataGen {
             return Err("Failed to parse JSON configuration".into());
         }
 
+        self.scenario_time = Some(validated_time);
         println!("[INFO]\tJSON configuration parsed successfully");
         Ok(())
     }
@@ -4355,6 +4298,7 @@ impl IFDataGen {
         // Инициализация уже выполнена при загрузке конфигурации
         // Здесь только базовая настройка системы
         self.trajectory.reset_trajectory_time();
+        self.power_control.reset_time();
 
         // Инициализируем CN0 для спутников
         for i in 0..TOTAL_GPS_SAT {
@@ -4652,40 +4596,37 @@ impl IFDataGen {
     }
 
     pub fn generate_data(&mut self) -> Result<GenerationStats, Box<dyn std::error::Error>> {
-        // Используем стандартные данные пока не реализованы get методы
+        let started = std::time::Instant::now();
         let utc_time = self
-            .parse_utc_time_from_json(&self.output_param.config_filename)
-            .unwrap_or_else(|| {
-                println!("[WARNING]\tFailed to parse time from JSON, using default time");
-                UtcTime {
-                    Year: 2025,
-                    Month: 6,
-                    Day: 5,
-                    Hour: 10,
-                    Minute: 5,
-                    Second: 30.0,
-                }
-            });
+            .scenario_time
+            .ok_or("Load a valid configuration before generation")?;
+        if self.output_param.SampleFreq <= 0 || self.output_param.SampleFreq % 1000 != 0 {
+            return Err("SampleFreq must be positive and divisible by 1000 Hz".into());
+        }
+        let duration = self.trajectory.get_time_length() * 1000.0;
+        if !duration.is_finite()
+            || duration < 1.0
+            || duration > (i32::MAX - 50) as f64
+            || (duration - duration.round()).abs() > 1e-6
+        {
+            return Err("Trajectory must contain a positive whole number of milliseconds".into());
+        }
+        if !matches!(
+            self.output_param.Format,
+            OutputFormat::OutputFormatIQ4 | OutputFormat::OutputFormatIQ8
+        ) {
+            return Err("Unsupported output format".into());
+        }
         let start_pos = self.start_pos;
         let _start_vel = LocalSpeed::default();
         let glonass_time = utc_to_glonass_time_corrected(utc_time);
         let bds_time = utc_to_bds_time(utc_time);
-        let cur_pos = lla_to_ecef(&start_pos);
-
-        // Открываем выходной файл
-        let filename_binding = String::from_utf8_lossy(&self.output_param.filename);
-        let filename_str = filename_binding.trim_end_matches('\0');
-        println!("[INFO]\tOpening output file: {}", filename_str);
-        let mut if_file = match File::create(filename_str) {
-            Ok(file) => {
-                println!("[INFO]\tOutput file opened successfully.");
-                BufWriter::with_capacity(1 << 20, file)
-            }
-            Err(_) => {
-                println!("[ERROR]\tFailed to open output file: {}", filename_str);
-                return Err("Failed to open output file".into());
-            }
-        };
+        self.trajectory.reset_trajectory_time();
+        self.power_control.reset_time();
+        let mut cur_pos = lla_to_ecef(&start_pos);
+        if !self.trajectory.get_next_pos_vel_ecef(0.0, &mut cur_pos) {
+            return Err("Missing receiver trajectory".into());
+        }
 
         // Создаем навигационные биты
         let mut nav_bit_array = self.create_nav_bit_instances();
@@ -4700,16 +4641,7 @@ impl IFDataGen {
         self.calculate_visible_satellites(cur_pos, glonass_time)?;
 
         // Санити-проверка PVT перед генерацией: пытаемся восстановить позицию приёмника
-        let utc_now = self
-            .parse_utc_time_from_json(&self.output_param.config_filename)
-            .unwrap_or(UtcTime {
-                Year: 2025,
-                Month: 6,
-                Day: 5,
-                Hour: 10,
-                Minute: 5,
-                Second: 30.0,
-            });
+        let utc_now = utc_time;
         let gps_now = crate::gnsstime::utc_to_gps_time(utc_now, true);
         let bds_now = crate::gnsstime::utc_to_bds_time(utc_now);
         let gal_now = crate::gnsstime::utc_to_galileo_time(utc_now);
@@ -4734,49 +4666,33 @@ impl IFDataGen {
 
         // Создаем спутниковые сигналы и генерируем данные
         let mut sat_if_signals = self.create_satellite_signals(&nav_bit_array[..], cur_pos)?;
-        let trajectory_time_s = self
-            .parse_trajectory_time_from_json(&self.output_param.config_filename)
-            .unwrap_or(10.0);
-        self.generate_if_signal(
-            &mut if_file,
+        if !sat_if_signals.iter().any(Option::is_some) {
+            return Err("No usable satellite channels for this scenario".into());
+        }
+        let duration_ms = (self.trajectory.get_time_length() * 1000.0).round() as u64;
+        let samples_per_ms = self.output_param.SampleFreq as u64 / 1000;
+        let bytes_per_sample = if self.output_param.Format == OutputFormat::OutputFormatIQ4 {
+            1
+        } else {
+            2
+        };
+        let expected_bytes = duration_ms
+            .checked_mul(samples_per_ms)
+            .and_then(|n| n.checked_mul(bytes_per_sample))
+            .ok_or("Output size overflow")?;
+        let filename = String::from_utf8_lossy(&self.output_param.filename);
+        let target = std::path::Path::new(filename.trim_end_matches('\0'));
+        let mut output = crate::atomic_output::AtomicOutput::new(target)?;
+        let mut stats = self.generate_if_signal(
+            output.writer(),
             &mut sat_if_signals,
             cur_pos,
-            trajectory_time_s,
+            duration_ms as f64 / 1000.0,
         )?;
-
-        // Вычисляем ПРАВИЛЬНУЮ статистику
-        // SampleFreq уже в Hz (5,000,000), НЕ УМНОЖАТЬ на 1e6!
-        let trajectory_time_seconds = trajectory_time_s;
-        let total_samples = (self.output_param.SampleFreq as f64 * trajectory_time_seconds) as u64;
-        let file_size_mb = match self.output_param.Format {
-            OutputFormat::OutputFormatIQ4 => Some(total_samples as f64 / 1024.0 / 1024.0),
-            OutputFormat::OutputFormatIQ8 => Some(total_samples as f64 * 2.0 / 1024.0 / 1024.0),
-            _ => Some(total_samples as f64 * 2.0 / 1024.0 / 1024.0), // Default to IQ8 equivalent
-        };
-
+        output.commit(expected_bytes)?;
+        stats.total_time_ms = started.elapsed().as_secs_f64() * 1000.0;
         println!("[INFO]\tIF Signal generation completed!");
-
-        // Проверяем доступность аппаратных ускорителей
-        let avx512_available = crate::avx512_intrinsics::Avx512Accelerator::is_available();
-
-        #[cfg(feature = "gpu")]
-        let cuda_available = crate::cuda_acceleration::CudaGnssAccelerator::is_available();
-        #[cfg(not(feature = "gpu"))]
-        let cuda_available = false;
-
-        Ok(GenerationStats {
-            total_samples,
-            clipped_samples: 0,
-            file_size_mb,
-
-            // Дополнительные данные для анализа производительности
-            total_time_ms: 0.0, // Будет заполнено в вызывающем коде
-            signal_processing_time_ms: 0.0,
-            samples_generated: total_samples,
-            satellites_processed: sat_if_signals.len() as u32,
-            avx512_accelerated: avx512_available,
-            cuda_accelerated: cuda_available,
-        })
+        Ok(stats)
     }
 
     // Satellite position calculation functions based on C implementation
@@ -4803,74 +4719,6 @@ impl IFDataGen {
         } else {
             None
         }
-    }
-
-    // Простой парсер для извлечения времени траектории из JSON
-    fn parse_utc_time_from_json(&self, config_file: &str) -> Option<UtcTime> {
-        use std::fs;
-        let json_content = fs::read_to_string(config_file).ok()?;
-
-        // Simple JSON parsing for time section
-        let time_start = json_content.find("\"time\": {")?;
-        let time_end = json_content[time_start..].find("}")?;
-        let time_section = &json_content[time_start..time_start + time_end + 1];
-
-        let year = Self::extract_json_field(time_section, "year")?;
-        let month = Self::extract_json_field(time_section, "month")?;
-        let day = Self::extract_json_field(time_section, "day")?;
-        let hour = Self::extract_json_field(time_section, "hour")?;
-        let minute = Self::extract_json_field(time_section, "minute")?;
-        let second = Self::extract_json_field(time_section, "second")?;
-
-        Some(UtcTime {
-            Year: year as i32,
-            Month: month as i32,
-            Day: day as i32,
-            Hour: hour as i32,
-            Minute: minute as i32,
-            Second: second,
-        })
-    }
-
-    fn extract_json_field(json_section: &str, field_name: &str) -> Option<f64> {
-        let field_pattern = format!("\"{}\": ", field_name);
-        let start = json_section.find(&field_pattern)?;
-        let value_start = start + field_pattern.len();
-        let value_end = json_section[value_start..].find([',', '\n', '}'].as_ref())?;
-        let value_str = json_section[value_start..value_start + value_end].trim();
-        value_str.parse().ok()
-    }
-
-    fn parse_trajectory_time_from_json(&self, config_file: &str) -> Option<f64> {
-        use std::fs;
-
-        // Читаем JSON файл как текст
-        let json_content = fs::read_to_string(config_file).ok()?;
-
-        // Ищем "trajectoryList" и первый "time"
-        if let Some(traj_start) = json_content.find("\"trajectoryList\"") {
-            let after_traj = &json_content[traj_start..];
-            if let Some(time_start) = after_traj.find("\"time\"") {
-                let after_time = &after_traj[time_start + 6..]; // Skip "time"
-                if let Some(colon_pos) = after_time.find(':') {
-                    let after_colon = &after_time[colon_pos + 1..];
-                    // Извлекаем число до запятой или закрывающей скобки
-                    let mut end_pos = 0;
-                    let chars: Vec<char> = after_colon.chars().collect();
-                    for (i, &c) in chars.iter().enumerate() {
-                        if c.is_ascii_digit() || c == '.' {
-                            end_pos = i + 1;
-                        } else if c == ',' || c == '}' || c == ']' {
-                            break;
-                        }
-                    }
-                    let time_str = after_colon[..end_pos].trim();
-                    return time_str.parse::<f64>().ok();
-                }
-            }
-        }
-
-        None
     }
 }
 

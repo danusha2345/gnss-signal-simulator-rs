@@ -637,6 +637,7 @@ pub struct UtcParam {
     pub A2: f64,
     pub WN: i16,
     pub WNLSF: i16,
+    /// GPS: единицы 4096 с; Galileo: 3600 с. Задаются системным RINEX-парсером.
     pub tot: u8,
     pub TLS: i8,
     pub TLSF: i8,

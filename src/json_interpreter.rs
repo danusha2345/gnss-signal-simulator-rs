@@ -188,6 +188,9 @@ pub struct CNavData {
     // UTC параметры и корректировки времени
     pub utc_param: Option<UtcParam>,
     pub leap_seconds: Option<i32>,
+    pub gal_iono: Option<IonoNequick>,
+    /// GAUT: WN/WNLSF в неделях GST, tot в часах.
+    pub gal_utc: Option<UtcParam>,
 }
 
 impl Default for CNavData {
@@ -211,6 +214,8 @@ impl CNavData {
             galileo_almanac: Vec::new(),
             utc_param: None,
             leap_seconds: None,
+            gal_iono: None,
+            gal_utc: None,
         }
     }
 
@@ -355,8 +360,7 @@ impl CNavData {
     }
 
     pub fn has_gal_iono(&self) -> bool {
-        // В текущей структуре нет Galileo ионосферных параметров
-        false
+        self.gal_iono.is_some()
     }
 
     pub fn has_gps_utc(&self) -> bool {
@@ -636,60 +640,8 @@ pub fn read_nav_file_limited(nav_data: &mut CNavData, filename: &str, max_per_sy
 
     while let Some(Ok(line)) = lines.next() {
         if !header_complete {
-            if line.contains("END OF HEADER") {
-                header_complete = true;
-            } else if line.contains("IONOSPHERIC CORR") {
-                if line.starts_with("GPSA") {
-                    if let Some(iono_alpha) = parse_rinex3_iono_alpha(&line) {
-                        nav_data.set_gps_iono_alpha(iono_alpha);
-                    }
-                } else if line.starts_with("GPSB") {
-                    if let Some(iono_beta) = parse_rinex3_iono_beta(&line) {
-                        nav_data.set_gps_iono_beta(iono_beta);
-                    }
-                }
-            } else if line.contains("TIME SYSTEM CORR") {
-                if line.starts_with("GPUT") {
-                    if let Some(utc) = parse_gput_time_system_corr(&line) {
-                        nav_data.utc_param = Some(utc);
-                        println!("[INFO] GPS UTC parameters parsed from RINEX: A0={}, A1={}, tot={}, WN={}", utc.A0, utc.A1, utc.tot, utc.WN);
-                    }
-                }
-            } else if line.contains("LEAP SECONDS") {
-                if let Some(tls) = parse_leap_seconds(&line) {
-                    nav_data.leap_seconds = Some(tls);
-                    // Update or create UTC param with leap seconds
-                    if let Some(ref mut utc) = nav_data.utc_param {
-                        utc.TLS = tls as i8;
-                        utc.flag |= 2; // bit 1 = GPUT parsed, bit 2 = LEAP SECONDS parsed
-                    } else {
-                        nav_data.utc_param = Some(UtcParam {
-                            TLS: tls as i8,
-                            flag: 3, // both GPUT and LEAP SECONDS
-                            ..UtcParam::default()
-                        });
-                    }
-                    // Also parse WNLSF and DN if available
-                    if line.len() >= 24 {
-                        if let Ok(tlsf) = line.get(6..12).unwrap_or("").trim().parse::<i32>() {
-                            if let Some(ref mut utc) = nav_data.utc_param {
-                                utc.TLSF = tlsf as i8;
-                            }
-                        }
-                        if let Ok(wnlsf) = line.get(12..18).unwrap_or("").trim().parse::<i32>() {
-                            if let Some(ref mut utc) = nav_data.utc_param {
-                                utc.WNLSF = wnlsf as i16;
-                            }
-                        }
-                        if let Ok(dn) = line.get(18..24).unwrap_or("").trim().parse::<u32>() {
-                            if let Some(ref mut utc) = nav_data.utc_param {
-                                utc.DN = dn as u8;
-                            }
-                        }
-                    }
-                    println!("[INFO] Leap seconds parsed from RINEX: {}", tls);
-                }
-            }
+            header_complete = line.contains("END OF HEADER");
+            parse_navigation_header(nav_data, &line);
             continue;
         }
 
@@ -840,74 +792,8 @@ pub fn read_nav_file_filtered(
                 total_lines_processed += 1;
                 // Пропустить заголовок до "END OF HEADER"
                 if !header_complete {
-                    if line.contains("END OF HEADER") {
-                        header_complete = true;
-                    } else if line.contains("ION ALPHA") {
-                        // Парсинг ионосферных параметров альфа (RINEX 2.x)
-                        if let Some(iono_alpha) = parse_iono_alpha(&line) {
-                            nav_data.set_gps_iono_alpha(iono_alpha);
-                        }
-                    } else if line.contains("ION BETA") {
-                        // Парсинг ионосферных параметров бета (RINEX 2.x)
-                        if let Some(iono_beta) = parse_iono_beta(&line) {
-                            nav_data.set_gps_iono_beta(iono_beta);
-                        }
-                    } else if line.contains("IONOSPHERIC CORR") {
-                        // Парсинг ионосферных параметров (RINEX 3.x)
-                        if line.starts_with("GPSA") {
-                            if let Some(iono_alpha) = parse_rinex3_iono_alpha(&line) {
-                                nav_data.set_gps_iono_alpha(iono_alpha);
-                                println!(
-                                    "[INFO] GPS iono alpha parameters parsed: {:?}",
-                                    iono_alpha
-                                );
-                            }
-                        } else if line.starts_with("GPSB") {
-                            if let Some(iono_beta) = parse_rinex3_iono_beta(&line) {
-                                nav_data.set_gps_iono_beta(iono_beta);
-                                println!("[INFO] GPS iono beta parameters parsed: {:?}", iono_beta);
-                            }
-                        }
-                    } else if line.contains("TIME SYSTEM CORR") {
-                        if line.starts_with("GPUT") {
-                            if let Some(utc) = parse_gput_time_system_corr(&line) {
-                                nav_data.utc_param = Some(utc);
-                                println!("[INFO] GPS UTC parameters parsed from RINEX: A0={}, A1={}, tot={}, WN={}", utc.A0, utc.A1, utc.tot, utc.WN);
-                            }
-                        }
-                    } else if line.contains("LEAP SECONDS") {
-                        if let Some(tls) = parse_leap_seconds(&line) {
-                            nav_data.leap_seconds = Some(tls);
-                            if let Some(ref mut utc) = nav_data.utc_param {
-                                utc.TLS = tls as i8;
-                                utc.flag |= 2;
-                            } else {
-                                nav_data.utc_param = Some(UtcParam {
-                                    TLS: tls as i8,
-                                    flag: 3,
-                                    ..UtcParam::default()
-                                });
-                            }
-                            if line.len() >= 24 {
-                                if let Ok(tlsf) = line.get(6..12).unwrap_or("").trim().parse::<i32>() {
-                                    if let Some(ref mut utc) = nav_data.utc_param {
-                                        utc.TLSF = tlsf as i8;
-                                    }
-                                }
-                                if let Ok(wnlsf) = line.get(12..18).unwrap_or("").trim().parse::<i32>() {
-                                    if let Some(ref mut utc) = nav_data.utc_param {
-                                        utc.WNLSF = wnlsf as i16;
-                                    }
-                                }
-                                if let Ok(dn) = line.get(18..24).unwrap_or("").trim().parse::<u32>() {
-                                    if let Some(ref mut utc) = nav_data.utc_param {
-                                        utc.DN = dn as u8;
-                                    }
-                                }
-                            }
-                            println!("[INFO] Leap seconds parsed from RINEX: {}", tls);
-                        }
-                    }
+                    header_complete = line.contains("END OF HEADER");
+                    parse_navigation_header(nav_data, &line);
                     continue;
                 }
 
@@ -2562,33 +2448,108 @@ fn parse_rinex3_iono_beta(line: &str) -> Option<[f64; 4]> {
     }
 }
 
+/// Общий заголовок для полного и ограниченного RINEX-парсера.
+fn parse_navigation_header(nav: &mut CNavData, line: &str) {
+    if line.contains("ION ALPHA") {
+        if let Some(value) = parse_iono_alpha(line) {
+            nav.set_gps_iono_alpha(value);
+        }
+    } else if line.contains("ION BETA") {
+        if let Some(value) = parse_iono_beta(line) {
+            nav.set_gps_iono_beta(value);
+        }
+    } else if line.contains("IONOSPHERIC CORR") {
+        if line.starts_with("GPSA") {
+            if let Some(value) = parse_rinex3_iono_alpha(line) {
+                nav.set_gps_iono_alpha(value);
+            }
+        } else if line.starts_with("GPSB") {
+            if let Some(value) = parse_rinex3_iono_beta(line) {
+                nav.set_gps_iono_beta(value);
+            }
+        } else if line.starts_with("GAL ") {
+            let number = |a, b| -> Option<f64> {
+                line.get(a..b)?.trim().replace(['D', 'd'], "E").parse().ok()
+            };
+            if let (Some(ai0), Some(ai1), Some(ai2)) =
+                (number(5, 17), number(17, 29), number(29, 41))
+            {
+                nav.gal_iono = Some(IonoNequick {
+                    ai0,
+                    ai1,
+                    ai2,
+                    flag: 0,
+                });
+            }
+        }
+    } else if line.contains("TIME SYSTEM CORR") {
+        if line.starts_with("GPUT") {
+            if let Some(mut utc) = parse_gput_time_system_corr(line) {
+                if let Some(previous) = nav.utc_param.filter(|p| p.flag & 2 != 0) {
+                    copy_leap_seconds(&previous, &mut utc, false);
+                }
+                nav.utc_param = Some(utc);
+            }
+        } else if line.starts_with("GAUT") {
+            if let Some(mut utc) = parse_time_system_corr(line, 3600, 1024) {
+                if let Some(previous) = nav.utc_param.filter(|p| p.flag & 2 != 0) {
+                    copy_leap_seconds(&previous, &mut utc, true);
+                }
+                nav.gal_utc = Some(utc);
+            }
+        }
+    } else if line.contains("LEAP SECONDS") {
+        if let Some(tls) = parse_leap_seconds(line) {
+            nav.leap_seconds = Some(tls);
+            let utc = nav.utc_param.get_or_insert_with(UtcParam::default);
+            utc.TLS = tls as i8;
+            utc.TLSF = line
+                .get(6..12)
+                .and_then(|s| s.trim().parse().ok())
+                .unwrap_or(tls as i8);
+            utc.WNLSF = line
+                .get(12..18)
+                .and_then(|s| s.trim().parse().ok())
+                .unwrap_or(utc.WN);
+            utc.DN = line
+                .get(18..24)
+                .and_then(|s| s.trim().parse().ok())
+                .unwrap_or(7);
+            utc.flag |= 2;
+            if let Some(gal) = &mut nav.gal_utc {
+                copy_leap_seconds(utc, gal, true);
+            }
+        }
+    }
+}
+
+fn copy_leap_seconds(gps: &UtcParam, target: &mut UtcParam, galileo: bool) {
+    target.TLS = gps.TLS;
+    target.TLSF = gps.TLSF;
+    target.WNLSF = gps.WNLSF - if galileo { 1024 } else { 0 };
+    target.DN = gps.DN;
+    target.flag |= 2;
+}
+
 /// Парсит GPS UTC параметры из RINEX TIME SYSTEM CORR строки (GPUT)
 /// RINEX 3.04 format: A4,1X,D17.10,D16.9,I7,I5
 /// Columns: 0-3=type, 5-21=A0(17ch), 22-37=A1(16ch), 38-44=T(7ch), 45-49=W(5ch)
 fn parse_gput_time_system_corr(line: &str) -> Option<UtcParam> {
-    // Example: GPUT -9.3132257462e-10-8.881784197e-16  61440 2370          TIME SYSTEM CORR
-    if line.len() < 50 { return None; }
-    let a0_str = line.get(5..22)?.trim().replace("D", "E").replace("d", "e");
-    let a1_str = line.get(22..38)?.trim().replace("D", "E").replace("d", "e");
-    let tot_str = line.get(38..45)?.trim();
-    let wn_str = line.get(45..50)?.trim();
+    parse_time_system_corr(line, 4096, 0)
+}
 
-    let a0: f64 = a0_str.parse().ok()?;
-    let a1: f64 = a1_str.parse().ok()?;
-    let tot: u8 = tot_str.parse::<u32>().ok().map(|v| (v / 4096) as u8)?; // RINEX tot in seconds, UtcParam.tot in 2^12 units
-    let wn: i16 = wn_str.parse().ok()?;
-
+fn parse_time_system_corr(line: &str, unit_seconds: u32, week_offset: i16) -> Option<UtcParam> {
+    let number =
+        |a, b| -> Option<f64> { line.get(a..b)?.trim().replace(['D', 'd'], "E").parse().ok() };
+    let seconds: u32 = line.get(38..45)?.trim().parse().ok()?;
+    let week: i16 = line.get(45..50)?.trim().parse().ok()?;
     Some(UtcParam {
-        A0: a0,
-        A1: a1,
-        A2: 0.0,
-        WN: wn,
-        WNLSF: 0,
-        tot,
-        TLS: 0, // Will be set by LEAP SECONDS line
-        TLSF: 0,
-        DN: 0,
+        A0: number(5, 22)?,
+        A1: number(22, 38)?,
+        WN: week.checked_sub(week_offset)?,
+        tot: u8::try_from(seconds / unit_seconds).ok()?,
         flag: 1,
+        ..UtcParam::default()
     })
 }
 
@@ -2698,7 +2659,13 @@ where
 
     // Вычисляем производные значения
     eph.axis = eph.sqrtA * eph.sqrtA;
-    eph.n = (EARTH_GM / (eph.axis * eph.axis * eph.axis)).sqrt() + eph.delta_n;
+    // GPS использует μ=3.986005e14; BeiDou — μ=3.986004418e14.
+    let sqrt_mu = if is_beidou {
+        crate::constants::CGCS2000_SQRT_GM
+    } else {
+        crate::constants::WGS_SQRT_GM
+    };
+    eph.n = sqrt_mu / (eph.sqrtA * eph.axis) + eph.delta_n;
     eph.root_ecc = (1.0 - eph.ecc * eph.ecc).sqrt();
 
     // КРИТИЧЕСКИЙ ФИКС: Как в C версии - учитываем WGS_OMEGDOTE при инициализации!
@@ -3137,8 +3104,8 @@ where
         eph.svid, data[3], eph.iodc, eph.toe
     );
     eph.week = data[21] as i32; // Week (GST/GPS-aligned in RINEX 3.x)
-                                // Galileo SISA is reported; map to URA index similarly to GPS as an approximation
-    eph.ura = get_ura_index(data[23]) as i16; // SISA (data[23]) → URA index
+                                // Galileo SISA имеет собственную шкалу, отличную от GPS URA.
+    eph.ura = get_sisa_index(data[23]) as i16; // Индекс SISA (8 бит)
                                               // Health field for Galileo is data[24] in our C reference; use the same index here
     eph.health = data[24] as u16; // Health
 
@@ -3322,25 +3289,39 @@ fn read_contents_data(line: &str, data: &mut [f64]) {
     }
 }
 
-/// Преобразует URA в индекс (из C++ версии)
+/// GPS LNAV URA: верхние границы интервалов IS-GPS-200, в метрах.
 fn get_ura_index(ura: f64) -> i32 {
-    if ura <= 2.4 {
-        (ura / 0.3 + 0.5) as i32
-    } else if ura <= 6.0 {
-        ((ura - 2.4) / 0.6 + 8.5) as i32
-    } else if ura <= 12.0 {
-        ((ura - 6.0) / 1.2 + 14.5) as i32
-    } else if ura <= 24.0 {
-        ((ura - 12.0) / 2.4 + 19.5) as i32
-    } else if ura <= 48.0 {
-        ((ura - 24.0) / 4.8 + 24.5) as i32
-    } else if ura <= 96.0 {
-        ((ura - 48.0) / 9.6 + 29.5) as i32
-    } else if ura <= 192.0 {
-        ((ura - 96.0) / 19.2 + 34.5) as i32
-    } else {
-        15
+    const LIMITS: [f64; 15] = [
+        2.4, 3.4, 4.85, 6.85, 9.65, 13.65, 24.0, 48.0, 96.0, 192.0, 384.0, 768.0, 1536.0, 3072.0,
+        6144.0,
+    ];
+    if !ura.is_finite() || ura < 0.0 {
+        return 15;
     }
+    LIMITS
+        .iter()
+        .position(|&limit| ura <= limit)
+        .map_or(15, |i| i as i32)
+}
+
+/// Galileo SISA (OS SIS ICD 5.1.11); 255 означает NAPA.
+fn get_sisa_index(sisa: f64) -> i32 {
+    if !sisa.is_finite() || !(0.0..=6.0).contains(&sisa) {
+        return 255;
+    }
+    // Выбираем ближайшую верхнюю ступень, не занижая заявленную ошибку.
+    // Допуск устраняет только погрешность представления десятичных значений.
+    (0..=125)
+        .find(|&i| {
+            let metres = match i {
+                0..=49 => i as f64 * 0.01,
+                50..=74 => 0.5 + (i - 50) as f64 * 0.02,
+                75..=99 => 1.0 + (i - 75) as f64 * 0.04,
+                _ => 2.0 + (i - 100) as f64 * 0.16,
+            };
+            sisa <= metres + 1e-12
+        })
+        .unwrap_or(255)
 }
 
 /// Правильный парсер GLONASS эфемерид по образцу C++ DecodeEphOrbit
@@ -3424,4 +3405,72 @@ where
         eph.n
     );
     Some(eph)
+}
+
+#[cfg(test)]
+mod accuracy_and_header_regressions {
+    use super::*;
+
+    #[test]
+    fn gps_ura_uses_broadcast_intervals() {
+        let limits = [
+            2.4, 3.4, 4.85, 6.85, 9.65, 13.65, 24.0, 48.0, 96.0, 192.0, 384.0, 768.0, 1536.0,
+            3072.0, 6144.0,
+        ];
+        assert_eq!(get_ura_index(2.0), 0);
+        for (index, limit) in limits.into_iter().enumerate() {
+            assert_eq!(get_ura_index(limit), index as i32);
+            assert_eq!(get_ura_index(limit + 1e-6), index as i32 + 1);
+        }
+        for invalid in [-1.0, f64::NAN, f64::INFINITY] {
+            assert_eq!(get_ura_index(invalid), 15);
+        }
+    }
+
+    #[test]
+    fn galileo_sisa_has_its_own_scale_and_napa() {
+        for (metres, index) in [
+            (0.0, 0),
+            (0.49, 49),
+            (0.5, 50),
+            (0.98, 74),
+            (1.0, 75),
+            (1.96, 99),
+            (2.0, 100),
+            (3.12, 107),
+            (6.0, 125),
+            (0.491, 50),
+            (1.961, 100),
+            (-1.0, 255),
+            (6.001, 255),
+        ] {
+            assert_eq!(get_sisa_index(metres), index, "SISA={metres}");
+        }
+        assert_eq!(get_sisa_index(f64::NAN), 255);
+    }
+
+    #[test]
+    fn leap_seconds_header_order_does_not_erase_utc_metadata() {
+        let lines = [
+            "GAUT  0.0000000000E+00 0.000000000E+00 259200 2369          TIME SYSTEM CORR",
+            "GPUT -2.7939677238E-09-7.993605777E-15 589824 2369          TIME SYSTEM CORR",
+            "    18    18  1929     7                                    LEAP SECONDS",
+        ];
+        for order in [[0, 1, 2], [2, 0, 1], [1, 2, 0]] {
+            let mut nav = CNavData::new();
+            for i in order {
+                parse_navigation_header(&mut nav, lines[i]);
+            }
+            let gal = nav.gal_utc.unwrap();
+            let gps = nav.utc_param.unwrap();
+            assert_eq!(
+                (gal.tot, gal.WN, gal.WNLSF, gal.TLS, gal.TLSF, gal.DN, gal.flag),
+                (72, 1345, 905, 18, 18, 7, 3)
+            );
+            assert_eq!(
+                (gps.tot, gps.WN, gps.WNLSF, gps.TLS, gps.TLSF, gps.flag),
+                (144, 2369, 1929, 18, 18, 3)
+            );
+        }
+    }
 }

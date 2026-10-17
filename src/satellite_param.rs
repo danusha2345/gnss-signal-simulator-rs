@@ -292,7 +292,7 @@ pub fn get_satellite_param(
     satellite_time -= travel_time;
 
     // Calculate accurate satellite position at transmit time
-    let time_diff = if USE_POSITION_PREDICTION {
+    if USE_POSITION_PREDICTION {
         let time_diff = satellite_time - satellite_param.PosTimeTag as f64;
         sat_position.x = satellite_param.PosVel.x
             + (satellite_param.PosVel.vx + satellite_param.Acc[0] * time_diff * 0.5) * time_diff;
@@ -303,11 +303,9 @@ pub fn get_satellite_param(
         sat_position.vx = satellite_param.PosVel.vx + satellite_param.Acc[0] * time_diff;
         sat_position.vy = satellite_param.PosVel.vy + satellite_param.Acc[1] * time_diff;
         sat_position.vz = satellite_param.PosVel.vz + satellite_param.Acc[2] * time_diff;
-        time_diff
     } else {
         gps_sat_pos_speed_eph(system, satellite_time, eph, &mut sat_position, None);
-        0.0
-    };
+    }
 
     let distance = geometry_distance(
         position_ecef,
@@ -338,10 +336,8 @@ pub fn get_satellite_param(
     let total_distance = distance + tropo_delay(position_lla.lat, position_lla.alt, elevation);
 
     // Calculate travel time with corrections
-    travel_time = total_distance / LIGHT_SPEED - gps_clock_correction(eph, satellite_time);
-
-    // Add relativistic correction
-    travel_time -= 4.442807633e-10 * eph.ecc * eph.sqrtA * (eph.Ek + time_diff * eph.Ek_dot).sin(); // WGS84 F constant
+    let (clock_bias, clock_rate) = satellite_clock_correction(system, eph, satellite_time);
+    travel_time = total_distance / LIGHT_SPEED - clock_bias;
 
     // Set group delays based on system
     satellite_param.GroupDelay = [0.0; 8];
@@ -377,7 +373,7 @@ pub fn get_satellite_param(
     satellite_param.Elevation = elevation;
     satellite_param.Azimuth = azimuth;
     satellite_param.RelativeSpeed =
-        sat_relative_speed(position_ecef, &sat_position) - LIGHT_SPEED * eph.af1;
+        sat_relative_speed(position_ecef, &sat_position) - LIGHT_SPEED * clock_rate;
 
     // КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Сохраняем рассчитанную позицию и скорость спутника
     satellite_param.PosVel = sat_position;
@@ -391,34 +387,26 @@ pub fn get_satellite_cn0(
     adjust: ElevationAdjust,
     satellite_param: &mut SatelliteParam,
 ) {
-    let mut cn0 = default_cn0;
-
-    // Find matching power entry
-    for power in power_list {
-        if (power.svid == satellite_param.svid || power.svid == 0)
-            && power.system == satellite_param.system as i32
-        {
-            if power.cn0 < 0.0 {
-                cn0 = default_cn0;
-                match adjust {
-                    ElevationAdjust::ElevationAdjustNone => {}
-                    ElevationAdjust::ElevationAdjustSinSqrtFade => {
-                        // Elevation в радианах: 0° = 0, 90° = π/2
-                        // При elevation = 0° → sin(0) = 0 → sqrt(0) = 0 → коррекция = -25 дБ
-                        // При elevation = 90° → sin(π/2) = 1 → sqrt(1) = 1 → коррекция = 0 дБ
-                        cn0 -= (1.0 - satellite_param.Elevation.sin().sqrt()) * 25.0;
-                    }
-                }
-            } else {
-                cn0 = power.cn0;
-            }
-            satellite_param.CN0 = (cn0 * 100.0 + 0.5) as i32;
-            return;
+    let adjusted_default = match adjust {
+        ElevationAdjust::ElevationAdjustNone => default_cn0,
+        ElevationAdjust::ElevationAdjustSinSqrtFade => {
+            default_cn0 - (1.0 - satellite_param.Elevation.sin().clamp(0.0, 1.0).sqrt()) * 25.0
         }
-    }
-
-    // No matching power entry found, use default CN0
-    satellite_param.CN0 = (cn0 * 100.0 + 0.5) as i32;
+    };
+    let cn0 = power_list
+        .iter()
+        .find(|power| {
+            (power.svid == satellite_param.svid || power.svid == 0)
+                && power.system == satellite_param.system as i32
+        })
+        .map_or(adjusted_default, |power| {
+            if power.cn0 < 0.0 {
+                adjusted_default
+            } else {
+                power.cn0
+            }
+        });
+    satellite_param.CN0 = (cn0 * 100.0).round() as i32;
 }
 
 /// Get ionospheric delay for different signals
@@ -658,23 +646,8 @@ fn gps_sat_pos_speed_eph(
         delta_t += 604800.0;
     }
 
-    // Получение Ek из Mk с помощью итеративного алгоритма
-    let alpha = eph.delta_n_dot * delta_t;
-    let mk = eph.M0 + (eph.n + alpha / 2.0) * delta_t;
-    let mut ek = mk;
-    let mut ek1 = mk;
-
-    // Итеративное решение уравнения Кеплера: Ek = Mk + e*sin(Ek)
-    for _ in 0..10 {
-        ek = mk + eph.ecc * ek.sin();
-        if (ek - ek1).abs() < 1e-14 {
-            break;
-        }
-        ek1 = ek;
-    }
-
-    // Присваиваем Ek1 как 1-e*cos(Ek) для дальнейших вычислений
-    ek1 = 1.0 - eph.ecc * ek.cos();
+    let (ek, ek_dot) = eccentric_anomaly(eph, delta_t);
+    let ek1 = 1.0 - eph.ecc * ek.cos();
 
     // Получаем phi(k) с помощью atan2
     let phi = ((eph.root_ecc * ek.sin()).atan2(ek.cos() - eph.ecc)) + eph.w;
@@ -696,7 +669,6 @@ fn gps_sat_pos_speed_eph(
     ik += dik;
 
     // Рассчитываем производные r(k) и u(k)
-    let ek_dot = (eph.n + alpha) / ek1;
     let phi_dot = ek_dot * eph.root_ecc / ek1;
     let phi_dot_2 = phi_dot * 2.0;
 
@@ -1095,21 +1067,41 @@ fn tropo_delay(lat: f64, alt: f64, elevation: f64) -> f64 {
     zenith_delay * mapping_function
 }
 
-/// Рассчитывает коррекцию часов GPS спутника
-/// Использует полином второго порядка: af0 + af1*dt + af2*dt^2
-fn gps_clock_correction(eph: &GpsEphemeris, transmit_time: f64) -> f64 {
-    let mut time_diff = transmit_time - eph.toc as f64;
-
-    // Защита от переполнения недели
-    if time_diff > 302400.0 {
-        time_diff -= 604800.0;
+/// E и dE/dt для текущего времени относительно toe; кэш эфемериды не используется.
+fn eccentric_anomaly(eph: &GpsEphemeris, delta_t: f64) -> (f64, f64) {
+    let mean = eph.M0 + (eph.n + 0.5 * eph.delta_n_dot * delta_t) * delta_t;
+    let mut eccentric = mean;
+    for _ in 0..10 {
+        let step =
+            (eccentric - eph.ecc * eccentric.sin() - mean) / (1.0 - eph.ecc * eccentric.cos());
+        eccentric -= step;
+        if step.abs() < 1e-14 {
+            break;
+        }
     }
-    if time_diff < -302400.0 {
-        time_diff += 604800.0;
-    }
+    let rate = (eph.n + eph.delta_n_dot * delta_t) / (1.0 - eph.ecc * eccentric.cos());
+    (eccentric, rate)
+}
 
-    let clock_adj = eph.af0 + (eph.af1 + eph.af2 * time_diff) * time_diff;
-    clock_adj * (1.0 - eph.af1) // коррекция времени
+fn week_delta(time: f64, reference: i32) -> f64 {
+    (time - reference as f64 + 302400.0).rem_euclid(604800.0) - 302400.0
+}
+
+/// Смещение часов относительно системного времени и его производная.
+/// δt = af0 + af1*dt + af2*dt² - 2√μ/c² * e√A sin(E).
+/// Групповая задержка применяется отдельно для каждого сигнала.
+fn satellite_clock_correction(system: GnssSystem, eph: &GpsEphemeris, time: f64) -> (f64, f64) {
+    let dt = week_delta(time, eph.toc);
+    let (eccentric, eccentric_rate) = eccentric_anomaly(eph, week_delta(time, eph.toe));
+    let mu: f64 = if system == GnssSystem::GpsSystem {
+        3.986005e14
+    } else {
+        3.986004418e14
+    };
+    let factor = -2.0 * mu.sqrt() / (LIGHT_SPEED * LIGHT_SPEED) * eph.ecc * eph.sqrtA;
+    let bias = eph.af0 + (eph.af1 + eph.af2 * dt) * dt + factor * eccentric.sin();
+    let rate = eph.af1 + 2.0 * eph.af2 * dt + factor * eccentric.cos() * eccentric_rate;
+    (bias, rate)
 }
 
 /// Получает количество високосных секунд для заданного GPS времени в секундах с начала эпохи
@@ -1290,7 +1282,7 @@ pub fn get_satellite_param_with_prediction(
     satellite_time -= travel_time;
 
     // Calculate accurate satellite position at transmit time
-    let time_diff = if use_position_prediction {
+    if use_position_prediction {
         let mut pos_vel_temp = KinematicInfo::default();
         get_sat_pos_vel(
             system,
@@ -1300,11 +1292,9 @@ pub fn get_satellite_param_with_prediction(
             &mut pos_vel_temp,
         );
         sat_position = pos_vel_temp;
-        satellite_time - satellite_param.PosTimeTag as f64
     } else {
         gps_sat_pos_speed_eph(system, satellite_time, eph, &mut sat_position, None);
-        0.0
-    };
+    }
 
     let distance = geometry_distance(
         position_ecef,
@@ -1339,10 +1329,8 @@ pub fn get_satellite_param_with_prediction(
         // travel_time = total_distance / LIGHT_SPEED - glonass_clock_correction(glo_eph, satellite_time);
         travel_time = total_distance / LIGHT_SPEED; // Placeholder
     } else {
-        travel_time = total_distance / LIGHT_SPEED - gps_clock_correction(eph, satellite_time);
-        // Add relativistic correction with time difference for prediction
-        travel_time -=
-            4.442807633e-10 * eph.ecc * eph.sqrtA * (eph.Ek + time_diff * eph.Ek_dot).sin();
+        travel_time = total_distance / LIGHT_SPEED
+            - satellite_clock_correction(system, eph, satellite_time).0;
     }
 
     // Set group delays based on system (same as before)
@@ -1386,8 +1374,8 @@ pub fn get_satellite_param_with_prediction(
         satellite_param.RelativeSpeed = sat_relative_speed(position_ecef, &sat_position);
     // Placeholder
     } else {
-        satellite_param.RelativeSpeed =
-            sat_relative_speed(position_ecef, &sat_position) - LIGHT_SPEED * eph.af1;
+        satellite_param.RelativeSpeed = sat_relative_speed(position_ecef, &sat_position)
+            - LIGHT_SPEED * satellite_clock_correction(system, eph, satellite_time).1;
     }
 }
 
@@ -1625,7 +1613,7 @@ impl SatelliteParamCalculator {
                 &mut self.pos_vel,
                 None,
             );
-            self.clock_error = gps_clock_correction(eph, sat_time_corrected);
+            self.clock_error = satellite_clock_correction(self.system, eph, sat_time_corrected).0;
         }
 
         // Ephemeris transition blending
@@ -1653,7 +1641,7 @@ impl SatelliteParamCalculator {
                     None,
                 );
                 clock_error_prev =
-                    gps_clock_correction(eph_prev, sat_time_corrected);
+                    satellite_clock_correction(self.system, eph_prev, sat_time_corrected).0;
             }
 
             if self.eph_transition <= time_step {
@@ -1717,12 +1705,6 @@ impl SatelliteParamCalculator {
                 total_distance / LIGHT_SPEED - self.clock_error;
             self.group_delay = [0.0; 8];
             if let Some(ref eph) = self.eph_cur {
-                // Relativistic correction
-                self.travel_time -= WGS_F_GTR
-                    * eph.ecc
-                    * eph.sqrtA
-                    * eph.Ek.sin();
-
                 // Group delays per system
                 match self.system {
                     GnssSystem::GpsSystem => {
@@ -1752,10 +1734,9 @@ impl SatelliteParamCalculator {
                     _ => {}
                 }
 
-                self.relative_speed = sat_relative_speed(
-                    position_ecef,
-                    &self.pos_vel,
-                ) - LIGHT_SPEED * eph.af1;
+                self.relative_speed = sat_relative_speed(position_ecef, &self.pos_vel)
+                    - LIGHT_SPEED
+                        * satellite_clock_correction(self.system, eph, sat_time_corrected).1;
             }
         }
     }
@@ -1848,5 +1829,98 @@ mod wave_length_tests {
         let b2ab = get_wave_length(GnssSystem::BdsSystem, SIGNAL_INDEX_B2AB, 0);
         let b1c = get_wave_length(GnssSystem::BdsSystem, SIGNAL_INDEX_B1C, 0);
         assert!((b2ab - b1c).abs() > 1e-3, "B2AB wavelength must differ from B1C");
+    }
+}
+
+#[cfg(test)]
+mod clock_and_power_regressions {
+    use super::*;
+
+    #[test]
+    fn clock_relativity_matches_orbital_dot_product_and_ignores_cache() {
+        let axis: f64 = 26_560_000.0;
+        let ecc: f64 = 0.01;
+        for system in [GnssSystem::GpsSystem, GnssSystem::GalileoSystem] {
+            let mu: f64 = if system == GnssSystem::GpsSystem {
+                3.986005e14
+            } else {
+                3.986004418e14
+            };
+            for eccentric in [0.0_f64, 1.0, std::f64::consts::FRAC_PI_2, 4.0] {
+                let n = (mu / axis.powi(3)).sqrt();
+                let eph = GpsEphemeris {
+                    ecc,
+                    sqrtA: axis.sqrt(),
+                    n,
+                    M0: eccentric - ecc * eccentric.sin(),
+                    Ek: 123.0,
+                    Ek_dot: 456.0,
+                    ..GpsEphemeris::default()
+                };
+                // Независимое выражение ESA: -2 r·v/c² в плоскости идеальной орбиты.
+                let e_dot = n / (1.0 - ecc * eccentric.cos());
+                let x = axis * (eccentric.cos() - ecc);
+                let y = axis * (1.0 - ecc * ecc).sqrt() * eccentric.sin();
+                let vx = -axis * eccentric.sin() * e_dot;
+                let vy = axis * (1.0 - ecc * ecc).sqrt() * eccentric.cos() * e_dot;
+                let expected = -2.0 * (x * vx + y * vy) / LIGHT_SPEED.powi(2);
+                let actual = satellite_clock_correction(system, &eph, 0.0).0;
+                assert!((actual - expected).abs() < 1e-19);
+                let uncached = GpsEphemeris {
+                    Ek: 0.0,
+                    Ek_dot: 0.0,
+                    ..eph
+                };
+                assert_eq!(actual, satellite_clock_correction(system, &uncached, 0.0).0);
+            }
+        }
+    }
+
+    #[test]
+    fn clock_rate_matches_bias_derivative_across_week_boundary() {
+        let eph = GpsEphemeris {
+            toe: 604790,
+            toc: 604790,
+            M0: 1.0,
+            ecc: 0.02,
+            sqrtA: 5153.795,
+            n: 0.00014584,
+            af0: 2e-4,
+            af1: 1e-11,
+            af2: 3e-16,
+            ..GpsEphemeris::default()
+        };
+        for time in [0.0, 100.0, 604800.0] {
+            let clock = |t| satellite_clock_correction(GnssSystem::GpsSystem, &eph, t);
+            let numerical = (clock(time + 0.5).0 - clock(time - 0.5).0) / 1.0;
+            assert!((clock(time).1 - numerical).abs() < 1e-18);
+            assert_eq!(clock(time), clock(time + 604800.0));
+        }
+    }
+
+    #[test]
+    fn default_elevation_fade_and_explicit_power_have_distinct_semantics() {
+        for (elevation, expected) in [(90.0_f64, 5200), (0.0, 2700), (-5.0, 2700)] {
+            let mut sat = SatelliteParam {
+                svid: 1,
+                system: GnssSystem::GpsSystem,
+                Elevation: elevation.to_radians(),
+                ..SatelliteParam::default()
+            };
+            let adjust = ElevationAdjust::ElevationAdjustSinSqrtFade;
+            get_satellite_cn0(&[], 52.0, adjust, &mut sat);
+            assert_eq!(sat.CN0, expected);
+            let mut override_power = SignalPower {
+                system: 0,
+                svid: 1,
+                time: 0,
+                cn0: 48.0,
+            };
+            get_satellite_cn0(&[override_power], 52.0, adjust, &mut sat);
+            assert_eq!(sat.CN0, 4800);
+            override_power.cn0 = -1.0;
+            get_satellite_cn0(&[override_power], 52.0, adjust, &mut sat);
+            assert_eq!(sat.CN0, expected);
+        }
     }
 }
