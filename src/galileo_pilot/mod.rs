@@ -110,7 +110,11 @@ fn cboc_sign(subchip_count: i64, logical_chip: i64) -> f64 {
     if chip_in_code % 11 == 0 {
         // BOC(6,1): 12-subchip cycle, flip at phase >= 6
         let boc6_phase = subchip_count.rem_euclid(12);
-        if boc6_phase >= 6 { -1.0 } else { 1.0 }
+        if boc6_phase >= 6 {
+            -1.0
+        } else {
+            1.0
+        }
     } else {
         // BOC(1,1): flip on odd subchip
         boc11_sign(subchip_count)
@@ -152,8 +156,11 @@ pub fn generate(
             None => continue,
         };
 
-        let mut sat_param = SatelliteParam::default();
-        sat_param.system = GnssSystem::GalileoSystem;
+        let mut sat_param = SatelliteParam {
+            system: GnssSystem::GalileoSystem,
+            ..Default::default()
+        };
+
         get_satellite_param(
             &receiver_ecef,
             &receiver_lla,
@@ -221,7 +228,10 @@ pub fn generate(
         });
     }
 
-    println!("[galileo_pilot] {} visible Galileo satellites", channels.len());
+    println!(
+        "[galileo_pilot] {} visible Galileo satellites",
+        channels.len()
+    );
     for info in &sat_infos {
         println!(
             "  E{:02}: el={:.1}\u{00b0} az={:.1}\u{00b0} doppler={:.0} Hz",
@@ -245,10 +255,8 @@ pub fn generate(
         config.duration_s, samples_per_ms, agc_gain
     );
 
-    let mut file = std::io::BufWriter::with_capacity(
-        1 << 20,
-        std::fs::File::create(&config.output_path)?,
-    );
+    let mut file =
+        std::io::BufWriter::with_capacity(1 << 20, std::fs::File::create(&config.output_path)?);
 
     let chunk_ms = 1000;
 
@@ -272,8 +280,11 @@ pub fn generate(
                     };
 
                     // Update satellite params every ms
-                    let mut sat_param = SatelliteParam::default();
-                    sat_param.system = GnssSystem::GalileoSystem;
+                    let mut sat_param = SatelliteParam {
+                        system: GnssSystem::GalileoSystem,
+                        ..Default::default()
+                    };
+
                     let receiver_ecef_local = lla_to_ecef(&config.receiver_lla);
                     let receiver_lla_local = ecef_to_lla(&receiver_ecef_local);
                     get_satellite_param(
@@ -305,8 +316,7 @@ pub fn generate(
                         // Logical chip index (4092 chips at 1.023 MHz)
                         let chip_count = tx_time * CHIP_RATE;
                         let logical_chip =
-                            ((chip_count % CODE_LEN as f64) + CODE_LEN as f64) as usize
-                                % CODE_LEN;
+                            ((chip_count % CODE_LEN as f64) + CODE_LEN as f64) as usize % CODE_LEN;
 
                         // Subchip for BOC modulation (2.046 MHz)
                         let subchip_count = (tx_time * SUBCHIP_RATE) as i64;
@@ -329,8 +339,7 @@ pub fn generate(
                             );
                             ch.current_frame = frame_number;
                         }
-                        let bit_index =
-                            ((tx_ms % FRAME_MS) / NAV_BIT_PERIOD_MS) as usize;
+                        let bit_index = ((tx_ms % FRAME_MS) / NAV_BIT_PERIOD_MS) as usize;
                         let nav_bit: f64 =
                             if ch.nav_bits[bit_index.min(NAV_BITS_PER_FRAME - 1)] != 0 {
                                 -1.0
@@ -362,10 +371,7 @@ pub fn generate(
                         let (sin_v, cos_v) = angle.sin_cos();
                         ch.carrier_phase += freq * dt;
 
-                        buf[base_idx + s] = (
-                            (signal_i * cos_v) as f32,
-                            (signal_i * sin_v) as f32,
-                        );
+                        buf[base_idx + s] = ((signal_i * cos_v) as f32, (signal_i * sin_v) as f32);
                     }
                 }
                 buf
@@ -422,7 +428,13 @@ mod tests {
     fn cs25_secondary_code_matches_icd() {
         const ICD_CS25: &str = "0011100000001010110110010";
         let emitted: String = (0..SECONDARY_CODE_LEN)
-            .map(|i| if get_secondary_code_bit(i) < 0.0 { '1' } else { '0' })
+            .map(|i| {
+                if get_secondary_code_bit(i) < 0.0 {
+                    '1'
+                } else {
+                    '0'
+                }
+            })
             .collect();
         assert_eq!(emitted, ICD_CS25, "CS25 sequence does not match the ICD");
 

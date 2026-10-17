@@ -240,12 +240,36 @@ impl BCNav2Bit {
                 frame_data[5] = COMPOSE_BITS!(self.clock_param[svid_idx][3], 23, 1);
                 frame_data[5] |= COMPOSE_BITS!(self.almanac_week, 10, 13);
                 frame_data[5] |= COMPOSE_BITS!(self.almanac_toa, 2, 8);
-                self.cur_reduced_alm_index = Self::find_next_valid_index(self.almanac_valid_mask, self.cur_reduced_alm_index);
-                Self::append_word(frame_data, 5 * 24 + 22, &self.reduced_almanac[self.cur_reduced_alm_index as usize], 38);
-                self.cur_reduced_alm_index = Self::find_next_valid_index(self.almanac_valid_mask, self.cur_reduced_alm_index);
-                Self::append_word(frame_data, 7 * 24 + 12, &self.reduced_almanac[self.cur_reduced_alm_index as usize], 38);
-                self.cur_reduced_alm_index = Self::find_next_valid_index(self.almanac_valid_mask, self.cur_reduced_alm_index);
-                Self::append_word(frame_data, 9 * 24 + 2, &self.reduced_almanac[self.cur_reduced_alm_index as usize], 38);
+                self.cur_reduced_alm_index = Self::find_next_valid_index(
+                    self.almanac_valid_mask,
+                    self.cur_reduced_alm_index,
+                );
+                Self::append_word(
+                    frame_data,
+                    5 * 24 + 22,
+                    &self.reduced_almanac[self.cur_reduced_alm_index as usize],
+                    38,
+                );
+                self.cur_reduced_alm_index = Self::find_next_valid_index(
+                    self.almanac_valid_mask,
+                    self.cur_reduced_alm_index,
+                );
+                Self::append_word(
+                    frame_data,
+                    7 * 24 + 12,
+                    &self.reduced_almanac[self.cur_reduced_alm_index as usize],
+                    38,
+                );
+                self.cur_reduced_alm_index = Self::find_next_valid_index(
+                    self.almanac_valid_mask,
+                    self.cur_reduced_alm_index,
+                );
+                Self::append_word(
+                    frame_data,
+                    9 * 24 + 2,
+                    &self.reduced_almanac[self.cur_reduced_alm_index as usize],
+                    38,
+                );
             }
             32 => {
                 frame_data[1] |= COMPOSE_BITS!(self.integrity_flags[svid_idx] >> 5, 13, 3);
@@ -262,8 +286,16 @@ impl BCNav2Bit {
                 frame_data[1] |= COMPOSE_BITS!(self.integrity_flags[svid_idx] >> 2, 6, 3);
                 Self::append_word(frame_data, 24 + 18, &self.clock_param[svid_idx], 69);
                 Self::append_word(frame_data, 4 * 24 + 15, &self.bgto_param[0], 68);
-                self.cur_reduced_alm_index = Self::find_next_valid_index(self.almanac_valid_mask, self.cur_reduced_alm_index);
-                Self::append_word(frame_data, 7 * 24 + 11, &self.reduced_almanac[self.cur_reduced_alm_index as usize], 38);
+                self.cur_reduced_alm_index = Self::find_next_valid_index(
+                    self.almanac_valid_mask,
+                    self.cur_reduced_alm_index,
+                );
+                Self::append_word(
+                    frame_data,
+                    7 * 24 + 11,
+                    &self.reduced_almanac[self.cur_reduced_alm_index as usize],
+                    38,
+                );
                 frame_data[9] |= COMPOSE_BITS!(self.clock_param[svid_idx][3], 13, 10);
                 frame_data[9] |= COMPOSE_BITS!(self.almanac_week, 0, 13);
                 frame_data[10] = COMPOSE_BITS!(self.almanac_toa, 16, 8);
@@ -274,8 +306,14 @@ impl BCNav2Bit {
                 frame_data[1] |= COMPOSE_BITS!(self.integrity_flags[svid_idx] >> 2, 6, 3);
                 // SISAIoe/SISAIoc filled with 27 zeros
                 frame_data[2] = 0;
-                self.cur_midi_alm_index = Self::find_next_valid_index(self.almanac_valid_mask, self.cur_midi_alm_index);
-                Self::append_word(frame_data, 2 * 24 + 21, &self.midi_almanac[self.cur_midi_alm_index as usize], 156);
+                self.cur_midi_alm_index =
+                    Self::find_next_valid_index(self.almanac_valid_mask, self.cur_midi_alm_index);
+                Self::append_word(
+                    frame_data,
+                    2 * 24 + 21,
+                    &self.midi_almanac[self.cur_midi_alm_index as usize],
+                    156,
+                );
                 frame_data[10] = 0; // fill rest of 39bits with 0
             }
             34 => {
@@ -283,7 +321,7 @@ impl BCNav2Bit {
                 frame_data[1] |= COMPOSE_BITS!(self.integrity_flags[svid_idx] >> 5, 13, 3); // B2a DIF/SIF/AIF
                 frame_data[1] |= COMPOSE_BITS!(self.integrity_flags[svid_idx] >> 11, 9, 4); // SISMAI
                 frame_data[1] |= COMPOSE_BITS!(self.integrity_flags[svid_idx] >> 2, 6, 3); // B1C DIF/SIF/AIF
-                // SISAI filled with 22 zeros
+                                                                                           // SISAI filled with 22 zeros
                 frame_data[2] = 0;
                 Self::append_word(frame_data, 2 * 24 + 16, &self.clock_param[svid_idx], 69);
                 frame_data[5] |= COMPOSE_BITS!(self.clock_param[svid_idx][3], 1, 10); // IODC
@@ -325,7 +363,7 @@ impl BCNav2Bit {
         // version read from bit 32 (dropping the low 8 bits of every chunk) and only advanced
         // the source index on full-24-bit chunks, desyncing across word boundaries (H14).
         let mut remain_bits: i32 = 24; // bits left in the current source word
-        // callers pass an absolute bit position; split into a dest-word index + in-word offset
+                                       // callers pass an absolute bit position; split into a dest-word index + in-word offset
         let mut dest_idx = start_bit / 24;
         let mut start_bit = (start_bit % 24) as i32; // bit offset inside the current dest word
         let mut src_idx = 0usize;
@@ -426,7 +464,10 @@ mod append_word_tests {
                 let mut want = [0u32; 8];
                 BCNav2Bit::append_word(&mut got, start, &source, len);
                 reference.append_word(&mut want, start as i32, &source, len as i32);
-                assert_eq!(got, want, "append_word mismatch at start={start}, len={len}");
+                assert_eq!(
+                    got, want,
+                    "append_word mismatch at start={start}, len={len}"
+                );
             }
         }
     }
@@ -437,8 +478,11 @@ mod append_word_tests {
     #[test]
     fn bcnav2_ephemeris_round_trips_via_b1c_decoder() {
         use crate::nav_decode::decode_bcnav_ephemeris;
-        let mut eph = crate::types::GpsEphemeris::default();
-        eph.valid = 1;
+        let mut eph = crate::types::GpsEphemeris {
+            valid: 1,
+            ..Default::default()
+        };
+
         eph.flag = 3; // MEO -> A_ref 27906100 m
         eph.axis = 27906100.0 + 512.0;
         eph.axis_dot = -0.0625;
@@ -464,13 +508,18 @@ mod append_word_tests {
         eph.toc = 345600;
         let mut b2a = BCNav2Bit::new();
         assert_eq!(b2a.set_ephemeris(5, &eph), 0);
-        let dec = decode_bcnav_ephemeris(&b2a.ephemeris1[4], &b2a.ephemeris2[4], &b2a.clock_param[4]);
+        let dec =
+            decode_bcnav_ephemeris(&b2a.ephemeris1[4], &b2a.ephemeris2[4], &b2a.clock_param[4]);
         let bad: Vec<_> = dec
             .compare_with_original(&eph)
             .into_iter()
             .filter(|d| !d.ok)
             .map(|d| format!("{}: orig={:.6e} dec={:.6e}", d.name, d.original, d.decoded))
             .collect();
-        assert!(bad.is_empty(), "B-CNAV2 round-trip mismatches:\n  {}", bad.join("\n  "));
+        assert!(
+            bad.is_empty(),
+            "B-CNAV2 round-trip mismatches:\n  {}",
+            bad.join("\n  ")
+        );
     }
 }

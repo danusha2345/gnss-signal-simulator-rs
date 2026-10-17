@@ -1,5 +1,11 @@
 # GNSS verification report
 
+Актуализация 2026-10-17: [полный трекер](PIPELINE_TRACKER.md) и
+[receiver matrix](RECEIVER_MATRIX.md). Финальный проход: 187 passed / 6 ignored,
+тяжёлый code-phase дополнительно PASS, fmt и Clippy для всех targets чистые.
+Ниже сохранён исторический отчёт прежних этапов.
+
+
 Date: 2026-04-25; follow-up re-verification 2026-06-02; L1-band signal pass 2026-06-11; L5-band pass + verifier rebuild 2026-06-11.
 
 This report summarizes the phased verification pass from RINEX/config parsing

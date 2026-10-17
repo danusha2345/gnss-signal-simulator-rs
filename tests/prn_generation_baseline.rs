@@ -29,7 +29,7 @@ fn assert_binary_code(name: &str, code: &[i32]) {
         "{name} code must contain only binary chips"
     );
     assert!(
-        code.iter().any(|&chip| chip == 0) && code.iter().any(|&chip| chip == 1),
+        code.contains(&0) && code.contains(&1),
         "{name} code should not be degenerate"
     );
 }

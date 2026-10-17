@@ -944,7 +944,7 @@ impl BCNav1Bit {
         // Store in appropriate BDS ephemeris structure
         // Note: Using GPS structure for compatibility, but in production
         // would convert time references and coordinate system parameters
-        let mut bds_eph = *eph;
+        let bds_eph = *eph;
 
         // Note: toe/top must stay as multiples of 300 for B-CNAV1 encoding
         // (bcnavbit.rs requires toe % 300 == 0). Do NOT subtract 14 seconds here.

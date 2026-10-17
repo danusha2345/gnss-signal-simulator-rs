@@ -5,7 +5,13 @@
 
 **Multi-constellation GNSS IF signal simulator written in Rust**
 
-Generate realistic IQ baseband samples for GPS, Galileo, BeiDou, and GLONASS from RINEX 3.04 navigation data. The only GNSS signal simulator written in Rust — zero-copy, memory-safe, with AVX-512 and optional CUDA acceleration.
+Генерация IQ для GPS, Galileo, BeiDou и GLONASS из RINEX 3.04. Основной путь использует CPU, Rayon и SIMD через `wide`; CUDA kernels пока не подключены к потоковому синтезу.
+
+Актуальный статус: [трекер](docs/PIPELINE_TRACKER.md), [контракт генерации](docs/GENERATION_CONTRACT.md), [матрица приёмников](docs/RECEIVER_MATRIX.md).
+Исторические z-score ниже подтверждают acquisition в конкретном тесте;
+они не доказывают корректность nav/CRC/PVT всех перечисленных сигналов.
+Выбор эфемерид выполняется отдельно для спутника/семейства сообщения,
+видимость обновляется раз в секунду. IQ сопровождается TXT и SHA-256 manifest.
 
 ---
 
@@ -16,7 +22,7 @@ Generate realistic IQ baseband samples for GPS, Galileo, BeiDou, and GLONASS fro
 | GPS | L1CA | 1575.42 MHz | BPSK(1) | 1023 | 58–88 |
 | GPS | L5 | 1176.45 MHz | BPSK(10) | 10230 | 44–59 |
 | GPS | L2C | 1227.60 MHz | BPSK(1) | 10230 | Verified |
-| GPS | L1C | 1575.42 MHz | BOC(1,1) | 10230 | Verified |
+| GPS | L1C | 1575.42 MHz | TMBOC / BOC(1,1) | 10230 | Verified |
 | Galileo | E1 | 1575.42 MHz | CBOC(6,1,1/11) | 4092 | 63–103 |
 | Galileo | E5a | 1176.45 MHz | BPSK(10) | 10230 | 48–64 |
 | Galileo | E5b | 1207.14 MHz | BPSK(10) | 10230 | 449–514 |
@@ -30,26 +36,20 @@ Generate realistic IQ baseband samples for GPS, Galileo, BeiDou, and GLONASS fro
 
 ## Key Features
 
-- **4 GNSS constellations, 12 verified signals** — simultaneous multi-system generation into a single IQ file
 - **RINEX 3.04 ephemeris parsing** — GPS (7-line), BeiDou (7-line with BDT correction), Galileo (7-line), GLONASS (3-line with km→m)
 - **Keplerian orbit propagation** — GPS ICD-200 algorithm; GLONASS RK4 in PZ-90
-- **Unified epoch algorithm** — forces all satellites to use ephemeris from the same time epoch
-- **Physically correct AGC** — RMS-based controller, Gaussian I/Q distribution, ~0% clipping
-- **AVX-512 acceleration** — automatic runtime detection, SIMD-optimized hot paths
-- **Optional CUDA GPU offload** — mass PRN×carrier×amplitude computation per millisecond
 - **Multithreading** — Rayon-based parallel satellite processing
 - **IQ8 output** — signed 8-bit I/Q interleaved samples, compatible with SDR receivers (GNURadio, SDR#)
 - **Python verification tool** — 3-page PDF report with PSD, acquisition, correlation analysis
-- **Minimal dependencies** — only `rand`, `rayon`, `wide`, `serde_json` (+ optional `cudarc`)
-- **~55,000 lines of Rust** — full GNSS stack implemented from scratch
+- **Minimal dependencies** — only `rand`, `rayon`, `wide`, `serde_json`, `sha2` (+ optional `cudarc`)
 
 ## Quick Start
 
 ### Requirements
 
 - Stable Rust (edition 2021) and `cargo`
-- Recommended: x86_64 CPU (AVX-512 used automatically if available)
-- Optional: NVIDIA driver + CUDA 12.5 for GPU acceleration
+- Рекомендуется x86_64; `.cargo/config.toml` использует target-cpu=native, такой бинарь непереносим на более старые CPU.
+- Экспериментальная GPU-фича: CUDA 12.5; основной генератор остаётся CPU.
 
 ### Build and Run
 
@@ -79,7 +79,7 @@ cargo build --release --features gpu
 cargo run --release --features gpu -- presets/gps_l1ca.json
 ```
 
-Requires CUDA 12.5 with NVRTC. Falls back to CPU automatically if CUDA is unavailable.
+Экспериментальная сборка требует CUDA 12.5/NVRTC. Она не включает GPU в основной потоковый синтез; runtime CUDA здесь не проверен.
 
 ## Presets
 
@@ -312,7 +312,7 @@ python verify_signal_enhanced.py generated_files/gps_l1ca.C8 \
 - Кеплеровская пропагация орбит + ГЛОНАСС RK4 в ПЗ-90
 - Физически корректная модель АРУ (AGC)
 - Ускорение AVX-512 + многопоточность (Rayon)
-- Опциональный GPU offload (CUDA 12.5)
+- Экспериментальные CUDA kernels (не основной путь генерации)
 - Выход IQ8 (8-бит I/Q), совместимый с SDR-приёмниками
 - Инструмент верификации с 3-страничным PDF-отчётом
 - ~55 000 строк Rust, минимум зависимостей

@@ -309,10 +309,17 @@ fn run_beidou_bcnav_roundtrip(bds_ephs: &[BeiDouEphemeris]) {
         let m0_err = (gps_eph.M0 - decoded.M0).abs();
 
         // Build decoded eph for orbit comparison
-        let ref_axis = if gps_eph.flag == 3 { 27906100.0 } else { 42162200.0 };
+        let ref_axis = if gps_eph.flag == 3 {
+            27906100.0
+        } else {
+            42162200.0
+        };
         let dec_axis = decoded.delta_A + ref_axis;
-        let mut dec_eph = GpsEphemeris::default();
-        dec_eph.valid = 1;
+        let mut dec_eph = GpsEphemeris {
+            valid: 1,
+            ..Default::default()
+        };
+
         dec_eph.M0 = decoded.M0;
         dec_eph.delta_n = decoded.delta_n;
         dec_eph.ecc = decoded.ecc;
@@ -379,10 +386,19 @@ fn compute_orbit_delta_lnav(
     let mut orig_eph = *original;
     prepare_eph_derived(&mut orig_eph);
     let mut orig_pos = KinematicInfo::default();
-    gps_sat_pos_speed_eph(GnssSystem::GpsSystem, transmit_time, &mut orig_eph, &mut orig_pos, None);
+    gps_sat_pos_speed_eph(
+        GnssSystem::GpsSystem,
+        transmit_time,
+        &mut orig_eph,
+        &mut orig_pos,
+        None,
+    );
 
-    let mut dec_eph = GpsEphemeris::default();
-    dec_eph.valid = 1;
+    let mut dec_eph = GpsEphemeris {
+        valid: 1,
+        ..Default::default()
+    };
+
     dec_eph.M0 = decoded.M0;
     dec_eph.delta_n = decoded.delta_n;
     dec_eph.ecc = decoded.ecc;
@@ -403,7 +419,13 @@ fn compute_orbit_delta_lnav(
     prepare_eph_derived(&mut dec_eph);
 
     let mut dec_pos = KinematicInfo::default();
-    gps_sat_pos_speed_eph(GnssSystem::GpsSystem, transmit_time, &mut dec_eph, &mut dec_pos, None);
+    gps_sat_pos_speed_eph(
+        GnssSystem::GpsSystem,
+        transmit_time,
+        &mut dec_eph,
+        &mut dec_pos,
+        None,
+    );
 
     let dx = orig_pos.x - dec_pos.x;
     let dy = orig_pos.y - dec_pos.y;
@@ -419,10 +441,19 @@ fn compute_orbit_delta_inav(
     let mut orig_eph = *original;
     prepare_eph_derived(&mut orig_eph);
     let mut orig_pos = KinematicInfo::default();
-    gps_sat_pos_speed_eph(GnssSystem::GpsSystem, transmit_time, &mut orig_eph, &mut orig_pos, None);
+    gps_sat_pos_speed_eph(
+        GnssSystem::GpsSystem,
+        transmit_time,
+        &mut orig_eph,
+        &mut orig_pos,
+        None,
+    );
 
-    let mut dec_eph = GpsEphemeris::default();
-    dec_eph.valid = 1;
+    let mut dec_eph = GpsEphemeris {
+        valid: 1,
+        ..Default::default()
+    };
+
     dec_eph.M0 = decoded.M0;
     dec_eph.delta_n = decoded.delta_n;
     dec_eph.ecc = decoded.ecc;
@@ -443,7 +474,13 @@ fn compute_orbit_delta_inav(
     prepare_eph_derived(&mut dec_eph);
 
     let mut dec_pos = KinematicInfo::default();
-    gps_sat_pos_speed_eph(GnssSystem::GpsSystem, transmit_time, &mut dec_eph, &mut dec_pos, None);
+    gps_sat_pos_speed_eph(
+        GnssSystem::GpsSystem,
+        transmit_time,
+        &mut dec_eph,
+        &mut dec_pos,
+        None,
+    );
 
     let dx = orig_pos.x - dec_pos.x;
     let dy = orig_pos.y - dec_pos.y;

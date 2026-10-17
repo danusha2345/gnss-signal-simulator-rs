@@ -113,17 +113,16 @@ fn acquire_prn(iq: &[(f64, f64)], prn_code: &[f64], expected_doppler: f64) -> (u
 fn track_carrier_phase(
     iq: &[(f64, f64)],
     prn_code: &[f64],
-    initial_code_offset: usize,
-    initial_doppler_hz: f64,
+    acquisition: (usize, f64),
     duration_ms: usize,
-    svid: u8,
     eph: &GpsEphemeris,
     gps_time: &GnssTime,
     receiver_lla: &LlaPosition,
 ) -> Vec<f64> {
     use gnss_rust::coordinate::{ecef_to_lla, lla_to_ecef};
-    use gnss_rust::satellite_param::{get_doppler, get_satellite_param, get_travel_time};
+    use gnss_rust::satellite_param::{get_doppler, get_satellite_param};
 
+    let (initial_code_offset, initial_doppler_hz) = acquisition;
     let receiver_ecef = lla_to_ecef(receiver_lla);
     let receiver_lla_ecef = ecef_to_lla(&receiver_ecef);
     let iono = IonoParam::default();
@@ -131,8 +130,8 @@ fn track_carrier_phase(
     let mut phases = Vec::with_capacity(duration_ms);
     let mut carrier_phase_acc = 0.0_f64;
     let mut current_doppler = initial_doppler_hz;
-    let mut current_code_offset = initial_code_offset as f64;
-    let code_doppler_chips_per_ms = CODE_LEN as f64 * current_doppler / 1_575_420_000.0;
+    let _current_code_offset = initial_code_offset as f64;
+    let _code_doppler_chips_per_ms = CODE_LEN as f64 * current_doppler / 1_575_420_000.0;
 
     for ms in 0..duration_ms {
         // Update Doppler every 1000ms (1 second)
@@ -142,8 +141,11 @@ fn track_carrier_phase(
                 MilliSeconds: gps_time.MilliSeconds + ms as i32,
                 SubMilliSeconds: 0.0,
             };
-            let mut sat_param = SatelliteParam::default();
-            sat_param.system = GnssSystem::GpsSystem;
+            let mut sat_param = SatelliteParam {
+                system: GnssSystem::GpsSystem,
+                ..Default::default()
+            };
+
             get_satellite_param(
                 &receiver_ecef,
                 &receiver_lla_ecef,
@@ -329,10 +331,8 @@ fn test_gps_pilot_carrier_phase_continuity() {
         let phases = track_carrier_phase(
             &iq,
             &prn_code,
-            offset,
-            doppler,
+            (offset, doppler),
             duration_ms,
-            sat.svid,
             &eph,
             &gps_time,
             &config.receiver_lla,
@@ -393,8 +393,11 @@ fn test_gps_pilot_clean_phase() {
                     .unwrap()
             });
         if let Some(e) = eph {
-            let mut sp = SatelliteParam::default();
-            sp.system = GnssSystem::GpsSystem;
+            let mut sp = SatelliteParam {
+                system: GnssSystem::GpsSystem,
+                ..Default::default()
+            };
+
             get_satellite_param(
                 &receiver_ecef,
                 &receiver_lla,
@@ -450,8 +453,11 @@ fn test_gps_pilot_clean_phase() {
         };
 
         // Compute satellite params (same as generator)
-        let mut sat_param = SatelliteParam::default();
-        sat_param.system = GnssSystem::GpsSystem;
+        let mut sat_param = SatelliteParam {
+            system: GnssSystem::GpsSystem,
+            ..Default::default()
+        };
+
         get_satellite_param(
             &receiver_ecef,
             &receiver_lla,

@@ -18,8 +18,6 @@ const GAL_CODE_LEN: usize = 4092;
 const GAL_NAV_BIT_MS: i32 = 4;
 const GAL_FRAME_MS: i32 = 2000;
 const GAL_BITS_PER_FRAME: usize = 500;
-const CS25: u32 = 0x9b501c;
-const CS25_LEN: i32 = 25;
 const AMP_HALF: f64 = std::f64::consts::FRAC_1_SQRT_2;
 const SYNC_PATTERN: [i32; 10] = [0, 1, 0, 1, 1, 0, 0, 0, 0, 0];
 
@@ -27,12 +25,25 @@ const SYNC_PATTERN: [i32; 10] = [0, 1, 0, 1, 1, 0, 0, 0, 0, 0];
 fn test_galileo_inav_symbol_alignment() {
     // Load RINEX
     let mut nav_data = CNavData::new();
-    read_nav_file_limited(&mut nav_data, "Rinex_Data/BRDC00IGS_R_20251560000_01D_MN.rnx", 10000);
+    read_nav_file_limited(
+        &mut nav_data,
+        "Rinex_Data/BRDC00IGS_R_20251560000_01D_MN.rnx",
+        10000,
+    );
 
-    let utc = UtcTime { Year: 2025, Month: 6, Day: 5, Hour: 10, Minute: 5, Second: 30.0 };
+    let utc = UtcTime {
+        Year: 2025,
+        Month: 6,
+        Day: 5,
+        Hour: 10,
+        Minute: 5,
+        Second: 30.0,
+    };
     let gps_time = gnss_rust::gnsstime::utc_to_gps_time(utc, true);
     let receiver_lla = LlaPosition {
-        lat: 55.7539_f64.to_radians(), lon: 37.6208_f64.to_radians(), alt: 150.0,
+        lat: 55.7539_f64.to_radians(),
+        lon: 37.6208_f64.to_radians(),
+        alt: 150.0,
     };
     let receiver_ecef = lla_to_ecef(&receiver_lla);
     let receiver_lla_c = ecef_to_lla(&receiver_ecef);
@@ -43,20 +54,40 @@ fn test_galileo_inav_symbol_alignment() {
 
     // Pick first visible Galileo satellite
     let svid = 2u8;
-    let eph = nav_data.galileo_ephemeris.iter()
-        .filter(|e| e.svid == svid && e.valid != 0)
-        .next().copied()
+    let eph = nav_data
+        .galileo_ephemeris
+        .iter()
+        .find(|e| e.svid == svid && e.valid != 0)
+        .copied()
         .expect("No Galileo E02 ephemeris");
 
-    let mut sp = SatelliteParam::default();
-    sp.system = GnssSystem::GalileoSystem;
-    get_satellite_param(&receiver_ecef, &receiver_lla_c, &gps_time, GnssSystem::GalileoSystem, &eph, &iono, &mut sp);
+    let mut sp = SatelliteParam {
+        system: GnssSystem::GalileoSystem,
+        ..Default::default()
+    };
+
+    get_satellite_param(
+        &receiver_ecef,
+        &receiver_lla_c,
+        &gps_time,
+        GnssSystem::GalileoSystem,
+        &eph,
+        &iono,
+        &mut sp,
+    );
     assert!(sp.Elevation > 5.0_f64.to_radians(), "E02 not visible");
 
     // Generate PRN codes
-    let prn_gen = PrnGenerate::new(GnssSystem::GalileoSystem, SIGNAL_INDEX_E1 as i32, svid as i32);
+    let prn_gen = PrnGenerate::new(
+        GnssSystem::GalileoSystem,
+        SIGNAL_INDEX_E1 as i32,
+        svid as i32,
+    );
     let raw_data = prn_gen.get_data_prn().unwrap();
-    let data_prn: Vec<f64> = raw_data.iter().map(|&v| if v != 0 { -1.0 } else { 1.0 }).collect();
+    let data_prn: Vec<f64> = raw_data
+        .iter()
+        .map(|&v| if v != 0 { -1.0 } else { 1.0 })
+        .collect();
 
     // Initialize I-NAV
     let mut inav = INavBit::new();
@@ -68,13 +99,10 @@ fn test_galileo_inav_symbol_alignment() {
     let mut nav_bits = vec![0i32; GAL_BITS_PER_FRAME];
 
     // We'll accumulate correlation per 4ms code period to get one symbol
-    let samples_per_symbol = spm * 4; // 20000 samples per 4ms symbol
+    let _samples_per_symbol = spm * 4; // 20000 samples per 4ms symbol
     let total_symbols = duration_ms / 4;
     let mut demod_symbols: Vec<f64> = Vec::with_capacity(total_symbols as usize);
     let mut expected_bits: Vec<i32> = Vec::with_capacity(total_symbols as usize);
-
-    let mut doppler_hz = get_doppler(&sp, SIGNAL_INDEX_E1);
-    let mut travel_time_s = get_travel_time(&sp, SIGNAL_INDEX_E1);
 
     // Track carrier phase for coherent demodulation
     let mut carrier_phase: f64 = 0.0;
@@ -94,11 +122,22 @@ fn test_galileo_inav_symbol_alignment() {
             };
 
             // Update params every ms
-            let mut sp_local = SatelliteParam::default();
-            sp_local.system = GnssSystem::GalileoSystem;
-            get_satellite_param(&receiver_ecef, &receiver_lla_c, &ms_time, GnssSystem::GalileoSystem, &eph, &iono, &mut sp_local);
-            doppler_hz = get_doppler(&sp_local, SIGNAL_INDEX_E1);
-            travel_time_s = get_travel_time(&sp_local, SIGNAL_INDEX_E1);
+            let mut sp_local = SatelliteParam {
+                system: GnssSystem::GalileoSystem,
+                ..Default::default()
+            };
+
+            get_satellite_param(
+                &receiver_ecef,
+                &receiver_lla_c,
+                &ms_time,
+                GnssSystem::GalileoSystem,
+                &eph,
+                &iono,
+                &mut sp_local,
+            );
+            let doppler_hz = get_doppler(&sp_local, SIGNAL_INDEX_E1);
+            let travel_time_s = get_travel_time(&sp_local, SIGNAL_INDEX_E1);
             let freq = if_freq + doppler_hz;
             let rx_sow = ms_time.MilliSeconds as f64 / 1000.0;
 
@@ -109,13 +148,23 @@ fn test_galileo_inav_symbol_alignment() {
             let fn_ = tx_ms_offset / GAL_FRAME_MS;
             if fn_ != current_frame {
                 inav.get_frame_data(
-                    GnssTime { Week: ms_time.Week, MilliSeconds: tx_ms_int, SubMilliSeconds: 0.0 },
-                    svid as i32, 1, &mut nav_bits,
+                    GnssTime {
+                        Week: ms_time.Week,
+                        MilliSeconds: tx_ms_int,
+                        SubMilliSeconds: 0.0,
+                    },
+                    svid as i32,
+                    1,
+                    &mut nav_bits,
                 );
                 current_frame = fn_;
             }
             let bi = ((tx_ms_offset % GAL_FRAME_MS) / GAL_NAV_BIT_MS) as usize;
-            let nav_bit: f64 = if nav_bits[bi.min(GAL_BITS_PER_FRAME - 1)] != 0 { -1.0 } else { 1.0 };
+            let nav_bit: f64 = if nav_bits[bi.min(GAL_BITS_PER_FRAME - 1)] != 0 {
+                -1.0
+            } else {
+                1.0
+            };
 
             // Record expected bit (constant within 4ms symbol)
             if ms_off == 0 {
@@ -128,7 +177,9 @@ fn test_galileo_inav_symbol_alignment() {
 
                 // Code phase (same as gnss_pilot)
                 let chip_count = tx_time * GAL_CHIP_RATE;
-                let logical_chip = ((chip_count % GAL_CODE_LEN as f64) + GAL_CODE_LEN as f64) as usize % GAL_CODE_LEN;
+                let logical_chip = ((chip_count % GAL_CODE_LEN as f64) + GAL_CODE_LEN as f64)
+                    as usize
+                    % GAL_CODE_LEN;
                 let subchip = (tx_time * GAL_SUBCHIP_RATE) as i64;
 
                 // BOC(1,1) sign
@@ -162,8 +213,14 @@ fn test_galileo_inav_symbol_alignment() {
     }
 
     // Normalize
-    let max_abs = demod_symbols.iter().map(|x| x.abs()).fold(0.0_f64, f64::max);
-    println!("\n=== Galileo E1 I-NAV Symbol Alignment Test (E{:02}) ===", svid);
+    let max_abs = demod_symbols
+        .iter()
+        .map(|x| x.abs())
+        .fold(0.0_f64, f64::max);
+    println!(
+        "\n=== Galileo E1 I-NAV Symbol Alignment Test (E{:02}) ===",
+        svid
+    );
     println!("Duration: {}ms = {} symbols", duration_ms, total_symbols);
     println!("Max |correlation|: {:.1}", max_abs);
 
@@ -184,7 +241,9 @@ fn test_galileo_inav_symbol_alignment() {
         let demod_bit = if *corr > 0.0 { 1 } else { 0 };
         if demod_bit != expected {
             mismatches += 1;
-            if first_mismatch < 0 { first_mismatch = i as i32; }
+            if first_mismatch < 0 {
+                first_mismatch = i as i32;
+            }
         }
     }
 
@@ -199,30 +258,45 @@ fn test_galileo_inav_symbol_alignment() {
     println!("----|---------------|-------|----------|------");
     for i in 0..40.min(total_symbols as usize) {
         let demod_bit = if demod_symbols[i] > 0.0 { 1 } else { 0 };
-        let ok = if demod_bit == expected_bits[i] { "✓" } else { "✗" };
-        println!("{:3} | {:+13.1} | {:5} | {:8} | {}", i, demod_symbols[i], demod_bit, expected_bits[i], ok);
+        let ok = if demod_bit == expected_bits[i] {
+            "✓"
+        } else {
+            "✗"
+        };
+        println!(
+            "{:3} | {:+13.1} | {:5} | {:8} | {}",
+            i, demod_symbols[i], demod_bit, expected_bits[i], ok
+        );
     }
 
     // Look for sync pattern in demodulated stream
     println!("\n--- Sync pattern search ---");
     let sync_as_bits: Vec<i32> = SYNC_PATTERN.to_vec();
     for start in 0..(total_symbols as usize - 10) {
-        let demod_bits: Vec<i32> = (start..start+10)
+        let demod_bits: Vec<i32> = (start..start + 10)
             .map(|i| if demod_symbols[i] > 0.0 { 1 } else { 0 })
             .collect();
         if demod_bits == sync_as_bits {
-            println!("SYNC found at symbol {} (time = {}ms from start)", start, start * 4);
+            println!(
+                "SYNC found at symbol {} (time = {}ms from start)",
+                start,
+                start * 4
+            );
         }
     }
 
     // Also check inverted sync
     let sync_inv: Vec<i32> = SYNC_PATTERN.iter().map(|&b| 1 - b).collect();
     for start in 0..(total_symbols as usize - 10) {
-        let demod_bits: Vec<i32> = (start..start+10)
+        let demod_bits: Vec<i32> = (start..start + 10)
             .map(|i| if demod_symbols[i] > 0.0 { 1 } else { 0 })
             .collect();
         if demod_bits == sync_inv {
-            println!("INVERTED SYNC found at symbol {} (time = {}ms)", start, start * 4);
+            println!(
+                "INVERTED SYNC found at symbol {} (time = {}ms)",
+                start,
+                start * 4
+            );
         }
     }
 
@@ -234,10 +308,22 @@ fn test_galileo_inav_symbol_alignment() {
     let tx_ms_start = (tx_start * 1000.0) as i32;
     let tx_ms_offset_start = tx_ms_start + 1000;
     let bi_start = ((tx_ms_offset_start % GAL_FRAME_MS) / GAL_NAV_BIT_MS) as usize;
-    println!("tx_time_start = {:.6}s, tx_ms = {}, tx_ms_offset = {}", tx_start, tx_ms_start, tx_ms_offset_start);
+    println!(
+        "tx_time_start = {:.6}s, tx_ms = {}, tx_ms_offset = {}",
+        tx_start, tx_ms_start, tx_ms_offset_start
+    );
     println!("Starting bit index = {} (of 0..499)", bi_start);
-    println!("Symbols until next even sync (bi=0): {}", (500 - bi_start) % 500);
-    println!("Symbols until next odd sync (bi=250): {}", (750 - bi_start) % 500);
+    println!(
+        "Symbols until next even sync (bi=0): {}",
+        (500 - bi_start) % 500
+    );
+    println!(
+        "Symbols until next odd sync (bi=250): {}",
+        (750 - bi_start) % 500
+    );
 
-    assert_eq!(mismatches, 0, "Symbol polarity mismatches detected — nav bit modulation is wrong");
+    assert_eq!(
+        mismatches, 0,
+        "Symbol polarity mismatches detected — nav bit modulation is wrong"
+    );
 }

@@ -660,8 +660,8 @@ mod tests {
     fn make_test_beidou_ephemeris() -> GpsEphemeris {
         // sat_type 3 → encoder uses reference axis 27906100.0 (MEO)
         // sqrtA typical for BDS MEO: ~5282.6
-        let sqrtA = 5282.620_117_2_f64;
-        let axis = sqrtA * sqrtA;
+        let sqrt_a = 5_282.620_117_2_f64;
+        let axis = sqrt_a * sqrt_a;
         GpsEphemeris {
             svid: 23,
             valid: 1,
@@ -669,8 +669,8 @@ mod tests {
             iodc: 5,
             ura: 2,
             health: 0,
-            flag: 3, // sat_type = 3 → encoder reference axis 27906100.0
-            toe: 345600,   // Must be multiple of 300
+            flag: 3,     // sat_type = 3 → encoder reference axis 27906100.0
+            toe: 345600, // Must be multiple of 300
             toc: 345600,
             top: 0,
             week: 1013, // BDT week
@@ -678,7 +678,7 @@ mod tests {
             delta_n: 4.361_281_720e-9,
             delta_n_dot: 1.234e-18,
             ecc: 0.002_581_358_5,
-            sqrtA,
+            sqrtA: sqrt_a,
             axis_dot: -3.5e-10,
             axis,
             omega0: 1.852_641_093_2,
@@ -758,6 +758,9 @@ mod tests {
         eph.toe = 345601; // Not a multiple of 300
         let mut bcnav = BCNavBit::new();
         let result = bcnav.set_ephemeris(23, &eph);
-        assert_eq!(result, 0, "set_ephemeris should reject non-multiple-of-300 toe");
+        assert_eq!(
+            result, 0,
+            "set_ephemeris should reject non-multiple-of-300 toe"
+        );
     }
 }

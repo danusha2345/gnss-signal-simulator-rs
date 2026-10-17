@@ -5,7 +5,13 @@
 
 **Мультисистемный симулятор IF-сигналов GNSS на Rust**
 
-Генерация реалистичных IQ-сэмплов baseband для GPS, Galileo, BeiDou и GLONASS из навигационных данных RINEX 3.04. Единственный GNSS signal simulator, написанный на Rust — zero-copy, memory-safe, с AVX-512 и опциональным CUDA-ускорением.
+Генерация IQ для GPS, Galileo, BeiDou и GLONASS из RINEX 3.04. Основной путь использует CPU, Rayon и SIMD через `wide`; CUDA kernels пока не подключены к потоковому синтезу.
+
+Актуальный статус: [трекер](docs/PIPELINE_TRACKER.md), [контракт генерации](docs/GENERATION_CONTRACT.md), [матрица приёмников](docs/RECEIVER_MATRIX.md).
+Исторические z-score ниже подтверждают acquisition в конкретном тесте;
+они не доказывают корректность nav/CRC/PVT всех перечисленных сигналов.
+Выбор эфемерид выполняется отдельно для спутника/семейства сообщения,
+видимость обновляется раз в секунду. IQ сопровождается TXT и SHA-256 manifest.
 
 ---
 
@@ -16,7 +22,7 @@
 | GPS | L1CA | 1575.42 MHz | BPSK(1) | 1023 | 58–88 |
 | GPS | L5 | 1176.45 MHz | BPSK(10) | 10230 | 44–59 |
 | GPS | L2C | 1227.60 MHz | BPSK(1) | 10230 | Verified |
-| GPS | L1C | 1575.42 MHz | BOC(1,1) | 10230 | Verified |
+| GPS | L1C | 1575.42 MHz | TMBOC / BOC(1,1) | 10230 | Verified |
 | Galileo | E1 | 1575.42 MHz | CBOC(6,1,1/11) | 4092 | 63–103 |
 | Galileo | E5a | 1176.45 MHz | BPSK(10) | 10230 | 48–64 |
 | Galileo | E5b | 1207.14 MHz | BPSK(10) | 10230 | 449–514 |
@@ -30,26 +36,20 @@
 
 ## Ключевые возможности
 
-- **4 GNSS-созвездия, 12 верифицированных сигналов** — одновременная мультисистемная генерация в один IQ-файл
 - **Парсинг эфемерид RINEX 3.04** — GPS (7-line), BeiDou (7-line с BDT correction), Galileo (7-line), GLONASS (3-line с km→m)
 - **Кеплеровская пропагация орбит** — алгоритм GPS ICD-200; GLONASS RK4 в PZ-90
-- **Алгоритм единой эпохи** — заставляет все спутники использовать эфемериды с одного эпохи времени
-- **Физически корректный AGC** — RMS-based контроллер, Gaussian I/Q distribution, ~0% clipping
-- **AVX-512 ускорение** — авто-детект на рантайме, SIMD-оптимизированные горячие пути
-- **Опциональный CUDA GPU offload** — массовое вычисление PRN×carrier×amplitude на миллисекунду
 - **Многопоточность** — параллельная обработка спутников на базе Rayon
 - **IQ8 output** — signed 8-bit interleaved I/Q сэмплы, совместимо с SDR-приёмниками (GNURadio, SDR#)
 - **Python verification tool** — 3-страничный PDF-отчёт с PSD, acquisition, correlation analysis
-- **Минимум зависимостей** — только `rand`, `rayon`, `wide`, `serde_json` (+ опционально `cudarc`)
-- **~55 000 строк Rust** — полный GNSS stack, реализованный с нуля
+- **Минимум зависимостей** — только `rand`, `rayon`, `wide`, `serde_json`, `sha2` (+ опционально `cudarc`)
 
 ## Быстрый старт
 
 ### Требования
 
 - Stable Rust (edition 2021) и `cargo`
-- Рекомендуется: x86_64 CPU (AVX-512 используется автоматически при наличии)
-- Опционально: NVIDIA driver + CUDA 12.5 для GPU-ускорения
+- Рекомендуется x86_64; target-cpu=native делает сборку зависимой от CPU сборочного компьютера.
+- Экспериментальная GPU-фича: CUDA 12.5; ускорение основного генератора не реализовано.
 
 ### Сборка и запуск
 
@@ -79,7 +79,7 @@ cargo build --release --features gpu
 cargo run --release --features gpu -- presets/gps_l1ca.json
 ```
 
-Требует CUDA 12.5 с NVRTC. Автоматический fallback на CPU при отсутствии CUDA.
+Экспериментальная сборка требует CUDA 12.5/NVRTC. Она не включает GPU в основной потоковый синтез; runtime CUDA здесь не проверен.
 
 ## Пресеты
 
@@ -312,7 +312,7 @@ python verify_signal_enhanced.py generated_files/gps_l1ca.C8 \
 - Keplerian orbit propagation + GLONASS RK4 in PZ-90
 - Physically correct AGC model
 - AVX-512 acceleration + multithreading (Rayon)
-- Optional GPU offload (CUDA 12.5)
+- Экспериментальные CUDA kernels (не основной путь генерации)
 - IQ8 output (8-bit I/Q) compatible with SDR receivers
 - Verification tool with 3-page PDF report
 - ~55 000 lines of Rust, minimal dependencies

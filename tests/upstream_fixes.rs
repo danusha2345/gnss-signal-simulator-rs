@@ -23,8 +23,11 @@ fn test_iono_klobuchar8_delay() {
     assert!(delay >= 0.0, "Ionosphere delay should be non-negative");
 
     // With some non-zero params, delay should be positive
-    let mut param = IonoParam::default();
-    param.a0 = 1.0e-8;
+    let mut param = IonoParam {
+        a0: 1.0e-8,
+        ..Default::default()
+    };
+
     param.a1 = 1.0e-8;
     let mut model2 = IonoKlobuchar8::new();
     model2.set_iono_param(&param);
@@ -43,8 +46,11 @@ fn test_satellite_param_calculator_eph_transition() {
     let model = Box::new(IonoKlobuchar8::new());
     let mut calc = SatelliteParamCalculator::new(model);
 
-    let mut eph1 = GpsEphemeris::default();
-    eph1.svid = 1;
+    let mut eph1 = GpsEphemeris {
+        svid: 1,
+        ..Default::default()
+    };
+
     eph1.toe = 100000;
     eph1.iode = 1;
     eph1.valid = 1;
@@ -74,20 +80,14 @@ fn test_satellite_param_calculator_eph_transition() {
 // Test 3: L1C swap verification
 // ---------------------------------------------------------------------------
 #[test]
-fn test_l1c_data_pilot_swap() {
-    // After the fix, L1C_DATA should start with [181, 359, 72, ...]
-    // and L1C_PILOT should start with [412, 161, 1, ...]
-    // We verify by checking the PRN generation works without panic
+fn test_l1c_generates_distinct_data_and_pilot() {
     use gnss_rust::prngenerate::PrnGenerate;
-
-    // GPS L1C Data PRN for SV1 should generate without errors
-    let _prn = PrnGenerate::new(GnssSystem::GpsSystem, 0, 1);
-    // Just verify the arrays are accessible and have correct length
-    // The actual verification is that the build succeeds with the swapped arrays
-    assert!(
-        true,
-        "L1C arrays compiled successfully with swapped values"
-    );
+    let prn = PrnGenerate::new(GnssSystem::GpsSystem, gnss_rust::SIGNAL_INDEX_L1C as i32, 1);
+    let data = prn.get_data_prn().unwrap();
+    let pilot = prn.get_pilot_prn().unwrap();
+    assert_eq!(data.len(), 10230);
+    assert_eq!(pilot.len(), 10230);
+    assert_ne!(data, pilot);
 }
 
 // ---------------------------------------------------------------------------
@@ -95,8 +95,11 @@ fn test_l1c_data_pilot_swap() {
 // ---------------------------------------------------------------------------
 #[test]
 fn test_bds_geo_svid_59_and_above() {
-    let mut eph = GpsEphemeris::default();
-    eph.svid = 59;
+    let mut eph = GpsEphemeris {
+        svid: 59,
+        ..Default::default()
+    };
+
     eph.valid = 1;
     eph.sqrtA = 6493.0; // GEO orbit
     eph.axis = 6493.0 * 6493.0;
@@ -117,8 +120,11 @@ fn test_bds_geo_svid_59_and_above() {
 // ---------------------------------------------------------------------------
 #[test]
 fn test_align_toe_300s() {
-    let mut eph = GpsEphemeris::default();
-    eph.toe = 100150; // should round to 100200  (100150 + 150 = 100300) / 300 * 300 = 100200? No: (100150+150)/300 = 100300/300 = 334.33 -> 334*300 = 100200. Actually integer division: 100300/300 = 334, 334*300 = 100200.
+    let mut eph = GpsEphemeris {
+        toe: 100150,
+        ..Default::default()
+    };
+    // should round to 100200  (100150 + 150 = 100300) / 300 * 300 = 100200? No: (100150+150)/300 = 100300/300 = 334.33 -> 334*300 = 100200. Actually integer division: 100300/300 = 334, 334*300 = 100200.
     eph.toc = 100150;
     eph.top = 100150;
     eph.sqrtA = 5153.0;
@@ -133,8 +139,11 @@ fn test_align_toe_300s() {
     // Test boundary: toe = 604700 should round up
     // (604700 + 150) / 300 * 300 = 604850 / 300 * 300 = 2016 * 300 = 604800
     // 604800 >= 604800, so wraps to 0 with week+1
-    let mut eph2 = GpsEphemeris::default();
-    eph2.toe = 604700;
+    let mut eph2 = GpsEphemeris {
+        toe: 604700,
+        ..Default::default()
+    };
+
     eph2.week = 100;
     eph2.sqrtA = 5153.0;
     eph2.axis = 5153.0 * 5153.0;
@@ -198,12 +207,30 @@ fn test_bcnav2_message_types_31_to_40() {
 // ---------------------------------------------------------------------------
 #[test]
 fn test_find_ephemeris_equal_time_diff() {
-    // When two ephemerides have equal time difference, the later one should be chosen
-    // This tests the <= fix (B5)
-    // This is a structural test — just verify IFDataGen can be instantiated
-    // and the method exists. The actual <= behavior is verified by the code change.
-    assert!(
-        true,
-        "FindEphemeris uses <= for equal time diff selection"
+    let mut nav = gnss_rust::ifdatagen::NavData::new();
+    let a = GpsEphemeris {
+        svid: 1,
+        valid: 1,
+        week: 2000,
+        toe: 100,
+        iode: 1,
+        ..Default::default()
+    };
+    let b = GpsEphemeris {
+        toe: 120,
+        iode: 2,
+        ..a
+    };
+    nav.gps_ephemeris = vec![Some(a), Some(b)];
+    let t = GnssTime {
+        Week: 2000,
+        MilliSeconds: 110000,
+        SubMilliSeconds: 0.0,
+    };
+    assert_eq!(
+        nav.find_ephemeris(GnssSystem::GpsSystem, t, 1, 0, 0)
+            .unwrap()
+            .iode,
+        2
     );
 }

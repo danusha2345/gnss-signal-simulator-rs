@@ -203,12 +203,15 @@ impl BCNav3Bit {
             if fill_bits > length {
                 fill_bits = length;
             }
-            frame_data[dest_idx] = if start_bit == 0 { 0 } else { frame_data[dest_idx] }
-                | COMPOSE_BITS!(
-                    data[src_idx] >> (remain_bits - fill_bits),
-                    (24 - start_bit - fill_bits) as u32,
-                    fill_bits as u32
-                );
+            frame_data[dest_idx] = if start_bit == 0 {
+                0
+            } else {
+                frame_data[dest_idx]
+            } | COMPOSE_BITS!(
+                data[src_idx] >> (remain_bits - fill_bits),
+                (24 - start_bit - fill_bits) as u32,
+                fill_bits as u32
+            );
             start_bit += fill_bits;
             if start_bit >= 24 {
                 start_bit = 0;
@@ -307,12 +310,12 @@ impl BCNav3Bit {
         // V2E[a]+V2E[b] (≤126) indexes directly without a modulo. The previous tables were
         // an identity antilog + a non-bijective log, which produced wrong LDPC parity (H13).
         const E2V_TABLE: [i32; 128] = [
-            1, 2, 4, 8, 16, 32, 3, 6, 12, 24, 48, 35, 5, 10, 20, 40, 19, 38, 15, 30, 60, 59, 53, 41,
-            17, 34, 7, 14, 28, 56, 51, 37, 9, 18, 36, 11, 22, 44, 27, 54, 47, 29, 58, 55, 45, 25, 50,
-            39, 13, 26, 52, 43, 21, 42, 23, 46, 31, 62, 63, 61, 57, 49, 33, 1, 2, 4, 8, 16, 32, 3, 6,
-            12, 24, 48, 35, 5, 10, 20, 40, 19, 38, 15, 30, 60, 59, 53, 41, 17, 34, 7, 14, 28, 56, 51,
-            37, 9, 18, 36, 11, 22, 44, 27, 54, 47, 29, 58, 55, 45, 25, 50, 39, 13, 26, 52, 43, 21, 42,
-            23, 46, 31, 62, 63, 61, 57, 49, 33, 1, 2,
+            1, 2, 4, 8, 16, 32, 3, 6, 12, 24, 48, 35, 5, 10, 20, 40, 19, 38, 15, 30, 60, 59, 53,
+            41, 17, 34, 7, 14, 28, 56, 51, 37, 9, 18, 36, 11, 22, 44, 27, 54, 47, 29, 58, 55, 45,
+            25, 50, 39, 13, 26, 52, 43, 21, 42, 23, 46, 31, 62, 63, 61, 57, 49, 33, 1, 2, 4, 8, 16,
+            32, 3, 6, 12, 24, 48, 35, 5, 10, 20, 40, 19, 38, 15, 30, 60, 59, 53, 41, 17, 34, 7, 14,
+            28, 56, 51, 37, 9, 18, 36, 11, 22, 44, 27, 54, 47, 29, 58, 55, 45, 25, 50, 39, 13, 26,
+            52, 43, 21, 42, 23, 46, 31, 62, 63, 61, 57, 49, 33, 1, 2,
         ];
         const V2E_TABLE: [i32; 64] = [
             0, 1, 2, 7, 3, 13, 8, 27, 4, 33, 14, 36, 9, 49, 28, 19, 5, 25, 34, 17, 15, 53, 37, 55,
@@ -419,7 +422,7 @@ impl BCNav3Bit {
                 // (frame_data[0] holds only the 6-bit MesType), so absolute append_word bits =
                 // 24 + body-bit. Unlike B1C/B2a, B2b MT10 has NO IODE: Ephemeris I is 203 bits.
                 frame_data[1] = COMPOSE_BITS!(sow as u32, 4, 20); // SOW at body bits 0..19
-                // Ephemeris I (203 bits, no IODE) at body bit 24 -> absolute 48.
+                                                                  // Ephemeris I (203 bits, no IODE) at body bit 24 -> absolute 48.
                 let eph_i = Self::drop_iode(&self.ephemeris1[(svid - 1) as usize]);
                 self.append_word(frame_data, 48, &eph_i, 203);
                 // Ephemeris II (222 bits) at body bit 227 -> absolute 251.
@@ -609,8 +612,11 @@ mod gf6_tests {
     #[test]
     fn bcnav3_ephemeris_round_trips_via_b1c_decoder() {
         use crate::nav_decode::decode_bcnav_ephemeris;
-        let mut eph = crate::types::GpsEphemeris::default();
-        eph.valid = 1;
+        let mut eph = crate::types::GpsEphemeris {
+            valid: 1,
+            ..Default::default()
+        };
+
         eph.flag = 3; // MEO -> A_ref 27906100 m
         eph.axis = 27906100.0 + 512.0;
         eph.axis_dot = -0.0625;
@@ -644,7 +650,11 @@ mod gf6_tests {
             .filter(|d| !d.ok)
             .map(|d| format!("{}: orig={:.6e} dec={:.6e}", d.name, d.original, d.decoded))
             .collect();
-        assert!(bad.is_empty(), "B-CNAV3 round-trip mismatches:\n  {}", bad.join("\n  "));
+        assert!(
+            bad.is_empty(),
+            "B-CNAV3 round-trip mismatches:\n  {}",
+            bad.join("\n  ")
+        );
     }
 
     /// Frame-level round-trip: assemble a real B2b MT10 frame (compose_message + CRC) and recover
@@ -654,8 +664,11 @@ mod gf6_tests {
     #[test]
     fn bcnav3_mt10_frame_round_trips() {
         use crate::nav_decode::decode_bcnav_ephemeris;
-        let mut eph = crate::types::GpsEphemeris::default();
-        eph.valid = 1;
+        let mut eph = crate::types::GpsEphemeris {
+            valid: 1,
+            ..Default::default()
+        };
+
         eph.flag = 3; // MEO -> A_ref 27906100 m
         eph.axis = 27906100.0 + 512.0;
         eph.axis_dot = -0.0625;

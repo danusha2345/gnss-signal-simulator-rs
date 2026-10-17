@@ -133,7 +133,11 @@ fn beidou_group_delays_are_parsed() {
         "all BeiDou TGD2 are zero — the B2I group delay (data[26]) was dropped"
     );
     for e in &nav_data.beidou_ephemeris {
-        assert!(e.tgd2.is_finite(), "BeiDou SV{} has non-finite TGD2", e.svid);
+        assert!(
+            e.tgd2.is_finite(),
+            "BeiDou SV{} has non-finite TGD2",
+            e.svid
+        );
     }
 }
 

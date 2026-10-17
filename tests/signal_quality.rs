@@ -27,10 +27,16 @@ fn load_rinex() -> CNavData {
 }
 
 /// Helper: create a GPS L1CA SatIfSignal for given SVID with nav data
-fn create_gps_signal(svid: u8, nav_data: &CNavData, cur_time: &GnssTime) -> Option<(SatIfSignal, SatelliteParam)> {
+fn create_gps_signal(
+    svid: u8,
+    nav_data: &CNavData,
+    cur_time: &GnssTime,
+) -> Option<(SatIfSignal, SatelliteParam)> {
     // Find ephemeris closest to target time (toe closest to cur_time seconds of week)
     let target_sow = cur_time.MilliSeconds as f64 / 1000.0;
-    let eph = nav_data.gps_ephemeris.iter()
+    let eph = nav_data
+        .gps_ephemeris
+        .iter()
         .filter(|e| e.svid == svid && e.valid != 0)
         .min_by(|a, b| {
             let da = (a.toe as f64 - target_sow).abs();
@@ -38,8 +44,11 @@ fn create_gps_signal(svid: u8, nav_data: &CNavData, cur_time: &GnssTime) -> Opti
             da.partial_cmp(&db).unwrap()
         })?;
 
-    let mut sat_param = SatelliteParam::default();
-    sat_param.system = GnssSystem::GpsSystem;
+    let mut sat_param = SatelliteParam {
+        system: GnssSystem::GpsSystem,
+        ..Default::default()
+    };
+
     // Moscow Red Square (55.7539°N, 37.6208°E, 150m) → ECEF
     let lla = LlaPosition {
         lat: 55.7539_f64.to_radians(),
@@ -51,8 +60,12 @@ fn create_gps_signal(svid: u8, nav_data: &CNavData, cur_time: &GnssTime) -> Opti
     let default_iono = IonoParam::default();
 
     get_satellite_param(
-        &cur_pos, &position_lla, cur_time,
-        GnssSystem::GpsSystem, eph, &default_iono,
+        &cur_pos,
+        &position_lla,
+        cur_time,
+        GnssSystem::GpsSystem,
+        eph,
+        &default_iono,
         &mut sat_param,
     );
 
@@ -65,10 +78,20 @@ fn create_gps_signal(svid: u8, nav_data: &CNavData, cur_time: &GnssTime) -> Opti
     // Create LNavBit with ephemeris
     let mut lnav = LNavBit::new();
     lnav.set_ephemeris(svid as i32, eph);
-    if let (Some(alpha), Some(beta), Some(utc)) = (nav_data.get_gps_iono_alpha(), nav_data.get_gps_iono_beta(), nav_data.utc_param.as_ref()) {
+    if let (Some(alpha), Some(beta), Some(utc)) = (
+        nav_data.get_gps_iono_alpha(),
+        nav_data.get_gps_iono_beta(),
+        nav_data.utc_param.as_ref(),
+    ) {
         let iono_param = IonoParam {
-            a0: alpha[0], a1: alpha[1], a2: alpha[2], a3: alpha[3],
-            b0: beta[0], b1: beta[1], b2: beta[2], b3: beta[3],
+            a0: alpha[0],
+            a1: alpha[1],
+            a2: alpha[2],
+            a3: alpha[3],
+            b0: beta[0],
+            b1: beta[1],
+            b2: beta[2],
+            b3: beta[3],
             flag: 1,
         };
         lnav.set_iono_utc(&iono_param, utc);
@@ -76,8 +99,14 @@ fn create_gps_signal(svid: u8, nav_data: &CNavData, cur_time: &GnssTime) -> Opti
 
     let nav = NavData::LNav(lnav);
 
-    let if_freq = (CENTER_FREQ - CENTER_FREQ) as i32; // 0 for L1
-    let mut sig = SatIfSignal::new(SAMPLE_RATE, if_freq, GnssSystem::GpsSystem, SIGNAL_INDEX_L1CA as i32, svid);
+    let if_freq = 0; // 0 for L1
+    let mut sig = SatIfSignal::new(
+        SAMPLE_RATE,
+        if_freq,
+        GnssSystem::GpsSystem,
+        SIGNAL_INDEX_L1CA as i32,
+        svid,
+    );
     sig.init_state(*cur_time, &sat_param, Some(nav));
 
     Some((sig, sat_param))
@@ -89,12 +118,18 @@ fn create_gps_signal(svid: u8, nav_data: &CNavData, cur_time: &GnssTime) -> Opti
 #[test]
 fn test_carrier_phase_continuity() {
     let nav_data = load_rinex();
-    let cur_time = GnssTime { Week: 2369, MilliSeconds: 381948000, SubMilliSeconds: 0.0 };
+    let cur_time = GnssTime {
+        Week: 2369,
+        MilliSeconds: 381948000,
+        SubMilliSeconds: 0.0,
+    };
 
     // Test ALL GPS satellites to find any with phase jumps
     for svid in 1u8..=32 {
         let result = create_gps_signal(svid, &nav_data, &cur_time);
-        if result.is_none() { continue; }
+        if result.is_none() {
+            continue;
+        }
         let (mut sig, sat_param) = result.unwrap();
 
         let mut prev_last_sample = ComplexNumber::new();
@@ -142,12 +177,19 @@ fn test_carrier_phase_continuity() {
         // A broken re-anchor causes non-π jumps > 0.1 rad.
         let max_non_nav_jump = max_phase_jump;
         let status = if max_non_nav_jump < 0.1 { "OK" } else { "FAIL" };
-        println!("PRN {:02}: max phase jump = {:.4} rad ({:.4} cycles), non-nav = {:.4} — {}",
-                 svid, max_phase_jump, max_phase_jump / std::f64::consts::TAU, max_non_nav_jump, status);
+        println!(
+            "PRN {:02}: max phase jump = {:.4} rad ({:.4} cycles), non-nav = {:.4} — {}",
+            svid,
+            max_phase_jump,
+            max_phase_jump / std::f64::consts::TAU,
+            max_non_nav_jump,
+            status
+        );
         assert!(
             max_non_nav_jump < 0.1,
             "PRN {}: non-navigation carrier phase jump {:.4} rad exceeds limit",
-            svid, max_non_nav_jump
+            svid,
+            max_non_nav_jump
         );
     }
 }
@@ -159,11 +201,17 @@ fn test_carrier_phase_continuity() {
 #[ignore = "heavy integration test: checks 200 ms code phase continuity across multiple PRNs"]
 fn test_code_phase_continuity() {
     let nav_data = load_rinex();
-    let cur_time = GnssTime { Week: 2369, MilliSeconds: 381948000, SubMilliSeconds: 0.0 };
+    let cur_time = GnssTime {
+        Week: 2369,
+        MilliSeconds: 381948000,
+        SubMilliSeconds: 0.0,
+    };
 
     for &svid in &[23u8, 27, 15, 10, 8, 2] {
         let result = create_gps_signal(svid, &nav_data, &cur_time);
-        if result.is_none() { continue; }
+        if result.is_none() {
+            continue;
+        }
         let (mut sig, sat_param) = result.unwrap();
 
         // Generate 200ms and check correlation peak position doesn't jump
@@ -174,10 +222,16 @@ fn test_code_phase_continuity() {
 
         // Get PRN code for correlation
         let prn_code: Vec<f64> = {
-            let prn = PrnGenerate::new(GnssSystem::GpsSystem, SIGNAL_INDEX_L1CA as i32, svid as i32);
+            let prn =
+                PrnGenerate::new(GnssSystem::GpsSystem, SIGNAL_INDEX_L1CA as i32, svid as i32);
             match prn.get_data_prn() {
-                Some(code) => code.iter().map(|&v| if v != 0 { -1.0 } else { 1.0 }).collect(),
-                None => { continue; }
+                Some(code) => code
+                    .iter()
+                    .map(|&v| if v != 0 { -1.0 } else { 1.0 })
+                    .collect(),
+                None => {
+                    continue;
+                }
             }
         };
 
@@ -210,8 +264,10 @@ fn test_code_phase_continuity() {
                     let t = (ms as f64 + s as f64 / samples_per_ms as f64) / 1000.0;
                     let phase = std::f64::consts::TAU * doppler_hz * t;
                     let (sin_v, cos_v) = phase.sin_cos();
-                    let stripped_i = sig.sample_array[s].real * cos_v + sig.sample_array[s].imag * sin_v;
-                    let stripped_q = -sig.sample_array[s].real * sin_v + sig.sample_array[s].imag * cos_v;
+                    let stripped_i =
+                        sig.sample_array[s].real * cos_v + sig.sample_array[s].imag * sin_v;
+                    let stripped_q =
+                        -sig.sample_array[s].real * sin_v + sig.sample_array[s].imag * cos_v;
                     let chip = ((s as f64 * chip_step + offset) as usize) % 1023;
                     corr_i += stripped_i * prn_code[chip];
                     corr_q += stripped_q * prn_code[chip];
@@ -237,9 +293,13 @@ fn test_code_phase_continuity() {
         assert!(
             max_code_jump < 5.0,
             "PRN {}: code phase jump {:.2} chips exceeds limit",
+            svid,
+            max_code_jump
+        );
+        println!(
+            "PRN {:02}: max code phase jump = {:.2} chips — OK",
             svid, max_code_jump
         );
-        println!("PRN {:02}: max code phase jump = {:.2} chips — OK", svid, max_code_jump);
     }
 }
 
@@ -249,7 +309,11 @@ fn test_code_phase_continuity() {
 #[test]
 fn test_gps_lnav_all_svs_decodable() {
     let nav_data = load_rinex();
-    let cur_time = GnssTime { Week: 2369, MilliSeconds: 381948000, SubMilliSeconds: 0.0 };
+    let _cur_time = GnssTime {
+        Week: 2369,
+        MilliSeconds: 381948000,
+        SubMilliSeconds: 0.0,
+    };
 
     let mut lnav = LNavBit::new();
 
@@ -265,18 +329,29 @@ fn test_gps_lnav_all_svs_decodable() {
     }
 
     // Load iono/UTC
-    if let (Some(alpha), Some(beta)) = (nav_data.get_gps_iono_alpha(), nav_data.get_gps_iono_beta()) {
+    if let (Some(alpha), Some(beta)) = (nav_data.get_gps_iono_alpha(), nav_data.get_gps_iono_beta())
+    {
         if let Some(utc) = &nav_data.utc_param {
             let iono_param = IonoParam {
-                a0: alpha[0], a1: alpha[1], a2: alpha[2], a3: alpha[3],
-                b0: beta[0], b1: beta[1], b2: beta[2], b3: beta[3],
+                a0: alpha[0],
+                a1: alpha[1],
+                a2: alpha[2],
+                a3: alpha[3],
+                b0: beta[0],
+                b1: beta[1],
+                b2: beta[2],
+                b3: beta[3],
                 flag: 1,
             };
             lnav.set_iono_utc(&iono_param, utc);
         }
     }
 
-    println!("Loaded {} GPS SVIDs: {:?}", loaded_svids.len(), loaded_svids);
+    println!(
+        "Loaded {} GPS SVIDs: {:?}",
+        loaded_svids.len(),
+        loaded_svids
+    );
 
     // For each satellite, generate nav bits for 60 seconds (10 complete subframe cycles)
     // and verify preamble + parity
@@ -300,9 +375,7 @@ fn test_gps_lnav_all_svs_decodable() {
                 lnav.get_frame_data(time, svid as i32, 0, &mut nav_bits);
 
                 // Check preamble (first 8 bits = 10001011)
-                let preamble = (0..8).fold(0u8, |acc, i| {
-                    (acc << 1) | (nav_bits[i] as u8 & 1)
-                });
+                let preamble = (0..8).fold(0u8, |acc, i| (acc << 1) | (nav_bits[i] as u8 & 1));
                 if preamble == 0x8B {
                     preamble_found += 1;
                 }
@@ -315,12 +388,12 @@ fn test_gps_lnav_all_svs_decodable() {
                         word = (word << 1) | (nav_bits[word_start + bit] as u32 & 1);
                     }
                     // D29* and D30* from previous word
-                    let d29_star = if word_idx > 0 {
+                    let _d29_star = if word_idx > 0 {
                         (nav_bits[word_start - 1] as u32) & 1
                     } else {
                         0
                     };
-                    let d30_star = if word_idx > 0 {
+                    let _d30_star = if word_idx > 0 {
                         (nav_bits[word_start - 2] as u32) & 1
                     } else {
                         0
@@ -344,9 +417,15 @@ fn test_gps_lnav_all_svs_decodable() {
         }
 
         let all_sf = subframes_seen[1] && subframes_seen[2] && subframes_seen[3];
-        let status = if preamble_found == 50 && parity_errors == 0 && all_sf { "OK" } else { "FAIL" };
-        println!("GPS PRN {:02}: preamble={}/50, parity_err={}, SF1-3={} — {}",
-                 svid, preamble_found, parity_errors, all_sf, status);
+        let status = if preamble_found == 50 && parity_errors == 0 && all_sf {
+            "OK"
+        } else {
+            "FAIL"
+        };
+        println!(
+            "GPS PRN {:02}: preamble={}/50, parity_err={}, SF1-3={} — {}",
+            svid, preamble_found, parity_errors, all_sf, status
+        );
 
         if status == "FAIL" {
             all_ok = false;
@@ -377,7 +456,11 @@ fn test_galileo_inav_all_svs_crc() {
     loaded_svids.sort();
     loaded_svids.dedup();
 
-    println!("Loaded {} Galileo SVIDs: {:?}", loaded_svids.len(), loaded_svids);
+    println!(
+        "Loaded {} Galileo SVIDs: {:?}",
+        loaded_svids.len(),
+        loaded_svids
+    );
     assert!(!loaded_svids.is_empty(), "No Galileo ephemerides loaded");
 
     let mut all_ok = true;
@@ -412,15 +495,28 @@ fn test_galileo_inav_all_svs_crc() {
             }
         }
 
-        let status = if sync_ok == total_pages * 2 { "OK" } else { "FAIL" };
-        println!("GAL E{:02}: sync={}/{} — {}", svid, sync_ok, total_pages * 2, status);
+        let status = if sync_ok == total_pages * 2 {
+            "OK"
+        } else {
+            "FAIL"
+        };
+        println!(
+            "GAL E{:02}: sync={}/{} — {}",
+            svid,
+            sync_ok,
+            total_pages * 2,
+            status
+        );
 
         if status == "FAIL" {
             all_ok = false;
         }
     }
 
-    assert!(all_ok, "Some Galileo satellites have I-NAV sync pattern errors");
+    assert!(
+        all_ok,
+        "Some Galileo satellites have I-NAV sync pattern errors"
+    );
 }
 
 // =============================================================================
@@ -429,11 +525,17 @@ fn test_galileo_inav_all_svs_crc() {
 #[test]
 fn test_signal_amplitude_consistency() {
     let nav_data = load_rinex();
-    let cur_time = GnssTime { Week: 2369, MilliSeconds: 381948000, SubMilliSeconds: 0.0 };
+    let cur_time = GnssTime {
+        Week: 2369,
+        MilliSeconds: 381948000,
+        SubMilliSeconds: 0.0,
+    };
 
     for &svid in &[23u8, 15, 8] {
         let result = create_gps_signal(svid, &nav_data, &cur_time);
-        if result.is_none() { continue; }
+        if result.is_none() {
+            continue;
+        }
         let (mut sig, sat_param) = result.unwrap();
 
         sig.update_satellite_params(&sat_param, CENTER_FREQ, &cur_time);
@@ -441,12 +543,20 @@ fn test_signal_amplitude_consistency() {
 
         // Compute RMS of generated samples
         let n = sig.sample_array.len();
-        let rms = (sig.sample_array.iter()
+        let rms = (sig
+            .sample_array
+            .iter()
             .map(|s| s.real * s.real + s.imag * s.imag)
-            .sum::<f64>() / n as f64).sqrt();
+            .sum::<f64>()
+            / n as f64)
+            .sqrt();
 
         // Signal should have non-zero amplitude
-        assert!(rms > 1e-6, "PRN {}: RMS is zero — signal not generated", svid);
+        assert!(
+            rms > 1e-6,
+            "PRN {}: RMS is zero — signal not generated",
+            svid
+        );
 
         // Check amplitude is reasonable (not clipping, not too small)
         // Expected: sqrt(CN0_linear / Fs) where CN0 ~45 dBHz, Fs = 5MHz
@@ -464,7 +574,11 @@ fn test_signal_amplitude_consistency() {
 #[test]
 fn test_gps_prn_correlation() {
     let nav_data = load_rinex();
-    let cur_time = GnssTime { Week: 2369, MilliSeconds: 381948000, SubMilliSeconds: 0.0 };
+    let cur_time = GnssTime {
+        Week: 2369,
+        MilliSeconds: 381948000,
+        SubMilliSeconds: 0.0,
+    };
 
     for &svid in &[23u8, 27, 15, 10, 8, 2, 32] {
         let result = create_gps_signal(svid, &nav_data, &cur_time);
@@ -479,10 +593,17 @@ fn test_gps_prn_correlation() {
 
         // Get PRN code
         let prn_code: Vec<f64> = {
-            let prn = PrnGenerate::new(GnssSystem::GpsSystem, SIGNAL_INDEX_L1CA as i32, svid as i32);
+            let prn =
+                PrnGenerate::new(GnssSystem::GpsSystem, SIGNAL_INDEX_L1CA as i32, svid as i32);
             match prn.get_data_prn() {
-                Some(code) => code.iter().map(|&v| if v != 0 { -1.0 } else { 1.0 }).collect(),
-                None => { println!("PRN {:02}: no PRN code — skipped", svid); continue; }
+                Some(code) => code
+                    .iter()
+                    .map(|&v| if v != 0 { -1.0 } else { 1.0 })
+                    .collect(),
+                None => {
+                    println!("PRN {:02}: no PRN code — skipped", svid);
+                    continue;
+                }
             }
         };
 
@@ -492,20 +613,22 @@ fn test_gps_prn_correlation() {
         let chip_step = 1023.0 / samples_per_ms as f64;
 
         let mut powers = vec![0.0f64; 1023];
-        for offset in 0..1023 {
+        for (offset, power) in powers.iter_mut().enumerate() {
             let mut corr_i = 0.0_f64;
             let mut corr_q = 0.0_f64;
             for s in 0..samples_per_ms {
                 let t = s as f64 / (samples_per_ms as f64 * 1000.0);
                 let phase = std::f64::consts::TAU * doppler_hz * t;
                 let (sin_v, cos_v) = phase.sin_cos();
-                let stripped_i = sig.sample_array[s].real * cos_v + sig.sample_array[s].imag * sin_v;
-                let stripped_q = -sig.sample_array[s].real * sin_v + sig.sample_array[s].imag * cos_v;
+                let stripped_i =
+                    sig.sample_array[s].real * cos_v + sig.sample_array[s].imag * sin_v;
+                let stripped_q =
+                    -sig.sample_array[s].real * sin_v + sig.sample_array[s].imag * cos_v;
                 let chip = ((s as f64 * chip_step + offset as f64) as usize) % 1023;
                 corr_i += stripped_i * prn_code[chip];
                 corr_q += stripped_q * prn_code[chip];
             }
-            powers[offset] = corr_i * corr_i + corr_q * corr_q;
+            *power = corr_i * corr_i + corr_q * corr_q;
         }
 
         let mean_power: f64 = powers.iter().sum::<f64>() / 1023.0;
@@ -519,7 +642,8 @@ fn test_gps_prn_correlation() {
         assert!(
             peak_ratio > 5.0,
             "PRN {}: peak_ratio {:.1} too low — PRN code not correlating",
-            svid, peak_ratio
+            svid,
+            peak_ratio
         );
     }
 }
@@ -540,7 +664,11 @@ fn test_gps_prn_correlation() {
 #[ignore = "heavy integration test: generates and decodes 60s GPS L1CA streams"]
 fn test_gps_lnav_end_to_end_decode() {
     let nav_data = load_rinex();
-    let start_time = GnssTime { Week: 2369, MilliSeconds: 381948000, SubMilliSeconds: 0.0 };
+    let start_time = GnssTime {
+        Week: 2369,
+        MilliSeconds: 381948000,
+        SubMilliSeconds: 0.0,
+    };
     let samples_per_ms = SAMPLE_RATE as usize;
     let chip_step = 1023.0 / samples_per_ms as f64;
 
@@ -554,7 +682,7 @@ fn test_gps_lnav_end_to_end_decode() {
 
     let test_svids: &[u8] = &[23, 15, 8, 27, 10, 2];
     let duration_ms: i32 = 60000; // 60 seconds
-    let param_update_interval: i32 = 1000; // Full Kepler update every 1s
+    let _param_update_interval: i32 = 1000; // Full Kepler update every 1s
 
     // Receiver position (Moscow Red Square)
     let lla = LlaPosition {
@@ -572,7 +700,9 @@ fn test_gps_lnav_end_to_end_decode() {
     for &svid in test_svids {
         // --- Find best ephemeris ---
         let target_sow = start_time.MilliSeconds as f64 / 1000.0;
-        let eph_opt = nav_data.gps_ephemeris.iter()
+        let eph_opt = nav_data
+            .gps_ephemeris
+            .iter()
             .filter(|e| e.svid == svid && e.valid != 0)
             .min_by(|a, b| {
                 let da = (a.toe as f64 - target_sow).abs();
@@ -588,17 +718,27 @@ fn test_gps_lnav_end_to_end_decode() {
         };
 
         // --- Compute initial satellite parameters ---
-        let mut sat_param = SatelliteParam::default();
-        sat_param.system = GnssSystem::GpsSystem;
+        let mut sat_param = SatelliteParam {
+            system: GnssSystem::GpsSystem,
+            ..Default::default()
+        };
+
         get_satellite_param(
-            &cur_pos, &position_lla, &start_time,
-            GnssSystem::GpsSystem, &eph, &default_iono,
+            &cur_pos,
+            &position_lla,
+            &start_time,
+            GnssSystem::GpsSystem,
+            &eph,
+            &default_iono,
             &mut sat_param,
         );
 
         if sat_param.Elevation < 5.0_f64.to_radians() {
-            println!("PRN {:02}: elevation {:.1} deg — below mask, skipped",
-                     svid, sat_param.Elevation.to_degrees());
+            println!(
+                "PRN {:02}: elevation {:.1} deg — below mask, skipped",
+                svid,
+                sat_param.Elevation.to_degrees()
+            );
             continue;
         }
 
@@ -607,8 +747,12 @@ fn test_gps_lnav_end_to_end_decode() {
         sat_param.CN0 = 4500; // 45.0 dBHz * 100
 
         visible_count += 1;
-        println!("PRN {:02}: elevation {:.1} deg, generating {} ms of signal...",
-                 svid, sat_param.Elevation.to_degrees(), duration_ms);
+        println!(
+            "PRN {:02}: elevation {:.1} deg, generating {} ms of signal...",
+            svid,
+            sat_param.Elevation.to_degrees(),
+            duration_ms
+        );
 
         // --- Build LNavBit with ephemeris and iono/UTC ---
         let mut lnav = LNavBit::new();
@@ -619,8 +763,14 @@ fn test_gps_lnav_end_to_end_decode() {
             nav_data.utc_param.as_ref(),
         ) {
             let iono_param = IonoParam {
-                a0: alpha[0], a1: alpha[1], a2: alpha[2], a3: alpha[3],
-                b0: beta[0], b1: beta[1], b2: beta[2], b3: beta[3],
+                a0: alpha[0],
+                a1: alpha[1],
+                a2: alpha[2],
+                a3: alpha[3],
+                b0: beta[0],
+                b1: beta[1],
+                b2: beta[2],
+                b3: beta[3],
                 flag: 1,
             };
             lnav.set_iono_utc(&iono_param, utc);
@@ -628,14 +778,24 @@ fn test_gps_lnav_end_to_end_decode() {
         let nav = NavData::LNav(lnav);
 
         // --- Create SatIfSignal ---
-        let if_freq = (CENTER_FREQ - CENTER_FREQ) as i32; // 0 for L1 at L1 center
-        let mut sig = SatIfSignal::new(SAMPLE_RATE, if_freq, GnssSystem::GpsSystem, SIGNAL_INDEX_L1CA as i32, svid);
+        let if_freq = 0; // 0 for L1 at L1 center
+        let mut sig = SatIfSignal::new(
+            SAMPLE_RATE,
+            if_freq,
+            GnssSystem::GpsSystem,
+            SIGNAL_INDEX_L1CA as i32,
+            svid,
+        );
         sig.init_state(start_time, &sat_param, Some(nav));
 
         // --- Get local PRN code replica ---
-        let prn_gen = PrnGenerate::new(GnssSystem::GpsSystem, SIGNAL_INDEX_L1CA as i32, svid as i32);
+        let prn_gen =
+            PrnGenerate::new(GnssSystem::GpsSystem, SIGNAL_INDEX_L1CA as i32, svid as i32);
         let prn_code: Vec<f64> = match prn_gen.get_data_prn() {
-            Some(code) => code.iter().map(|&v| if v != 0 { -1.0 } else { 1.0 }).collect(),
+            Some(code) => code
+                .iter()
+                .map(|&v| if v != 0 { -1.0 } else { 1.0 })
+                .collect(),
             None => {
                 println!("PRN {:02}: failed to generate PRN code — skipped", svid);
                 continue;
@@ -652,10 +812,20 @@ fn test_gps_lnav_end_to_end_decode() {
 
         // Quick sanity check on signal amplitude
         {
-            let rms = (sig.sample_array.iter().take(samples_per_ms)
+            let rms = (sig
+                .sample_array
+                .iter()
+                .take(samples_per_ms)
                 .map(|s| s.real * s.real + s.imag * s.imag)
-                .sum::<f64>() / samples_per_ms as f64).sqrt();
-            assert!(rms > 0.01, "PRN {}: signal RMS {:.6} too small — check CN0 setting", svid, rms);
+                .sum::<f64>()
+                / samples_per_ms as f64)
+                .sqrt();
+            assert!(
+                rms > 0.01,
+                "PRN {}: signal RMS {:.6} too small — check CN0 setting",
+                svid,
+                rms
+            );
         }
 
         let mut best_offset = 0usize;
@@ -668,8 +838,10 @@ fn test_gps_lnav_end_to_end_decode() {
                 let phase = std::f64::consts::TAU * doppler_hz * t;
                 let (sin_v, cos_v) = phase.sin_cos();
                 // Strip carrier: complex multiply by exp(-j*phase)
-                let stripped_i = sig.sample_array[s].real * cos_v + sig.sample_array[s].imag * sin_v;
-                let stripped_q = -sig.sample_array[s].real * sin_v + sig.sample_array[s].imag * cos_v;
+                let stripped_i =
+                    sig.sample_array[s].real * cos_v + sig.sample_array[s].imag * sin_v;
+                let stripped_q =
+                    -sig.sample_array[s].real * sin_v + sig.sample_array[s].imag * cos_v;
                 let chip = ((s as f64 * chip_step + offset as f64) as usize) % 1023;
                 corr_i += stripped_i * prn_code[chip];
                 corr_q += stripped_q * prn_code[chip];
@@ -680,8 +852,10 @@ fn test_gps_lnav_end_to_end_decode() {
                 best_offset = offset;
             }
         }
-        println!("  Acquired: code_offset={}, Doppler={:.1} Hz, peak_power={:.2e}",
-                 best_offset, doppler_hz, best_power);
+        println!(
+            "  Acquired: code_offset={}, Doppler={:.1} Hz, peak_power={:.2e}",
+            best_offset, doppler_hz, best_power
+        );
 
         // --- Phase 2: Generate 60s of 1ms correlations ---
         // Re-create signal from scratch for clean tracking (acquisition consumed the first ms)
@@ -693,14 +867,26 @@ fn test_gps_lnav_end_to_end_decode() {
             nav_data.utc_param.as_ref(),
         ) {
             let iono_param = IonoParam {
-                a0: alpha[0], a1: alpha[1], a2: alpha[2], a3: alpha[3],
-                b0: beta[0], b1: beta[1], b2: beta[2], b3: beta[3],
+                a0: alpha[0],
+                a1: alpha[1],
+                a2: alpha[2],
+                a3: alpha[3],
+                b0: beta[0],
+                b1: beta[1],
+                b2: beta[2],
+                b3: beta[3],
                 flag: 1,
             };
             lnav2.set_iono_utc(&iono_param, utc);
         }
         let nav2 = NavData::LNav(lnav2);
-        let mut sig = SatIfSignal::new(SAMPLE_RATE, if_freq, GnssSystem::GpsSystem, SIGNAL_INDEX_L1CA as i32, svid);
+        let mut sig = SatIfSignal::new(
+            SAMPLE_RATE,
+            if_freq,
+            GnssSystem::GpsSystem,
+            SIGNAL_INDEX_L1CA as i32,
+            svid,
+        );
         sig.init_state(start_time, &sat_param, Some(nav2));
 
         // Store per-ms correlation results (I and Q) for post-processing
@@ -728,11 +914,18 @@ fn test_gps_lnav_end_to_end_decode() {
             let is_block_boundary = ms % 50 == 0;
             if ms % 1000 == 0 {
                 // Kepler propagation every 1s
-                let mut new_param = SatelliteParam::default();
-                new_param.system = GnssSystem::GpsSystem;
+                let mut new_param = SatelliteParam {
+                    system: GnssSystem::GpsSystem,
+                    ..Default::default()
+                };
+
                 get_satellite_param(
-                    &cur_pos, &position_lla, &ms_time,
-                    GnssSystem::GpsSystem, &eph, &default_iono,
+                    &cur_pos,
+                    &position_lla,
+                    &ms_time,
+                    GnssSystem::GpsSystem,
+                    &eph,
+                    &default_iono,
                     &mut new_param,
                 );
                 new_param.CN0 = 4500;
@@ -758,10 +951,13 @@ fn test_gps_lnav_end_to_end_decode() {
             let mut corr_q = 0.0_f64;
             for s in 0..samples_per_ms {
                 let sample_phase = carrier_phase_acc
-                    + std::f64::consts::TAU * doppler_hz * (s as f64) / (samples_per_ms as f64 * 1000.0);
+                    + std::f64::consts::TAU * doppler_hz * (s as f64)
+                        / (samples_per_ms as f64 * 1000.0);
                 let (sin_v, cos_v) = sample_phase.sin_cos();
-                let stripped_i = sig.sample_array[s].real * cos_v + sig.sample_array[s].imag * sin_v;
-                let stripped_q = -sig.sample_array[s].real * sin_v + sig.sample_array[s].imag * cos_v;
+                let stripped_i =
+                    sig.sample_array[s].real * cos_v + sig.sample_array[s].imag * sin_v;
+                let stripped_q =
+                    -sig.sample_array[s].real * sin_v + sig.sample_array[s].imag * cos_v;
                 let chip = ((s as f64 * chip_step + tracked_code_offset) as usize) % 1023;
                 corr_i += stripped_i * prn_code[chip];
                 corr_q += stripped_q * prn_code[chip];
@@ -799,7 +995,10 @@ fn test_gps_lnav_end_to_end_decode() {
                 best_sync_offset = sync_offset;
             }
         }
-        println!("  Bit sync: offset={} ms (of 20), sync_energy={:.2e}", best_sync_offset, best_sync_energy);
+        println!(
+            "  Bit sync: offset={} ms (of 20), sync_energy={:.2e}",
+            best_sync_offset, best_sync_energy
+        );
 
         // --- Phase 2c: Extract nav bits with correct alignment ---
         // Use per-bit phase estimation: for each 20ms accumulation, the carrier phase
@@ -826,7 +1025,10 @@ fn test_gps_lnav_end_to_end_decode() {
             let mag = (ai * ai + aq * aq).sqrt();
 
             if bit_index == 0 {
-                println!("  Phase lock: phase={:.3} rad, magnitude={:.2e}", phase, mag);
+                println!(
+                    "  Phase lock: phase={:.3} rad, magnitude={:.2e}",
+                    phase, mag
+                );
                 // First bit: assign arbitrary sign (we'll resolve global polarity in preamble search)
                 prev_phase = phase;
                 prev_sign = 1;
@@ -835,8 +1037,12 @@ fn test_gps_lnav_end_to_end_decode() {
                 // Check if phase flipped (>90 degrees from previous)
                 let mut phase_diff = phase - prev_phase;
                 // Wrap to [-pi, pi]
-                while phase_diff > std::f64::consts::PI { phase_diff -= std::f64::consts::TAU; }
-                while phase_diff < -std::f64::consts::PI { phase_diff += std::f64::consts::TAU; }
+                while phase_diff > std::f64::consts::PI {
+                    phase_diff -= std::f64::consts::TAU;
+                }
+                while phase_diff < -std::f64::consts::PI {
+                    phase_diff += std::f64::consts::TAU;
+                }
 
                 if phase_diff.abs() > std::f64::consts::FRAC_PI_2 {
                     // Phase flipped ~180 deg => bit changed
@@ -851,7 +1057,11 @@ fn test_gps_lnav_end_to_end_decode() {
         }
 
         let total_bits = nav_bits.len();
-        println!("  Extracted {} nav bits ({:.1}s)", total_bits, total_bits as f64 * 0.02);
+        println!(
+            "  Extracted {} nav bits ({:.1}s)",
+            total_bits,
+            total_bits as f64 * 0.02
+        );
 
         // --- Phase 3: Preamble search and subframe decoding ---
         let mut valid_subframes = 0;
@@ -919,8 +1129,10 @@ fn test_gps_lnav_end_to_end_decode() {
                 }
 
                 // Extract subframe ID from HOW word (word 2, bits 20-22 of word = bits 49-51 overall)
-                let sf_id = ((subframe_bits[49] << 2) | (subframe_bits[50] << 1) | subframe_bits[51]) as usize;
-                if sf_id >= 1 && sf_id <= 5 {
+                let sf_id = ((subframe_bits[49] << 2)
+                    | (subframe_bits[50] << 1)
+                    | subframe_bits[51]) as usize;
+                if (1..=5).contains(&sf_id) {
                     subframe_ids_found[sf_id] += 1;
                 }
 
@@ -931,19 +1143,29 @@ fn test_gps_lnav_end_to_end_decode() {
             }
         }
 
-        let sf_summary = format!("SF1={} SF2={} SF3={} SF4={} SF5={}",
-            subframe_ids_found[1], subframe_ids_found[2], subframe_ids_found[3],
-            subframe_ids_found[4], subframe_ids_found[5]);
+        let sf_summary = format!(
+            "SF1={} SF2={} SF3={} SF4={} SF5={}",
+            subframe_ids_found[1],
+            subframe_ids_found[2],
+            subframe_ids_found[3],
+            subframe_ids_found[4],
+            subframe_ids_found[5]
+        );
         let status = if max_consecutive >= 3 { "PASS" } else { "FAIL" };
-        println!("  PRN {:02}: valid_subframes={}, max_consecutive={}, {} — {}",
-                 svid, valid_subframes, max_consecutive, sf_summary, status);
+        println!(
+            "  PRN {:02}: valid_subframes={}, max_consecutive={}, {} — {}",
+            svid, valid_subframes, max_consecutive, sf_summary, status
+        );
 
         if max_consecutive < 3 {
             all_ok = false;
         }
     }
 
-    assert!(visible_count > 0, "No visible GPS satellites found — check RINEX data or receiver position");
+    assert!(
+        visible_count > 0,
+        "No visible GPS satellites found — check RINEX data or receiver position"
+    );
     assert!(all_ok,
         "One or more visible GPS satellites failed to decode at least 3 consecutive valid subframes");
 }
@@ -956,12 +1178,30 @@ fn test_gps_lnav_end_to_end_decode() {
 fn gps_lnav_check_parity(bits: &[u32; 300]) -> bool {
     // Same PARITY_TABLE as lnavbit.rs — encodes GPS ICD parity polynomials
     const PARITY_TABLE: [[u8; 16]; 6] = [
-        [0x00,0x13,0x25,0x36,0x0B,0x18,0x2E,0x3D,0x16,0x05,0x33,0x20,0x1D,0x0E,0x38,0x2B],
-        [0x00,0x2C,0x19,0x35,0x32,0x1E,0x2B,0x07,0x26,0x0A,0x3F,0x13,0x14,0x38,0x0D,0x21],
-        [0x00,0x0E,0x1F,0x11,0x3E,0x30,0x21,0x2F,0x3D,0x33,0x22,0x2C,0x03,0x0D,0x1C,0x12],
-        [0x00,0x38,0x31,0x09,0x23,0x1B,0x12,0x2A,0x07,0x3F,0x36,0x0E,0x24,0x1C,0x15,0x2D],
-        [0x00,0x0D,0x1A,0x17,0x37,0x3A,0x2D,0x20,0x2F,0x22,0x35,0x38,0x18,0x15,0x02,0x0F],
-        [0x00,0x1C,0x3B,0x27,0x34,0x28,0x0F,0x13,0x2A,0x36,0x11,0x0D,0x1E,0x02,0x25,0x39],
+        [
+            0x00, 0x13, 0x25, 0x36, 0x0B, 0x18, 0x2E, 0x3D, 0x16, 0x05, 0x33, 0x20, 0x1D, 0x0E,
+            0x38, 0x2B,
+        ],
+        [
+            0x00, 0x2C, 0x19, 0x35, 0x32, 0x1E, 0x2B, 0x07, 0x26, 0x0A, 0x3F, 0x13, 0x14, 0x38,
+            0x0D, 0x21,
+        ],
+        [
+            0x00, 0x0E, 0x1F, 0x11, 0x3E, 0x30, 0x21, 0x2F, 0x3D, 0x33, 0x22, 0x2C, 0x03, 0x0D,
+            0x1C, 0x12,
+        ],
+        [
+            0x00, 0x38, 0x31, 0x09, 0x23, 0x1B, 0x12, 0x2A, 0x07, 0x3F, 0x36, 0x0E, 0x24, 0x1C,
+            0x15, 0x2D,
+        ],
+        [
+            0x00, 0x0D, 0x1A, 0x17, 0x37, 0x3A, 0x2D, 0x20, 0x2F, 0x22, 0x35, 0x38, 0x18, 0x15,
+            0x02, 0x0F,
+        ],
+        [
+            0x00, 0x1C, 0x3B, 0x27, 0x34, 0x28, 0x0F, 0x13, 0x2A, 0x36, 0x11, 0x0D, 0x1E, 0x02,
+            0x25, 0x39,
+        ],
     ];
 
     /// Compute 6 parity bits using the GPS ICD lookup-table method.
@@ -970,13 +1210,17 @@ fn gps_lnav_check_parity(bits: &[u32; 300]) -> bool {
     fn compute_parity(word: u32) -> u32 {
         let mut w = word >> 6;
         let mut parity = 0u32;
-        for i in 0..6 {
-            parity ^= PARITY_TABLE[i][(w & 0xf) as usize] as u32;
+        for row in &PARITY_TABLE {
+            parity ^= row[(w & 0xf) as usize] as u32;
             w >>= 4;
         }
         // w now has D30* in bit 0, D29* in bit 1
-        if (w & 1) != 0 { parity ^= 0x15; }
-        if (w & 2) != 0 { parity ^= 0x29; }
+        if (w & 1) != 0 {
+            parity ^= 0x15;
+        }
+        if (w & 2) != 0 {
+            parity ^= 0x29;
+        }
         parity
     }
 
@@ -984,8 +1228,16 @@ fn gps_lnav_check_parity(bits: &[u32; 300]) -> bool {
         let word_start = word_idx * 30;
 
         // D29* and D30* from previous word (for word 0, both 0 — TLM starts clean)
-        let d29_star: u32 = if word_idx > 0 { bits[word_start - 2] } else { 0 };
-        let d30_star: u32 = if word_idx > 0 { bits[word_start - 1] } else { 0 };
+        let d29_star: u32 = if word_idx > 0 {
+            bits[word_start - 2]
+        } else {
+            0
+        };
+        let d30_star: u32 = if word_idx > 0 {
+            bits[word_start - 1]
+        } else {
+            0
+        };
 
         // Pack into 32-bit word: [D29* D30* d1..d24 ______]
         let mut word32: u32 = (d29_star << 31) | (d30_star << 30);
@@ -1103,7 +1355,9 @@ fn test_galileo_inav_viterbi_decode() {
             let mut new_pm = vec![INF; num_states];
 
             for state in 0..num_states {
-                if pm[state] >= INF { continue; }
+                if pm[state] >= INF {
+                    continue;
+                }
                 for input in 0..2u8 {
                     let (next_state, exp_g1, exp_g2) = transitions[state * 2 + input as usize];
                     // Branch metric: Hamming distance
@@ -1142,11 +1396,11 @@ fn test_galileo_inav_viterbi_decode() {
     /// for nav position k: row i=k/30, col j=k%30, original index = j*8 + i.
     fn deinterleave(interleaved: &[i32]) -> [u8; 240] {
         let mut symbols = [0u8; 240];
-        for k in 0..240 {
+        for (k, value) in interleaved.iter().take(240).enumerate() {
             let i = k / 30; // row (bit position)
             let j = k % 30; // column (byte index)
             let orig_idx = j * 8 + i;
-            symbols[orig_idx] = interleaved[k] as u8;
+            symbols[orig_idx] = *value as u8;
         }
         symbols
     }
@@ -1184,8 +1438,16 @@ fn test_galileo_inav_viterbi_decode() {
         // --- Step 3a: Verify sync patterns ---
         let sync_even = &nav_bits[0..10];
         let sync_odd = &nav_bits[250..260];
-        assert_eq!(sync_even, &expected_sync, "Page tow={}: even sync mismatch", tow);
-        assert_eq!(sync_odd, &expected_sync, "Page tow={}: odd sync mismatch", tow);
+        assert_eq!(
+            sync_even, &expected_sync,
+            "Page tow={}: even sync mismatch",
+            tow
+        );
+        assert_eq!(
+            sync_odd, &expected_sync,
+            "Page tow={}: odd sync mismatch",
+            tow
+        );
 
         // --- Step 3b: De-interleave even part (positions 10..250) ---
         let even_symbols = deinterleave(&nav_bits[10..250]);
@@ -1197,7 +1459,10 @@ fn test_galileo_inav_viterbi_decode() {
         let even_tail = &even_decoded[114..120];
         let even_tail_ok = even_tail.iter().all(|&b| b == 0);
         if !even_tail_ok {
-            println!("  Page tow={}: EVEN tail bits not zero: {:?}", tow, even_tail);
+            println!(
+                "  Page tow={}: EVEN tail bits not zero: {:?}",
+                tow, even_tail
+            );
             all_ok = false;
         }
 
@@ -1319,16 +1584,18 @@ fn test_galileo_inav_viterbi_decode() {
 
         // Extract the transmitted CRC from the Viterbi-decoded odd half (bits 82..105).
         let mut decoded_crc: u32 = 0;
-        for i in 82..106 {
-            decoded_crc = (decoded_crc << 1) | (odd_decoded[i] as u32);
+        for bit in &odd_decoded[82..106] {
+            decoded_crc = (decoded_crc << 1) | (*bit as u32);
         }
 
         let crc_ok = recomputed_crc == decoded_crc;
         if crc_ok {
             pages_crc_ok += 1;
         } else {
-            println!("  Page tow={}: CRC MISMATCH recomputed=0x{:06X} decoded=0x{:06X}",
-                     tow, recomputed_crc, decoded_crc);
+            println!(
+                "  Page tow={}: CRC MISMATCH recomputed=0x{:06X} decoded=0x{:06X}",
+                tow, recomputed_crc, decoded_crc
+            );
             all_ok = false;
         }
 
@@ -1347,20 +1614,28 @@ fn test_galileo_inav_viterbi_decode() {
         } else {
             "FAIL"
         };
-        println!("  Page tow={:2}: word_type={:2}, tail_even={}, tail_odd={}, CRC={}, marker={} — {}",
-                 tow,
-                 word_type,
-                 if even_tail_ok { "OK" } else { "FAIL" },
-                 if odd_tail_ok { "OK" } else { "FAIL" },
-                 if crc_ok { "OK" } else { "FAIL" },
-                 if marker_ok { "OK" } else { "FAIL" },
-                 status);
+        println!(
+            "  Page tow={:2}: word_type={:2}, tail_even={}, tail_odd={}, CRC={}, marker={} — {}",
+            tow,
+            word_type,
+            if even_tail_ok { "OK" } else { "FAIL" },
+            if odd_tail_ok { "OK" } else { "FAIL" },
+            if crc_ok { "OK" } else { "FAIL" },
+            if marker_ok { "OK" } else { "FAIL" },
+            status
+        );
     }
 
     println!("\nSummary: {}/{} pages CRC OK", pages_crc_ok, pages_tested);
     assert!(utc_pages > 0, "UTC Word 6 must actually be transmitted");
-    assert!(all_ok, "Galileo I-NAV Viterbi decode/CRC verification failed for some pages");
-    assert_eq!(pages_crc_ok, pages_tested, "Not all pages passed CRC24Q verification");
+    assert!(
+        all_ok,
+        "Galileo I-NAV Viterbi decode/CRC verification failed for some pages"
+    );
+    assert_eq!(
+        pages_crc_ok, pages_tested,
+        "Not all pages passed CRC24Q verification"
+    );
 }
 
 fn bpsk_phase_residual(phase: f64) -> f64 {

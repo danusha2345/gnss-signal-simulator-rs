@@ -1,0 +1,26 @@
+{
+  "epochs": 2696,
+  "first_fix_s": 30.099999999998545,
+  "last_fix_s": 299.59999999999854,
+  "max_sv": 14,
+  "horizontal_median_m": 3.1434695659953125,
+  "horizontal_p95_m": 5.333854101820916,
+  "vertical_median_m": 14.268,
+  "max_gap_s": 0.10000000000582077,
+  "crc_correct": 558,
+  "crc_errors": 5,
+  "handover_windows": {
+    "90": {
+      "epochs": 99,
+      "max_error_m": 6.451553995388245
+    },
+    "180": {
+      "epochs": 99,
+      "max_error_m": 5.46081824382115
+    },
+    "270": {
+      "epochs": 99,
+      "max_error_m": 4.505529809491744
+    }
+  }
+}

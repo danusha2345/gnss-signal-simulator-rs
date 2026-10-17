@@ -15,28 +15,28 @@ use crate::types::GpsEphemeris;
 
 const PARITY_TABLE: [[u8; 16]; 6] = [
     [
-        0x00, 0x13, 0x25, 0x36, 0x0B, 0x18, 0x2E, 0x3D, 0x16, 0x05, 0x33, 0x20, 0x1D, 0x0E,
-        0x38, 0x2B,
+        0x00, 0x13, 0x25, 0x36, 0x0B, 0x18, 0x2E, 0x3D, 0x16, 0x05, 0x33, 0x20, 0x1D, 0x0E, 0x38,
+        0x2B,
     ],
     [
-        0x00, 0x2C, 0x19, 0x35, 0x32, 0x1E, 0x2B, 0x07, 0x26, 0x0A, 0x3F, 0x13, 0x14, 0x38,
-        0x0D, 0x21,
+        0x00, 0x2C, 0x19, 0x35, 0x32, 0x1E, 0x2B, 0x07, 0x26, 0x0A, 0x3F, 0x13, 0x14, 0x38, 0x0D,
+        0x21,
     ],
     [
-        0x00, 0x0E, 0x1F, 0x11, 0x3E, 0x30, 0x21, 0x2F, 0x3D, 0x33, 0x22, 0x2C, 0x03, 0x0D,
-        0x1C, 0x12,
+        0x00, 0x0E, 0x1F, 0x11, 0x3E, 0x30, 0x21, 0x2F, 0x3D, 0x33, 0x22, 0x2C, 0x03, 0x0D, 0x1C,
+        0x12,
     ],
     [
-        0x00, 0x38, 0x31, 0x09, 0x23, 0x1B, 0x12, 0x2A, 0x07, 0x3F, 0x36, 0x0E, 0x24, 0x1C,
-        0x15, 0x2D,
+        0x00, 0x38, 0x31, 0x09, 0x23, 0x1B, 0x12, 0x2A, 0x07, 0x3F, 0x36, 0x0E, 0x24, 0x1C, 0x15,
+        0x2D,
     ],
     [
-        0x00, 0x0D, 0x1A, 0x17, 0x37, 0x3A, 0x2D, 0x20, 0x2F, 0x22, 0x35, 0x38, 0x18, 0x15,
-        0x02, 0x0F,
+        0x00, 0x0D, 0x1A, 0x17, 0x37, 0x3A, 0x2D, 0x20, 0x2F, 0x22, 0x35, 0x38, 0x18, 0x15, 0x02,
+        0x0F,
     ],
     [
-        0x00, 0x1C, 0x3B, 0x27, 0x34, 0x28, 0x0F, 0x13, 0x2A, 0x36, 0x11, 0x0D, 0x1E, 0x02,
-        0x25, 0x39,
+        0x00, 0x1C, 0x3B, 0x27, 0x34, 0x28, 0x0F, 0x13, 0x2A, 0x36, 0x11, 0x0D, 0x1E, 0x02, 0x25,
+        0x39,
     ],
 ];
 
@@ -48,43 +48,38 @@ const PARITY_ADJUST: [u32; 4] = [0x00, 0xa5, 0xf6, 0x53];
 // ---------------------------------------------------------------------------
 
 const CRC24Q_TABLE: [u32; 256] = [
-    0x00000000, 0x01864CFB, 0x028AD50D, 0x030C99F6, 0x0493E6E1, 0x0515AA1A, 0x061933EC,
-    0x079F7F17, 0x08A18139, 0x0927CDC2, 0x0A2B5434, 0x0BAD18CF, 0x0C3267D8, 0x0DB42B23,
-    0x0EB8B2D5, 0x0F3EFE2E, 0x10C54E89, 0x11430272, 0x124F9B84, 0x13C9D77F, 0x1456A868,
-    0x15D0E493, 0x16DC7D65, 0x175A319E, 0x1864CFB0, 0x19E2834B, 0x1AEE1ABD, 0x1B685646,
-    0x1CF72951, 0x1D7165AA, 0x1E7DFC5C, 0x1FFBB0A7, 0x200CD1E9, 0x218A9D12, 0x228604E4,
-    0x2300481F, 0x249F3708, 0x25197BF3, 0x2615E205, 0x2793AEFE, 0x28AD50D0, 0x292B1C2B,
-    0x2A2785DD, 0x2BA1C926, 0x2C3EB631, 0x2DB8FACA, 0x2EB4633C, 0x2F322FC7, 0x30C99F60,
-    0x314FD39B, 0x32434A6D, 0x33C50696, 0x345A7981, 0x35DC357A, 0x36D0AC8C, 0x3756E077,
-    0x38681E59, 0x39EE52A2, 0x3AE2CB54, 0x3B6487AF, 0x3CFBF8B8, 0x3D7DB443, 0x3E712DB5,
-    0x3FF7614E, 0x4019A3D2, 0x419FEF29, 0x429376DF, 0x43153A24, 0x448A4533, 0x450C09C8,
-    0x4600903E, 0x4786DCC5, 0x48B822EB, 0x493E6E10, 0x4A32F7E6, 0x4BB4BB1D, 0x4C2BC40A,
-    0x4DAD88F1, 0x4EA11107, 0x4F275DFC, 0x50DCED5B, 0x515AA1A0, 0x52563856, 0x53D074AD,
-    0x544F0BBA, 0x55C94741, 0x56C5DEB7, 0x5743924C, 0x587D6C62, 0x59FB2099, 0x5AF7B96F,
-    0x5B71F594, 0x5CEE8A83, 0x5D68C678, 0x5E645F8E, 0x5FE21375, 0x6015723B, 0x61933EC0,
-    0x629FA736, 0x6319EBCD, 0x648694DA, 0x6500D821, 0x660C41D7, 0x678A0D2C, 0x68B4F302,
-    0x6932BFF9, 0x6A3E260F, 0x6BB86AF4, 0x6C2715E3, 0x6DA15918, 0x6EADC0EE, 0x6F2B8C15,
-    0x70D03CB2, 0x71567049, 0x725AE9BF, 0x73DCA544, 0x7443DA53, 0x75C596A8, 0x76C90F5E,
-    0x774F43A5, 0x7871BD8B, 0x79F7F170, 0x7AFB6886, 0x7B7D247D, 0x7CE25B6A, 0x7D641791,
-    0x7E688E67, 0x7FEEC29C, 0x803347A4, 0x81B50B5F, 0x82B992A9, 0x833FDE52, 0x84A0A145,
-    0x8526EDBE, 0x862A7448, 0x87AC38B3, 0x8892C69D, 0x89148A66, 0x8A181390, 0x8B9E5F6B,
-    0x8C01207C, 0x8D876C87, 0x8E8BF571, 0x8F0DB98A, 0x90F6092D, 0x917045D6, 0x927CDC20,
-    0x93FA90DB, 0x9465EFCC, 0x95E3A337, 0x96EF3AC1, 0x9769763A, 0x98578814, 0x99D1C4EF,
-    0x9ADD5D19, 0x9B5B11E2, 0x9CC46EF5, 0x9D42220E, 0x9E4EBBF8, 0x9FC8F703, 0xA03F964D,
-    0xA1B9DAB6, 0xA2B54340, 0xA3330FBB, 0xA4AC70AC, 0xA52A3C57, 0xA626A5A1, 0xA7A0E95A,
-    0xA89E1774, 0xA9185B8F, 0xAA14C279, 0xAB928E82, 0xAC0DF195, 0xAD8BBD6E, 0xAE872498,
-    0xAF016863, 0xB0FAD8C4, 0xB17C943F, 0xB2700DC9, 0xB3F64132, 0xB4693E25, 0xB5EF72DE,
-    0xB6E3EB28, 0xB765A7D3, 0xB85B59FD, 0xB9DD1506, 0xBAD18CF0, 0xBB57C00B, 0xBCC8BF1C,
-    0xBD4EF3E7, 0xBE426A11, 0xBFC426EA, 0xC02AE476, 0xC1ACA88D, 0xC2A0317B, 0xC3267D80,
-    0xC4B90297, 0xC53F4E6C, 0xC633D79A, 0xC7B59B61, 0xC88B654F, 0xC90D29B4, 0xCA01B042,
-    0xCB87FCB9, 0xCC1883AE, 0xCD9ECF55, 0xCE9256A3, 0xCF141A58, 0xD0EFAAFF, 0xD169E604,
-    0xD2657FF2, 0xD3E33309, 0xD47C4C1E, 0xD5FA00E5, 0xD6F69913, 0xD770D5E8, 0xD84E2BC6,
-    0xD9C8673D, 0xDAC4FECB, 0xDB42B230, 0xDCDDCD27, 0xDD5B81DC, 0xDE57182A, 0xDFD154D1,
-    0xE026359F, 0xE1A07964, 0xE2ACE092, 0xE32AAC69, 0xE4B5D37E, 0xE5339F85, 0xE63F0673,
-    0xE7B94A88, 0xE887B4A6, 0xE901F85D, 0xEA0D61AB, 0xEB8B2D50, 0xEC145247, 0xED921EBC,
-    0xEE9E874A, 0xEF18CBB1, 0xF0E37B16, 0xF16537ED, 0xF269AE1B, 0xF3EFE2E0, 0xF4709DF7,
-    0xF5F6D10C, 0xF6FA48FA, 0xF77C0401, 0xF842FA2F, 0xF9C4B6D4, 0xFAC82F22, 0xFB4E63D9,
-    0xFCD11CCE, 0xFD575035, 0xFE5BC9C3, 0xFFDD8538,
+    0x00000000, 0x01864CFB, 0x028AD50D, 0x030C99F6, 0x0493E6E1, 0x0515AA1A, 0x061933EC, 0x079F7F17,
+    0x08A18139, 0x0927CDC2, 0x0A2B5434, 0x0BAD18CF, 0x0C3267D8, 0x0DB42B23, 0x0EB8B2D5, 0x0F3EFE2E,
+    0x10C54E89, 0x11430272, 0x124F9B84, 0x13C9D77F, 0x1456A868, 0x15D0E493, 0x16DC7D65, 0x175A319E,
+    0x1864CFB0, 0x19E2834B, 0x1AEE1ABD, 0x1B685646, 0x1CF72951, 0x1D7165AA, 0x1E7DFC5C, 0x1FFBB0A7,
+    0x200CD1E9, 0x218A9D12, 0x228604E4, 0x2300481F, 0x249F3708, 0x25197BF3, 0x2615E205, 0x2793AEFE,
+    0x28AD50D0, 0x292B1C2B, 0x2A2785DD, 0x2BA1C926, 0x2C3EB631, 0x2DB8FACA, 0x2EB4633C, 0x2F322FC7,
+    0x30C99F60, 0x314FD39B, 0x32434A6D, 0x33C50696, 0x345A7981, 0x35DC357A, 0x36D0AC8C, 0x3756E077,
+    0x38681E59, 0x39EE52A2, 0x3AE2CB54, 0x3B6487AF, 0x3CFBF8B8, 0x3D7DB443, 0x3E712DB5, 0x3FF7614E,
+    0x4019A3D2, 0x419FEF29, 0x429376DF, 0x43153A24, 0x448A4533, 0x450C09C8, 0x4600903E, 0x4786DCC5,
+    0x48B822EB, 0x493E6E10, 0x4A32F7E6, 0x4BB4BB1D, 0x4C2BC40A, 0x4DAD88F1, 0x4EA11107, 0x4F275DFC,
+    0x50DCED5B, 0x515AA1A0, 0x52563856, 0x53D074AD, 0x544F0BBA, 0x55C94741, 0x56C5DEB7, 0x5743924C,
+    0x587D6C62, 0x59FB2099, 0x5AF7B96F, 0x5B71F594, 0x5CEE8A83, 0x5D68C678, 0x5E645F8E, 0x5FE21375,
+    0x6015723B, 0x61933EC0, 0x629FA736, 0x6319EBCD, 0x648694DA, 0x6500D821, 0x660C41D7, 0x678A0D2C,
+    0x68B4F302, 0x6932BFF9, 0x6A3E260F, 0x6BB86AF4, 0x6C2715E3, 0x6DA15918, 0x6EADC0EE, 0x6F2B8C15,
+    0x70D03CB2, 0x71567049, 0x725AE9BF, 0x73DCA544, 0x7443DA53, 0x75C596A8, 0x76C90F5E, 0x774F43A5,
+    0x7871BD8B, 0x79F7F170, 0x7AFB6886, 0x7B7D247D, 0x7CE25B6A, 0x7D641791, 0x7E688E67, 0x7FEEC29C,
+    0x803347A4, 0x81B50B5F, 0x82B992A9, 0x833FDE52, 0x84A0A145, 0x8526EDBE, 0x862A7448, 0x87AC38B3,
+    0x8892C69D, 0x89148A66, 0x8A181390, 0x8B9E5F6B, 0x8C01207C, 0x8D876C87, 0x8E8BF571, 0x8F0DB98A,
+    0x90F6092D, 0x917045D6, 0x927CDC20, 0x93FA90DB, 0x9465EFCC, 0x95E3A337, 0x96EF3AC1, 0x9769763A,
+    0x98578814, 0x99D1C4EF, 0x9ADD5D19, 0x9B5B11E2, 0x9CC46EF5, 0x9D42220E, 0x9E4EBBF8, 0x9FC8F703,
+    0xA03F964D, 0xA1B9DAB6, 0xA2B54340, 0xA3330FBB, 0xA4AC70AC, 0xA52A3C57, 0xA626A5A1, 0xA7A0E95A,
+    0xA89E1774, 0xA9185B8F, 0xAA14C279, 0xAB928E82, 0xAC0DF195, 0xAD8BBD6E, 0xAE872498, 0xAF016863,
+    0xB0FAD8C4, 0xB17C943F, 0xB2700DC9, 0xB3F64132, 0xB4693E25, 0xB5EF72DE, 0xB6E3EB28, 0xB765A7D3,
+    0xB85B59FD, 0xB9DD1506, 0xBAD18CF0, 0xBB57C00B, 0xBCC8BF1C, 0xBD4EF3E7, 0xBE426A11, 0xBFC426EA,
+    0xC02AE476, 0xC1ACA88D, 0xC2A0317B, 0xC3267D80, 0xC4B90297, 0xC53F4E6C, 0xC633D79A, 0xC7B59B61,
+    0xC88B654F, 0xC90D29B4, 0xCA01B042, 0xCB87FCB9, 0xCC1883AE, 0xCD9ECF55, 0xCE9256A3, 0xCF141A58,
+    0xD0EFAAFF, 0xD169E604, 0xD2657FF2, 0xD3E33309, 0xD47C4C1E, 0xD5FA00E5, 0xD6F69913, 0xD770D5E8,
+    0xD84E2BC6, 0xD9C8673D, 0xDAC4FECB, 0xDB42B230, 0xDCDDCD27, 0xDD5B81DC, 0xDE57182A, 0xDFD154D1,
+    0xE026359F, 0xE1A07964, 0xE2ACE092, 0xE32AAC69, 0xE4B5D37E, 0xE5339F85, 0xE63F0673, 0xE7B94A88,
+    0xE887B4A6, 0xE901F85D, 0xEA0D61AB, 0xEB8B2D50, 0xEC145247, 0xED921EBC, 0xEE9E874A, 0xEF18CBB1,
+    0xF0E37B16, 0xF16537ED, 0xF269AE1B, 0xF3EFE2E0, 0xF4709DF7, 0xF5F6D10C, 0xF6FA48FA, 0xF77C0401,
+    0xF842FA2F, 0xF9C4B6D4, 0xFAC82F22, 0xFB4E63D9, 0xFCD11CCE, 0xFD575035, 0xFE5BC9C3, 0xFFDD8538,
 ];
 
 // ===========================================================================
@@ -378,12 +373,7 @@ impl DecodedLnavEph {
                 self.omega_dot,
                 PI * 2.0_f64.powi(-43) / 2.0,
             ),
-            ParamDiff::new(
-                "idot",
-                eph.idot,
-                self.idot,
-                PI * 2.0_f64.powi(-43) / 2.0,
-            ),
+            ParamDiff::new("idot", eph.idot, self.idot, PI * 2.0_f64.powi(-43) / 2.0),
             ParamDiff::new("cuc", eph.cuc, self.cuc, 2.0_f64.powi(-29) / 2.0),
             ParamDiff::new("cus", eph.cus, self.cus, 2.0_f64.powi(-29) / 2.0),
             ParamDiff::new("crc", eph.crc, self.crc, 2.0_f64.powi(-5) / 2.0),
@@ -440,11 +430,14 @@ pub struct DecodedInavEph {
 /// This is the exact inverse of `compose_eph_words` in `inavbit.rs`.
 /// `ephdata` is `[u32; 20]`, each word has 32 bits. COMPOSE_BITS places values at bit positions.
 pub fn decode_inav_eph_words(ephdata: &[u32]) -> DecodedInavEph {
-    let mut d = DecodedInavEph::default();
+    let mut d = DecodedInavEph {
+        iod_nav: extract_bits(ephdata[0], 16, 10) as u16,
+        ..Default::default()
+    };
 
     // === Word 1 (ephdata[0..4]) ===
     // ephdata[0]: 0x04000000 | IODnav(16,10) | toe/60(2,14) | M0/PI MSB(0,2)
-    d.iod_nav = extract_bits(ephdata[0], 16, 10) as u16;
+
     let toe_div60 = extract_bits(ephdata[0], 2, 14);
     d.toe = (toe_div60 as i32) * 60;
     let m0_msb = extract_bits(ephdata[0], 0, 2);
@@ -599,13 +592,28 @@ impl DecodedInavEph {
     pub fn compare_with_original(&self, eph: &GpsEphemeris) -> Vec<ParamDiff> {
         vec![
             ParamDiff::new("M0", eph.M0, self.M0, PI * 2.0_f64.powi(-31) / 2.0),
-            ParamDiff::new("delta_n", eph.delta_n, self.delta_n, PI * 2.0_f64.powi(-43) / 2.0),
+            ParamDiff::new(
+                "delta_n",
+                eph.delta_n,
+                self.delta_n,
+                PI * 2.0_f64.powi(-43) / 2.0,
+            ),
             ParamDiff::new("ecc", eph.ecc, self.ecc, 2.0_f64.powi(-33) / 2.0),
             ParamDiff::new("sqrtA", eph.sqrtA, self.sqrtA, 2.0_f64.powi(-19) / 2.0),
-            ParamDiff::new("omega0", eph.omega0, self.omega0, PI * 2.0_f64.powi(-31) / 2.0),
+            ParamDiff::new(
+                "omega0",
+                eph.omega0,
+                self.omega0,
+                PI * 2.0_f64.powi(-31) / 2.0,
+            ),
             ParamDiff::new("i0", eph.i0, self.i0, PI * 2.0_f64.powi(-31) / 2.0),
             ParamDiff::new("w", eph.w, self.w, PI * 2.0_f64.powi(-31) / 2.0),
-            ParamDiff::new("omega_dot", eph.omega_dot, self.omega_dot, PI * 2.0_f64.powi(-43) / 2.0),
+            ParamDiff::new(
+                "omega_dot",
+                eph.omega_dot,
+                self.omega_dot,
+                PI * 2.0_f64.powi(-43) / 2.0,
+            ),
             ParamDiff::new("idot", eph.idot, self.idot, PI * 2.0_f64.powi(-43) / 2.0),
             ParamDiff::new("cuc", eph.cuc, self.cuc, 2.0_f64.powi(-29) / 2.0),
             ParamDiff::new("cus", eph.cus, self.cus, 2.0_f64.powi(-29) / 2.0),
@@ -616,8 +624,18 @@ impl DecodedInavEph {
             ParamDiff::new("af0", eph.af0, self.af0, 2.0_f64.powi(-34) / 2.0),
             ParamDiff::new("af1", eph.af1, self.af1, 2.0_f64.powi(-46) / 2.0),
             ParamDiff::new("af2", eph.af2, self.af2, 2.0_f64.powi(-59) / 2.0),
-            ParamDiff::new("bgd_e5a_e1", eph.tgd, self.bgd_e5a_e1, 2.0_f64.powi(-32) / 2.0),
-            ParamDiff::new("bgd_e5b_e1", eph.tgd2, self.bgd_e5b_e1, 2.0_f64.powi(-32) / 2.0),
+            ParamDiff::new(
+                "bgd_e5a_e1",
+                eph.tgd,
+                self.bgd_e5a_e1,
+                2.0_f64.powi(-32) / 2.0,
+            ),
+            ParamDiff::new(
+                "bgd_e5b_e1",
+                eph.tgd2,
+                self.bgd_e5b_e1,
+                2.0_f64.powi(-32) / 2.0,
+            ),
             ParamDiff::new("toe", eph.toe as f64, self.toe as f64, 30.0), // 60s resolution
             ParamDiff::new("toc", eph.toc as f64, self.toc as f64, 30.0), // 60s resolution
         ]
@@ -707,13 +725,20 @@ pub struct DecodedBcnavEph {
 /// - `eph1`: `[u32; 9]` — Ephemeris1 (delta_A, A_dot, delta_n, delta_n_dot, M0, ecc, w)
 /// - `eph2`: `[u32; 10]` — Ephemeris2 (omega0, i0, omega_dot, idot, Cis/Cic/Crs/Crc/Cus/Cuc)
 /// - `clock`: `[u32; 4]` — Clock parameters (toc, af0, af1, af2, IODC)
-pub fn decode_bcnav_ephemeris(eph1: &[u32; 9], eph2: &[u32; 10], clock: &[u32; 4]) -> DecodedBcnavEph {
-    let mut d = DecodedBcnavEph::default();
+pub fn decode_bcnav_ephemeris(
+    eph1: &[u32; 9],
+    eph2: &[u32; 10],
+    clock: &[u32; 4],
+) -> DecodedBcnavEph {
+    let mut d = DecodedBcnavEph {
+        iode: extract_bits(eph1[0], 16, 8) as u8,
+        ..Default::default()
+    };
 
     // === Ephemeris1 (eph1[0..9]) ===
 
     // eph1[0]: IODE(16,8) | toe/300(5,11) | sat_type(3,2) | delta_A MSB(0,3)
-    d.iode = extract_bits(eph1[0], 16, 8) as u8;
+
     let toe_div300 = extract_bits(eph1[0], 5, 11);
     d.toe = (toe_div300 as i32) * 300;
     d.sat_type = extract_bits(eph1[0], 3, 2) as u8;
@@ -886,20 +911,49 @@ impl DecodedBcnavEph {
     /// The `axis` field is compared via `delta_A + reference_axis` vs `eph.axis`.
     pub fn compare_with_original(&self, eph: &GpsEphemeris) -> Vec<ParamDiff> {
         // Reconstruct axis from delta_A for comparison
-        let ref_axis = if eph.flag == 3 { 27906100.0 } else { 42162200.0 };
+        let ref_axis = if eph.flag == 3 {
+            27906100.0
+        } else {
+            42162200.0
+        };
         let decoded_axis = self.delta_A + ref_axis;
 
         vec![
             ParamDiff::new("M0", eph.M0, self.M0, PI * 2.0_f64.powi(-32) / 2.0),
-            ParamDiff::new("delta_n", eph.delta_n, self.delta_n, PI * 2.0_f64.powi(-44) / 2.0),
-            ParamDiff::new("delta_n_dot", eph.delta_n_dot, self.delta_n_dot, PI * 2.0_f64.powi(-57) / 2.0),
+            ParamDiff::new(
+                "delta_n",
+                eph.delta_n,
+                self.delta_n,
+                PI * 2.0_f64.powi(-44) / 2.0,
+            ),
+            ParamDiff::new(
+                "delta_n_dot",
+                eph.delta_n_dot,
+                self.delta_n_dot,
+                PI * 2.0_f64.powi(-57) / 2.0,
+            ),
             ParamDiff::new("ecc", eph.ecc, self.ecc, 2.0_f64.powi(-34) / 2.0),
             ParamDiff::new("axis", eph.axis, decoded_axis, 2.0_f64.powi(-9) / 2.0),
-            ParamDiff::new("axis_dot", eph.axis_dot, self.axis_dot, 2.0_f64.powi(-21) / 2.0),
-            ParamDiff::new("omega0", eph.omega0, self.omega0, PI * 2.0_f64.powi(-32) / 2.0),
+            ParamDiff::new(
+                "axis_dot",
+                eph.axis_dot,
+                self.axis_dot,
+                2.0_f64.powi(-21) / 2.0,
+            ),
+            ParamDiff::new(
+                "omega0",
+                eph.omega0,
+                self.omega0,
+                PI * 2.0_f64.powi(-32) / 2.0,
+            ),
             ParamDiff::new("i0", eph.i0, self.i0, PI * 2.0_f64.powi(-32) / 2.0),
             ParamDiff::new("w", eph.w, self.w, PI * 2.0_f64.powi(-32) / 2.0),
-            ParamDiff::new("omega_dot", eph.omega_dot, self.omega_dot, PI * 2.0_f64.powi(-44) / 2.0),
+            ParamDiff::new(
+                "omega_dot",
+                eph.omega_dot,
+                self.omega_dot,
+                PI * 2.0_f64.powi(-44) / 2.0,
+            ),
             ParamDiff::new("idot", eph.idot, self.idot, PI * 2.0_f64.powi(-44) / 2.0),
             ParamDiff::new("cuc", eph.cuc, self.cuc, 2.0_f64.powi(-30) / 2.0),
             ParamDiff::new("cus", eph.cus, self.cus, 2.0_f64.powi(-30) / 2.0),
@@ -1115,7 +1169,8 @@ pub fn decode_cnav_ephemeris(
     let m0 = sign_magnitude_33(
         extract_bits(m10[5], 7, 1),
         (extract_bits(m10[5], 0, 7) << 25) | extract_bits(m10[6], 7, 25),
-    ) * 2.0_f64.powi(-32) * PI;
+    ) * 2.0_f64.powi(-32)
+        * PI;
     // ecc (33-bit, 2^-34)
     let ecc = sign_magnitude_33(
         extract_bits(m10[6], 6, 1),
@@ -1125,17 +1180,20 @@ pub fn decode_cnav_ephemeris(
     let w = sign_magnitude_33(
         extract_bits(m10[7], 5, 1),
         (extract_bits(m10[7], 0, 5) << 27) | extract_bits(m10[8], 5, 27),
-    ) * 2.0_f64.powi(-32) * PI;
+    ) * 2.0_f64.powi(-32)
+        * PI;
 
     // MT11
     let omega0 = sign_magnitude_33(
         extract_bits(m11[1], 2, 1),
         (extract_bits(m11[1], 0, 2) << 30) | extract_bits(m11[2], 2, 30),
-    ) * 2.0_f64.powi(-32) * PI;
+    ) * 2.0_f64.powi(-32)
+        * PI;
     let i0 = sign_magnitude_33(
         extract_bits(m11[2], 1, 1),
         (extract_bits(m11[2], 0, 1) << 31) | extract_bits(m11[3], 1, 31),
-    ) * 2.0_f64.powi(-32) * PI;
+    ) * 2.0_f64.powi(-32)
+        * PI;
     // omega_dot (17-bit, 2^-44 semicircles, offset OMEGA_DOT_REF)
     let od = (extract_bits(m11[3], 0, 1) << 16) | extract_bits(m11[4], 16, 16);
     let omega_dot = (rescale_int(sign_extend(od, 17), -44) + CNAV_OMEGA_DOT_REF) * PI;
@@ -1143,24 +1201,36 @@ pub fn decode_cnav_ephemeris(
     let idot = rescale_int(sign_extend(extract_bits(m11[4], 1, 15), 15), -44) * PI;
     // cis (16-bit, 2^-30)
     let cis = rescale_int(
-        sign_extend((extract_bits(m11[4], 0, 1) << 15) | extract_bits(m11[5], 17, 15), 16),
+        sign_extend(
+            (extract_bits(m11[4], 0, 1) << 15) | extract_bits(m11[5], 17, 15),
+            16,
+        ),
         -30,
     );
     // cic (16-bit, 2^-30)
     let cic = rescale_int(sign_extend(extract_bits(m11[5], 1, 16), 16), -30);
     // crs (24-bit, 2^-8)
     let crs = rescale_int(
-        sign_extend((extract_bits(m11[5], 0, 1) << 23) | extract_bits(m11[6], 9, 23), 24),
+        sign_extend(
+            (extract_bits(m11[5], 0, 1) << 23) | extract_bits(m11[6], 9, 23),
+            24,
+        ),
         -8,
     );
     // crc (24-bit, 2^-8)
     let crc = rescale_int(
-        sign_extend((extract_bits(m11[6], 0, 9) << 15) | extract_bits(m11[7], 17, 15), 24),
+        sign_extend(
+            (extract_bits(m11[6], 0, 9) << 15) | extract_bits(m11[7], 17, 15),
+            24,
+        ),
         -8,
     );
     // cus (21-bit, 2^-30)
     let cus = rescale_int(
-        sign_extend((extract_bits(m11[7], 0, 17) << 4) | extract_bits(m11[8], 28, 4), 21),
+        sign_extend(
+            (extract_bits(m11[7], 0, 17) << 4) | extract_bits(m11[8], 28, 4),
+            21,
+        ),
         -30,
     );
     // cuc (21-bit, 2^-30)
@@ -1169,11 +1239,17 @@ pub fn decode_cnav_ephemeris(
     // Clock (MT30)
     let toc = (extract_bits(clock_data[1], 13, 11) * 300) as i32;
     let af0 = rescale_int(
-        sign_extend((extract_bits(clock_data[1], 0, 13) << 13) | extract_bits(clock_data[2], 19, 13), 26),
+        sign_extend(
+            (extract_bits(clock_data[1], 0, 13) << 13) | extract_bits(clock_data[2], 19, 13),
+            26,
+        ),
         -35,
     );
     let af1 = rescale_int(
-        sign_extend((extract_bits(clock_data[2], 0, 19) << 1) | extract_bits(clock_data[3], 31, 1), 20),
+        sign_extend(
+            (extract_bits(clock_data[2], 0, 19) << 1) | extract_bits(clock_data[3], 31, 1),
+            20,
+        ),
         -48,
     );
     let af2 = rescale_int(sign_extend(extract_bits(clock_data[3], 21, 10), 10), -60);
@@ -1182,9 +1258,31 @@ pub fn decode_cnav_ephemeris(
     let tgd = rescale_int(sign_extend(extract_bits(delay_data[0], 8, 13), 13), -35);
 
     DecodedCnavEph {
-        svid, week, toe, toc, axis, axis_dot, delta_n, delta_n_dot,
-        M0: m0, ecc, w, omega0, i0, omega_dot, idot,
-        cis, cic, crs, crc, cus, cuc, af0, af1, af2, tgd,
+        svid,
+        week,
+        toe,
+        toc,
+        axis,
+        axis_dot,
+        delta_n,
+        delta_n_dot,
+        M0: m0,
+        ecc,
+        w,
+        omega0,
+        i0,
+        omega_dot,
+        idot,
+        cis,
+        cic,
+        crs,
+        crc,
+        cus,
+        cuc,
+        af0,
+        af1,
+        af2,
+        tgd,
     }
 }
 
@@ -1197,7 +1295,12 @@ impl DecodedCnavEph {
             ParamDiff::new("axis", eph.axis, self.axis, two(-9)),
             ParamDiff::new("axis_dot", eph.axis_dot, self.axis_dot, two(-21)),
             ParamDiff::new("delta_n", eph.delta_n, self.delta_n, PI * two(-44)),
-            ParamDiff::new("delta_n_dot", eph.delta_n_dot, self.delta_n_dot, PI * two(-57)),
+            ParamDiff::new(
+                "delta_n_dot",
+                eph.delta_n_dot,
+                self.delta_n_dot,
+                PI * two(-57),
+            ),
             ParamDiff::new("omega0", eph.omega0, self.omega0, PI * two(-32)),
             ParamDiff::new("i0", eph.i0, self.i0, PI * two(-32)),
             ParamDiff::new("w", eph.w, self.w, PI * two(-32)),
@@ -1225,9 +1328,11 @@ impl DecodedCnavEph {
 /// angle/ecc fields use the same sign-bit + 32-bit packing as L2C (via `sign_magnitude_33`),
 /// ΔA references A_REF = 26,559,710 m, and Ω̇ is offset by OMEGA_DOT_REF = -2.6e-9 sc/s.
 pub fn decode_cnav2_ephemeris(sf2: &[u32; 18]) -> DecodedCnavEph {
-    let mut d = DecodedCnavEph::default();
+    let mut d = DecodedCnavEph {
+        toe: (extract_bits(sf2[1], 15, 11) as i32) * 300,
+        ..Default::default()
+    };
 
-    d.toe = (extract_bits(sf2[1], 15, 11) as i32) * 300;
     d.toc = d.toe; // CNAV-2 uses a single reference time (t_oc = t_oe)
 
     // delta_A (26-bit, 2^-9): axis = A_REF + dA
@@ -1302,8 +1407,11 @@ mod cnav_roundtrip_tests {
     use crate::types::GpsEphemeris;
 
     fn sample_eph() -> GpsEphemeris {
-        let mut e = GpsEphemeris::default();
-        e.svid = 7;
+        let mut e = GpsEphemeris {
+            svid: 7,
+            ..Default::default()
+        };
+
         e.valid = 1;
         e.week = 2369;
         e.health = 0;
@@ -1349,9 +1457,18 @@ mod cnav_roundtrip_tests {
             .compare_with_original(&eph)
             .into_iter()
             .filter(|d| !d.ok)
-            .map(|d| format!("{}: orig={:.6e} dec={:.6e} (>{:.1e})", d.name, d.original, d.decoded, d.tolerance))
+            .map(|d| {
+                format!(
+                    "{}: orig={:.6e} dec={:.6e} (>{:.1e})",
+                    d.name, d.original, d.decoded, d.tolerance
+                )
+            })
             .collect();
-        assert!(bad.is_empty(), "CNAV round-trip mismatches:\n  {}", bad.join("\n  "));
+        assert!(
+            bad.is_empty(),
+            "CNAV round-trip mismatches:\n  {}",
+            bad.join("\n  ")
+        );
     }
 
     /// Round-trips the GPS L1C CNAV-2 encoder: GpsEphemeris -> CNav2Bit subframe 2 -> decode ->
@@ -1369,9 +1486,18 @@ mod cnav_roundtrip_tests {
             .compare_with_original(&eph)
             .into_iter()
             .filter(|d| !d.ok)
-            .map(|d| format!("{}: orig={:.6e} dec={:.6e} (>{:.1e})", d.name, d.original, d.decoded, d.tolerance))
+            .map(|d| {
+                format!(
+                    "{}: orig={:.6e} dec={:.6e} (>{:.1e})",
+                    d.name, d.original, d.decoded, d.tolerance
+                )
+            })
             .collect();
-        assert!(bad.is_empty(), "CNAV-2 round-trip mismatches:\n  {}", bad.join("\n  "));
+        assert!(
+            bad.is_empty(),
+            "CNAV-2 round-trip mismatches:\n  {}",
+            bad.join("\n  ")
+        );
     }
 }
 
@@ -1444,7 +1570,22 @@ pub fn decode_gnav_eph(strings: &[[u32; 3]; 4]) -> DecodedGnavEph {
     let dtn = glo_sign_mag_decode(glo_get_field(s4, 54, 58), 5, -30);
     let tk = glo_get_field(s1, 65, 76);
     let tb_seconds = glo_get_field(s2, 70, 76) * 900;
-    DecodedGnavEph { x, y, z, vx, vy, vz, ax, ay, az, gamma, tn, dtn, tk, tb_seconds }
+    DecodedGnavEph {
+        x,
+        y,
+        z,
+        vx,
+        vy,
+        vz,
+        ax,
+        ay,
+        az,
+        gamma,
+        tn,
+        dtn,
+        tk,
+        tb_seconds,
+    }
 }
 
 impl DecodedGnavEph {
@@ -1509,9 +1650,18 @@ mod gnav_roundtrip_tests {
             .compare_with_original(&eph)
             .into_iter()
             .filter(|d| !d.ok)
-            .map(|d| format!("{}: orig={:.6e} dec={:.6e} (>{:.1e})", d.name, d.original, d.decoded, d.tolerance))
+            .map(|d| {
+                format!(
+                    "{}: orig={:.6e} dec={:.6e} (>{:.1e})",
+                    d.name, d.original, d.decoded, d.tolerance
+                )
+            })
             .collect();
-        assert!(bad.is_empty(), "GLONASS round-trip mismatches:\n  {}", bad.join("\n  "));
+        assert!(
+            bad.is_empty(),
+            "GLONASS round-trip mismatches:\n  {}",
+            bad.join("\n  ")
+        );
     }
 }
 
@@ -1541,8 +1691,11 @@ mod fnav_roundtrip_tests {
     /// bit packing AND the convolutional-encoder-adjacent scales after the C1 G1/G2 fix.
     #[test]
     fn fnav_eph_round_trips_via_decoder() {
-        let mut eph = GpsEphemeris::default();
-        eph.valid = 1;
+        let mut eph = GpsEphemeris {
+            valid: 1,
+            ..Default::default()
+        };
+
         eph.iodc = 42;
         eph.sqrtA = 5440.6;
         eph.ecc = 1.3e-4;
@@ -1579,7 +1732,11 @@ mod fnav_roundtrip_tests {
             .filter(|d| !d.ok)
             .map(|d| format!("{}: orig={:.6e} dec={:.6e}", d.name, d.original, d.decoded))
             .collect();
-        assert!(bad.is_empty(), "F/NAV round-trip mismatches:\n  {}", bad.join("\n  "));
+        assert!(
+            bad.is_empty(),
+            "F/NAV round-trip mismatches:\n  {}",
+            bad.join("\n  ")
+        );
     }
 }
 
@@ -1715,8 +1872,11 @@ mod d1d2_roundtrip_tests {
     /// content-level check of d1d2navbit — it caught the unscale_double inverted-exponent bug.
     #[test]
     fn d1_eph_round_trips_via_decoder() {
-        let mut eph = GpsEphemeris::default();
-        eph.valid = 1;
+        let mut eph = GpsEphemeris {
+            valid: 1,
+            ..Default::default()
+        };
+
         eph.week = 800;
         eph.iodc = 3;
         eph.ura = 2;
@@ -1755,6 +1915,10 @@ mod d1d2_roundtrip_tests {
             .filter(|d| !d.ok)
             .map(|d| format!("{}: orig={:.6e} dec={:.6e}", d.name, d.original, d.decoded))
             .collect();
-        assert!(bad.is_empty(), "D1 round-trip mismatches:\n  {}", bad.join("\n  "));
+        assert!(
+            bad.is_empty(),
+            "D1 round-trip mismatches:\n  {}",
+            bad.join("\n  ")
+        );
     }
 }

@@ -107,18 +107,18 @@ impl D1D2NavBit {
         nav_bits: &mut [i32],
     ) -> i32 {
         let mut stream = [0u32; 10];
-        let d1_data: bool;
+
         let sow: i32;
         let subframe: i32;
         let page_ext: i32;
 
-        if (1..=5).contains(&svid) || (59..=63).contains(&svid) {
-            d1_data = false;
+        let d1_data: bool = if (1..=5).contains(&svid) || (59..=63).contains(&svid) {
+            false
         } else if (6..=58).contains(&svid) {
-            d1_data = true;
+            true
         } else {
             return 1;
-        }
+        };
 
         // First determine the current TOW and subframe number
         let _week = start_time.Week + start_time.MilliSeconds / 604800000;

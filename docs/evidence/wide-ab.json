@@ -1,0 +1,38 @@
+[
+  {
+    "rep": 0,
+    "variant": "before",
+    "wall_s": 6.115644503006479,
+    "sha256": "b73a1c090e05da468ed70293342f826e967ed64ccb1daf53e30a1e9453de813f"
+  },
+  {
+    "rep": 0,
+    "variant": "after",
+    "wall_s": 6.33951297798194,
+    "sha256": "b73a1c090e05da468ed70293342f826e967ed64ccb1daf53e30a1e9453de813f"
+  },
+  {
+    "rep": 1,
+    "variant": "after",
+    "wall_s": 6.1422805710171815,
+    "sha256": "b73a1c090e05da468ed70293342f826e967ed64ccb1daf53e30a1e9453de813f"
+  },
+  {
+    "rep": 1,
+    "variant": "before",
+    "wall_s": 6.128679482993903,
+    "sha256": "b73a1c090e05da468ed70293342f826e967ed64ccb1daf53e30a1e9453de813f"
+  },
+  {
+    "rep": 2,
+    "variant": "before",
+    "wall_s": 6.2508374270109925,
+    "sha256": "b73a1c090e05da468ed70293342f826e967ed64ccb1daf53e30a1e9453de813f"
+  },
+  {
+    "rep": 2,
+    "variant": "after",
+    "wall_s": 6.762045117007801,
+    "sha256": "b73a1c090e05da468ed70293342f826e967ed64ccb1daf53e30a1e9453de813f"
+  }
+]

@@ -459,7 +459,7 @@ impl INavBit {
 
         let mut word: i32;
         let mut bit_count: i32 = 28; // C++ starts at 28, not 0!
-        // 128bit data
+                                     // 128bit data
         let mut encode_data: [u32; 7] = [0; 7]; // 196bit to be encoded by CRC
 
         let mut encode_word: u32;
@@ -713,7 +713,6 @@ impl INavBit {
             self.gal_eph_data[i][17] &= 0x0001ffff;
             self.gal_eph_data[i][17] |= ionowords[1];
         }
-
     }
 
     pub fn set_utc(&mut self, utc_param: &UtcParam) {
@@ -1099,7 +1098,11 @@ mod tests {
         // t0G rounds to the nearest hour: 91800 s (= 25.5 h) -> 26 units.
         let mut out2 = [0u32; 4];
         INavBit::compose_ggto_words(week_gps, 91800, &mut out2);
-        assert_eq!(read_bits_msb(&out2, 115, 8), 26, "t0G rounds to nearest hour");
+        assert_eq!(
+            read_bits_msb(&out2, 115, 8),
+            26,
+            "t0G rounds to nearest hour"
+        );
     }
 
     #[test]
@@ -1131,7 +1134,10 @@ mod tests {
 
         // Explicit anti-regression: the broken HEAD packing (wn<<4) must NOT be produced.
         let broken_dv2 = ((wn as u32) << 4) | (((tow >> 16) as u32) & 0xF);
-        assert_ne!(dv2, broken_dv2, "must not regress to the +7-bit spare layout");
+        assert_ne!(
+            dv2, broken_dv2,
+            "must not regress to the +7-bit spare layout"
+        );
     }
 
     #[test]
@@ -1171,11 +1177,11 @@ mod tests {
             svid: 1,
             valid: 1,
             iode: 0,
-            iodc: 95,  // IODnav
-            ura: 3,    // SISA index
+            iodc: 95, // IODnav
+            ura: 3,   // SISA index
             health: 0,
             flag: 0,
-            toe: 345600,  // Must be divisible by 60 for I-NAV
+            toe: 345600, // Must be divisible by 60 for I-NAV
             toc: 345600,
             top: 0,
             week: 1241, // Galileo week
@@ -1183,7 +1189,7 @@ mod tests {
             delta_n: 3.187_632_149e-9,
             delta_n_dot: 0.0,
             ecc: 0.000_233_068_223,
-            sqrtA: 5440.602_539_062,
+            sqrtA: 5_440.602_539_062,
             axis_dot: 0.0,
             omega0: -0.956_297_181_5,
             i0: 0.977_388_105_1,
@@ -1202,7 +1208,7 @@ mod tests {
             tgd: -3.259_629_011e-9,  // BGD E5a/E1
             tgd2: -3.492_459_655e-9, // BGD E5b/E1
             tgd_ext: [0.0; 5],
-            axis: 5440.602_539_062_f64.powi(2),
+            axis: 5_440.602_539_062_f64.powi(2),
             n: 0.0,
             root_ecc: (1.0 - 0.000_233_068_223_f64.powi(2)).sqrt(),
             omega_t: -0.956_297_181_5,

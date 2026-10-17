@@ -24,9 +24,7 @@ impl IonoKlobuchar8 {
     }
 
     pub fn with_param(param: &IonoParam) -> Self {
-        IonoKlobuchar8 {
-            iono_param: *param,
-        }
+        IonoKlobuchar8 { iono_param: *param }
     }
 
     pub fn set_iono_param(&mut self, param: &IonoParam) {

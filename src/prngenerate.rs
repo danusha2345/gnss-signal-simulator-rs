@@ -907,7 +907,8 @@ mod l3oc_tests {
     #[test]
     fn glonass_l3oc_matches_icd_kasami_tables() {
         // Pack 32 chips MSB-first (chip 0 = bit 31), left-most chip first.
-        let pack = |c: &[i32], s: usize| (0..32).fold(0u32, |v, i| (v << 1) | (c[s + i] as u32 & 1));
+        let pack =
+            |c: &[i32], s: usize| (0..32).fold(0u32, |v, i| (v << 1) | (c[s + i] as u32 & 1));
         // (j, pilot, first 32, last 32)
         let cases: [(i32, bool, u32, u32); 6] = [
             (0, false, 0x1CB31510, 0x213B0657),
@@ -921,7 +922,11 @@ mod l3oc_tests {
             let c = PrnGenerate::get_l3oc_code(j, pilot);
             assert_eq!(c.len(), 10230, "L3OC code length");
             assert_eq!(pack(&c, 0), first, "j={j} pilot={pilot}: first 32 chips");
-            assert_eq!(pack(&c, 10230 - 32), last, "j={j} pilot={pilot}: last 32 chips");
+            assert_eq!(
+                pack(&c, 10230 - 32),
+                last,
+                "j={j} pilot={pilot}: last 32 chips"
+            );
         }
     }
 }

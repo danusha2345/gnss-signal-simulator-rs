@@ -16,7 +16,6 @@ use std::io::Write;
 
 const CHIP_RATE: f64 = 1_023_000.0; // GPS L1CA chips/second
 const CODE_LEN: usize = 1023;
-const FREQ_L1: f64 = 1_575_420_000.0; // Hz
 
 pub struct GpsPilotConfig {
     pub rinex_path: String,
@@ -101,8 +100,11 @@ pub fn generate(config: &GpsPilotConfig) -> Result<GenerationResult, Box<dyn std
             None => continue,
         };
 
-        let mut sat_param = SatelliteParam::default();
-        sat_param.system = GnssSystem::GpsSystem;
+        let mut sat_param = SatelliteParam {
+            system: GnssSystem::GpsSystem,
+            ..Default::default()
+        };
+
         get_satellite_param(
             &receiver_ecef,
             &receiver_lla,
@@ -118,11 +120,8 @@ pub fn generate(config: &GpsPilotConfig) -> Result<GenerationResult, Box<dyn std
         }
 
         // Generate PRN code
-        let prn_gen = PrnGenerate::new(
-            GnssSystem::GpsSystem,
-            SIGNAL_INDEX_L1CA as i32,
-            svid as i32,
-        );
+        let prn_gen =
+            PrnGenerate::new(GnssSystem::GpsSystem, SIGNAL_INDEX_L1CA as i32, svid as i32);
         let raw_code = match prn_gen.get_data_prn() {
             Some(c) => c,
             None => continue,
@@ -144,8 +143,14 @@ pub fn generate(config: &GpsPilotConfig) -> Result<GenerationResult, Box<dyn std
             nav_data.utc_param.as_ref(),
         ) {
             let iono_param = IonoParam {
-                a0: alpha[0], a1: alpha[1], a2: alpha[2], a3: alpha[3],
-                b0: beta[0], b1: beta[1], b2: beta[2], b3: beta[3],
+                a0: alpha[0],
+                a1: alpha[1],
+                a2: alpha[2],
+                a3: alpha[3],
+                b0: beta[0],
+                b1: beta[1],
+                b2: beta[2],
+                b3: beta[3],
                 flag: 1,
             };
             lnav.set_iono_utc(&iono_param, utc);
@@ -172,10 +177,7 @@ pub fn generate(config: &GpsPilotConfig) -> Result<GenerationResult, Box<dyn std
         });
     }
 
-    println!(
-        "[gps_pilot] {} visible GPS satellites",
-        channels.len()
-    );
+    println!("[gps_pilot] {} visible GPS satellites", channels.len());
     for info in &sat_infos {
         println!(
             "  PRN {:02}: el={:.1}° az={:.1}° doppler={:.0} Hz",
@@ -199,10 +201,8 @@ pub fn generate(config: &GpsPilotConfig) -> Result<GenerationResult, Box<dyn std
         config.duration_s, samples_per_ms, agc_gain
     );
 
-    let mut file = std::io::BufWriter::with_capacity(
-        1 << 20,
-        std::fs::File::create(&config.output_path)?,
-    );
+    let mut file =
+        std::io::BufWriter::with_capacity(1 << 20, std::fs::File::create(&config.output_path)?);
 
     let chunk_ms = 1000; // 1 second chunks
 
@@ -227,8 +227,11 @@ pub fn generate(config: &GpsPilotConfig) -> Result<GenerationResult, Box<dyn std
                         SubMilliSeconds: 0.0,
                     };
 
-                    let mut sat_param = SatelliteParam::default();
-                    sat_param.system = GnssSystem::GpsSystem;
+                    let mut sat_param = SatelliteParam {
+                        system: GnssSystem::GpsSystem,
+                        ..Default::default()
+                    };
+
                     let receiver_ecef_local = lla_to_ecef(&config.receiver_lla);
                     let receiver_lla_local = ecef_to_lla(&receiver_ecef_local);
                     get_satellite_param(
@@ -258,8 +261,7 @@ pub fn generate(config: &GpsPilotConfig) -> Result<GenerationResult, Box<dyn std
                         let tx_time = rx_time - ch.travel_time_s;
                         let chip_count = tx_time * CHIP_RATE;
                         let chip_index =
-                            ((chip_count % CODE_LEN as f64) + CODE_LEN as f64) as usize
-                                % CODE_LEN;
+                            ((chip_count % CODE_LEN as f64) + CODE_LEN as f64) as usize % CODE_LEN;
                         let prn = ch.prn_code[chip_index];
 
                         // Nav bit: aligned to transmit time (code epoch), not receiver time
@@ -272,13 +274,19 @@ pub fn generate(config: &GpsPilotConfig) -> Result<GenerationResult, Box<dyn std
                                 SubMilliSeconds: 0.0,
                             };
                             ch.lnav.get_frame_data(
-                                tx_time_gnss, ch.svid as i32, 0, &mut ch.nav_bits,
+                                tx_time_gnss,
+                                ch.svid as i32,
+                                0,
+                                &mut ch.nav_bits,
                             );
                             ch.current_frame = frame_number;
                         }
                         let bit_index = ((tx_ms_sample % 6000) / 20) as usize;
-                        let nav_bit: f64 =
-                            if ch.nav_bits[bit_index.min(299)] != 0 { -1.0 } else { 1.0 };
+                        let nav_bit: f64 = if ch.nav_bits[bit_index.min(299)] != 0 {
+                            -1.0
+                        } else {
+                            1.0
+                        };
 
                         // Carrier phase: continuous accumulation
                         let angle = ch.carrier_phase * std::f64::consts::TAU;
@@ -324,7 +332,10 @@ pub fn generate(config: &GpsPilotConfig) -> Result<GenerationResult, Box<dyn std
     }
 
     file.flush()?;
-    println!("\r[gps_pilot] Done! {} samples written to {}", total_samples, config.output_path);
+    println!(
+        "\r[gps_pilot] Done! {} samples written to {}",
+        total_samples, config.output_path
+    );
 
     Ok(GenerationResult {
         satellites: sat_infos,

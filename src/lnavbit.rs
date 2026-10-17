@@ -75,7 +75,7 @@ const PAGE_ID: [[i32; 25]; 2] = [
 #[derive(Clone)]
 pub struct LNavBit {
     pub gps_stream123: [[[u32; 8]; 3]; 32], // 32 satellites, 3 subframes, 8 words each
-    gps_stream45: [[[u32; 8]; 25]; 2],  // 2 subframes (4&5), 25 pages, 8 words each
+    gps_stream45: [[[u32; 8]; 25]; 2],      // 2 subframes (4&5), 25 pages, 8 words each
 }
 
 impl Default for LNavBit {
@@ -278,10 +278,10 @@ impl LNavBit {
         // Per GPS ICD-200, Word 3 bits 14-23 are WN (inserted by get_frame_data)
 
         // Word 3 (stream[0][0]): bits 0-13 only (WN in bits 14-23 added elsewhere)
-        stream[0][0] = Self::compose_bits((ephemeris.flag & 3) as i32, 12, 2);    // L2 code flag
-        stream[0][0] |= Self::compose_bits((ephemeris.ura & 0xf) as i32, 8, 4);   // URA index
-        stream[0][0] |= Self::compose_bits(ephemeris.health as i32, 2, 6);         // SV health
-        stream[0][0] |= Self::compose_bits((ephemeris.iodc >> 8) as i32, 0, 2);    // IODC MSB (2 bits)
+        stream[0][0] = Self::compose_bits((ephemeris.flag & 3) as i32, 12, 2); // L2 code flag
+        stream[0][0] |= Self::compose_bits((ephemeris.ura & 0xf) as i32, 8, 4); // URA index
+        stream[0][0] |= Self::compose_bits(ephemeris.health as i32, 2, 6); // SV health
+        stream[0][0] |= Self::compose_bits((ephemeris.iodc >> 8) as i32, 0, 2); // IODC MSB (2 bits)
 
         // Word 4 (stream[0][1]): L2P flag + reserved
         stream[0][1] = Self::compose_bits(((ephemeris.flag >> 2) & 1) as i32, 23, 1);
@@ -593,7 +593,7 @@ mod tests {
             delta_n: 4.908_419_825e-9,
             delta_n_dot: 0.0,
             ecc: 0.012_190_744_280,
-            sqrtA: 5153.648_437_5,
+            sqrtA: 5_153.648_437_5,
             axis_dot: 0.0,
             omega0: -2.163_827_543_2,
             i0: 0.952_716_246_8,
@@ -612,7 +612,7 @@ mod tests {
             tgd: -1.117_587_089e-8,
             tgd2: 0.0,
             tgd_ext: [0.0; 5],
-            axis: 5153.648_437_5 * 5153.648_437_5,
+            axis: 5_153.648_437_5 * 5_153.648_437_5,
             n: 0.0,
             root_ecc: (1.0 - 0.012_190_744_280_f64.powi(2)).sqrt(),
             omega_t: -2.163_827_543_2,
@@ -680,8 +680,11 @@ mod tests {
         let decoded = decode_lnav_stream123(stream);
 
         // Build GpsEphemeris from decoded values
-        let mut dec_eph = GpsEphemeris::default();
-        dec_eph.valid = 1;
+        let mut dec_eph = GpsEphemeris {
+            valid: 1,
+            ..Default::default()
+        };
+
         dec_eph.svid = 1;
         dec_eph.M0 = decoded.M0;
         dec_eph.delta_n = decoded.delta_n;
@@ -747,10 +750,10 @@ mod tests {
 
         // Test several TOW values
         let test_cases = [
-            (0, 1),             // TOW=0 ms -> tow_count=0, next=1
-            (6000, 2),          // TOW=6000 ms -> tow_count=1, next=2
-            (30000, 6),         // TOW=30000 ms -> tow_count=5, next=6
-            (600000, 101),      // TOW=600s -> tow_count=100, next=101
+            (0, 1),        // TOW=0 ms -> tow_count=0, next=1
+            (6000, 2),     // TOW=6000 ms -> tow_count=1, next=2
+            (30000, 6),    // TOW=30000 ms -> tow_count=5, next=6
+            (600000, 101), // TOW=600s -> tow_count=100, next=101
         ];
 
         for (tow_ms, expected_next_tow) in &test_cases {

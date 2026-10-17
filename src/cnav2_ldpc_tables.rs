@@ -261,7 +261,7 @@ pub(crate) const BCH_TOI_TABLE: [u64; 256] = [
     0x7fae98fc9395e_u64,
 ];
 
-pub(crate) const L1C_MATRIX_GEN2: [u32; 600 * 19] = [
+pub(crate) static L1C_MATRIX_GEN2: [u32; 600 * 19] = [
     0xab72daee_u32,
     0x453dfe1c_u32,
     0x7ed15379_u32,

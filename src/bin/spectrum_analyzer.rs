@@ -136,7 +136,7 @@ fn read_iq_data(
                     break;
                 }
 
-                for chunk in buffer[..bytes_read].chunks_exact(2) {
+                for chunk in buffer[..bytes_read].as_chunks::<2>().0 {
                     if samples.len() >= max_samples {
                         break;
                     }

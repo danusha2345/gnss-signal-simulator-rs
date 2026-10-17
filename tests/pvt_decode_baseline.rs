@@ -34,7 +34,7 @@ fn sample_gps_eph(svid: u8) -> GpsEphemeris {
         delta_n: 4.5e-9,
         delta_n_dot: 0.0,
         ecc: 0.01,
-        sqrtA: 5153.795_890_81,
+        sqrtA: 5_153.795_890_81,
         axis_dot: 0.0,
         omega0: 1.0,
         i0: 0.94,

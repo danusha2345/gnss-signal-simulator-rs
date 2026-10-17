@@ -361,18 +361,30 @@ mod tests {
         let cos_lut: &[f32; N] = cos_lut.as_slice().try_into().unwrap();
 
         // 16 distinct angles spread across the circle (not all mapping to index 0).
-        let angles: Vec<f32> = (0..16).map(|i| two_pi * (i as f32) / 16.0 + 0.013).collect();
+        let angles: Vec<f32> = (0..16)
+            .map(|i| two_pi * (i as f32) / 16.0 + 0.013)
+            .collect();
         let mut sin_out = [0.0f32; 16];
         let mut cos_out = [0.0f32; 16];
         unsafe {
             Avx512Accelerator::fast_sin_cos_avx512(
-                &angles, sin_lut, cos_lut, &mut sin_out, &mut cos_out,
+                &angles,
+                sin_lut,
+                cos_lut,
+                &mut sin_out,
+                &mut cos_out,
             );
         }
 
         // If the UB struck, every output would equal lut[0] = (0.0, 1.0); assert real variation.
-        let distinct = sin_out.iter().filter(|&&v| (v - sin_out[0]).abs() > 1e-3).count();
-        assert!(distinct > 0, "all sin outputs identical — index store was optimized away (UB)");
+        let distinct = sin_out
+            .iter()
+            .filter(|&&v| (v - sin_out[0]).abs() > 1e-3)
+            .count();
+        assert!(
+            distinct > 0,
+            "all sin outputs identical — index store was optimized away (UB)"
+        );
 
         for i in 0..16 {
             let expected_sin = angles[i].sin();
