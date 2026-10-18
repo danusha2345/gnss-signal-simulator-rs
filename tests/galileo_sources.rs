@@ -91,7 +91,8 @@ fn epoch_and_iod_selection_crosses_gps_week() {
         MilliSeconds: 604750000,
         SubMilliSeconds: 0.0,
     };
-    let after = before.add_milliseconds(100000.0);
+    // 2370:70 — toe=60 новой записи уже наступил (будущий toe не транслируется).
+    let after = before.add_milliseconds(120000.0);
     for records in [[old, new], [new, old]] {
         assert_eq!(
             galileo::select_ephemeris(&records, before, 1, SIGNAL_INDEX_E1)
@@ -104,6 +105,14 @@ fn epoch_and_iod_selection_crosses_gps_week() {
                 .unwrap()
                 .iodc,
             2
+        );
+        // До наступления toe новой записи остаётся старая, даже если новая ближе.
+        let just_before = before.add_milliseconds(100000.0);
+        assert_eq!(
+            galileo::select_ephemeris(&records, just_before, 1, SIGNAL_INDEX_E1)
+                .unwrap()
+                .iodc,
+            1
         );
     }
 }

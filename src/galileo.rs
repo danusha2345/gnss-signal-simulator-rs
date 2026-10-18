@@ -22,9 +22,12 @@ pub fn select_ephemeris(
             if dt.abs() > 10800 {
                 None
             } else {
+                // Спутник передаёт батч только после его toe (RINEX: время передачи ≈ toe+11 мин).
+                // Будущий toe телефон отбраковывает, поэтому сначала последний прошедший.
                 Some((
                     e,
                     (
+                        dt < 0,
                         dt.abs(),
                         -(e.week as i64 * 604800 + e.toe as i64),
                         std::cmp::Reverse(e.iodc),
