@@ -386,26 +386,41 @@ pub fn get_satellite_cn0(
     adjust: ElevationAdjust,
     satellite_param: &mut SatelliteParam,
 ) {
-    let adjusted_default = match adjust {
-        ElevationAdjust::ElevationAdjustNone => default_cn0,
-        ElevationAdjust::ElevationAdjustSinSqrtFade => {
-            default_cn0 - (1.0 - satellite_param.Elevation.sin().clamp(0.0, 1.0).sqrt()) * 25.0
-        }
-    };
-    let cn0 = power_list
-        .iter()
-        .find(|power| {
-            (power.svid == satellite_param.svid || power.svid == 0)
-                && power.system == satellite_param.system as i32
-        })
-        .map_or(adjusted_default, |power| {
-            if power.cn0 < 0.0 {
-                adjusted_default
-            } else {
-                power.cn0
-            }
-        });
+    let cn0 = select_cn0(
+        power_list,
+        default_cn0,
+        adjust,
+        satellite_param.svid,
+        satellite_param.system,
+        satellite_param.Elevation,
+    );
     satellite_param.CN0 = (cn0 * 100.0).round() as i32;
+}
+
+/// Как в C++ SignalSim: затухание по углу места только для явной записи с cn0 < 0.
+/// Без записи — ровный initPower (over-air пресеты рассчитаны на это).
+fn select_cn0(
+    power_list: &[SignalPower],
+    default_cn0: f64,
+    adjust: ElevationAdjust,
+    svid: i32,
+    system: GnssSystem,
+    elevation: f64,
+) -> f64 {
+    power_list
+        .iter()
+        .find(|power| (power.svid == svid || power.svid == 0) && power.system == system as i32)
+        .map_or(default_cn0, |power| {
+            if power.cn0 >= 0.0 {
+                return power.cn0;
+            }
+            match adjust {
+                ElevationAdjust::ElevationAdjustNone => default_cn0,
+                ElevationAdjust::ElevationAdjustSinSqrtFade => {
+                    default_cn0 - (1.0 - elevation.sin().clamp(0.0, 1.0).sqrt()) * 25.0
+                }
+            }
+        })
 }
 
 /// Get ionospheric delay for different signals
@@ -1676,24 +1691,15 @@ impl SatelliteParamCalculator {
     }
 
     pub fn update_cn0(&mut self, power_list: &[SignalPower]) {
-        for power in power_list {
-            if (power.svid == self.svid || power.svid == 0) && power.system == self.system as i32 {
-                let new_cn0 = if power.cn0 < 0.0 {
-                    let mut cn0 = self.cn0_default;
-                    match self.cn0_adjust {
-                        ElevationAdjust::ElevationAdjustNone => {}
-                        ElevationAdjust::ElevationAdjustSinSqrtFade => {
-                            cn0 -= (1.0 - self.elevation.sin().sqrt()) * 25.0;
-                        }
-                    }
-                    cn0
-                } else {
-                    power.cn0
-                };
-                self.cn0 = (new_cn0 * 100.0 + 0.5) as i32;
-                return;
-            }
-        }
+        let cn0 = select_cn0(
+            power_list,
+            self.cn0_default,
+            self.cn0_adjust,
+            self.svid,
+            self.system,
+            self.elevation,
+        );
+        self.cn0 = (cn0 * 100.0).round() as i32;
     }
 }
 
@@ -1807,8 +1813,9 @@ mod clock_and_power_regressions {
                 ..SatelliteParam::default()
             };
             let adjust = ElevationAdjust::ElevationAdjustSinSqrtFade;
+            // Без записи signalPower — ровный default, без затухания.
             get_satellite_cn0(&[], 52.0, adjust, &mut sat);
-            assert_eq!(sat.CN0, expected);
+            assert_eq!(sat.CN0, 5200);
             let mut override_power = SignalPower {
                 system: 0,
                 svid: 1,

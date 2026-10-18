@@ -157,14 +157,12 @@ fn b1c_sf3_page_schedule_and_utc_are_not_filler() {
             &mut bits,
         );
         let (_, sf3) = payload(&bits);
-        let expected = if soh % 10 == 0 {
+        let expected = if soh % 10 == 0 || soh == 99 {
             1
         } else if soh % 10 == 5 {
             3
         } else if soh % 5 == 1 && soh < 80 {
             2
-        } else if soh == 99 {
-            0
         } else {
             4
         };

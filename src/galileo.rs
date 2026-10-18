@@ -43,12 +43,15 @@ pub fn select_ephemeris(
 /// Для f_low: gamma*BGD, gamma=(f_E1/f_low)^2; для E1: BGD.
 pub fn group_delays(e: &GpsEphemeris) -> [f64; 8] {
     let mut d = [0.0; 8];
-    if e.source & 0x100 != 0 {
-        d[0] = e.tgd;
+    let bgd = if e.source & 0x100 != 0 {
         d[1] = (1575.42_f64 / 1176.45).powi(2) * e.tgd;
+        e.tgd
     } else {
-        d[0] = e.tgd2;
         d[2] = (1575.42_f64 / 1207.14).powi(2) * e.tgd2;
-    }
+        e.tgd2
+    };
+    d[0] = bgd;
+    // E5 AltBOC: отдельного BGD нет; масштабируем доступный BGD на частоту 1191.795 МГц.
+    d[3] = (1575.42_f64 / 1191.795).powi(2) * bgd;
     d
 }

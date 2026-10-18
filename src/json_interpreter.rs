@@ -1850,17 +1850,22 @@ fn parse_navigation_header(nav: &mut CNavData, line: &str) {
         }
     } else if line.contains("LEAP SECONDS") {
         if let Some(tls) = parse_leap_seconds(line) {
+            // RINEX 3.04: поле time system (A3, колонки 24..27): пусто/GPS или BDS.
+            // BDS-значения приводим к GPS-базе (+14 s, +1356 недель), дальше общий путь.
+            let bds_based = line.get(24..27).map(str::trim) == Some("BDS");
+            let (seconds_shift, week_shift) = if bds_based { (14, 1356) } else { (0, 0) };
+            let tls = tls + seconds_shift;
             nav.leap_seconds = Some(tls);
             let utc = nav.utc_param.get_or_insert_with(UtcParam::default);
             utc.TLS = tls as i8;
             utc.TLSF = line
                 .get(6..12)
-                .and_then(|s| s.trim().parse().ok())
-                .unwrap_or(tls as i8);
+                .and_then(|s| s.trim().parse::<i8>().ok())
+                .map_or(tls as i8, |v| v + seconds_shift as i8);
             utc.WNLSF = line
                 .get(12..18)
-                .and_then(|s| s.trim().parse().ok())
-                .unwrap_or(utc.WN);
+                .and_then(|s| s.trim().parse::<i16>().ok())
+                .map_or(utc.WN, |v| v + week_shift);
             utc.DN = line
                 .get(18..24)
                 .and_then(|s| s.trim().parse().ok())
@@ -2827,6 +2832,23 @@ mod accuracy_and_header_regressions {
             assert_eq!(get_sisa_index(metres), index, "SISA={metres}");
         }
         assert_eq!(get_sisa_index(f64::NAN), 255);
+    }
+
+    #[test]
+    fn bds_based_leap_seconds_line_is_converted_once() {
+        let mut nav = CNavData::new();
+        parse_navigation_header(
+            &mut nav,
+            "BDUT -9.3132257462E-10-1.776356839E-15     14 1013          TIME SYSTEM CORR",
+        );
+        parse_navigation_header(
+            &mut nav,
+            "     4     4   573     7BDS                                 LEAP SECONDS",
+        );
+        let gps = nav.utc_param.unwrap();
+        assert_eq!((gps.TLS, gps.TLSF, gps.WNLSF), (18, 18, 1929));
+        let bds = nav.bds_utc.unwrap();
+        assert_eq!((bds.TLS, bds.TLSF, bds.WNLSF, bds.DN), (4, 4, 573, 7));
     }
 
     #[test]

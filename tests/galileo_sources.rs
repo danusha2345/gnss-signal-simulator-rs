@@ -56,6 +56,8 @@ fn bgd_recovers_ionosphere_free_clock_reference() {
         assert_eq!(d[0], bgd);
         assert!((1575.42_f64.powi(2) * d[0] - low.powi(2) * d[index]).abs() < 1e-17);
         assert!((d[0] - d[index] - (1.0 - (1575.42 / low).powi(2)) * bgd).abs() < 1e-22);
+        // E5 AltBOC не должен терять групповую задержку.
+        assert!((1575.42_f64.powi(2) * d[0] - 1191.795_f64.powi(2) * d[3]).abs() < 1e-17);
     }
 }
 #[test]

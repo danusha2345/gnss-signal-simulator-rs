@@ -646,7 +646,9 @@ impl BCNav1Bit {
         let index = soh.rem_euclid(100) as usize;
         let mut d = [0u32; 11];
         d[0] = flags << 9;
-        if index.is_multiple_of(10) {
+        // Страница 99 не покрывается альманахом (63 SV); PageID 0 по ICD не определён —
+        // повторяем тип 1 (ионосфера/UTC).
+        if index.is_multiple_of(10) || index == 99 {
             d[0] |= 1 << 18;
             self.base
                 .append_word(&mut d, 20, &self.base.bd_gim_iono, 96);
@@ -676,7 +678,7 @@ impl BCNav1Bit {
                     );
                 }
             }
-        } else if index != 99 {
+        } else {
             d[0] |= 4 << 18;
             d[0] |= (accuracy >> 13) & 0x1ff;
             d[1] = (accuracy & 0x1fff) << 11;

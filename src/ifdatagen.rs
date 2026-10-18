@@ -791,6 +791,8 @@ pub enum DataBitType {
 }
 
 pub struct IFDataGen {
+    /// Ежесекундный refresh каналов не печатает INFO о видимости/сигналах.
+    quiet_refresh: bool,
     scenario_time: Option<UtcTime>,
     scenario_config: serde_json::Value,
     navigation_sha256: String,
@@ -881,6 +883,7 @@ const SIGNAL_CENTER_FREQ: [[f64; 8]; 4] = [
 impl IFDataGen {
     pub fn new() -> Self {
         IFDataGen {
+            quiet_refresh: false,
             scenario_time: None,
             scenario_config: serde_json::Value::Null,
             navigation_sha256: String::new(),
@@ -1464,10 +1467,12 @@ impl IFDataGen {
                 }
             }
         }
-        println!(
-            "[INFO] GLONASS ephemeris loaded: {} satellites",
-            glo_eph_count
-        );
+        if !self.quiet_refresh {
+            println!(
+                "[INFO] GLONASS ephemeris loaded: {} satellites",
+                glo_eph_count
+            );
+        }
 
         // Complete almanac data
         self.nav_data
@@ -1534,9 +1539,27 @@ impl IFDataGen {
         self.gal_eph_visible.fill(None);
         self.glo_eph_visible.fill(None);
 
-        println!(
+        let quiet = self.quiet_refresh;
+        macro_rules! say {
+            ($($arg:tt)*) => {
+                if !quiet {
+                    println!($($arg)*);
+                }
+            };
+        }
+        macro_rules! say_inline {
+            ($($arg:tt)*) => {
+                if !quiet {
+                    print!($($arg)*);
+                }
+            };
+        }
+
+        say!(
             "[INFO]\tCalculating visible satellites at position ({:.1}, {:.1}, {:.1})",
-            cur_pos.x, cur_pos.y, cur_pos.z
+            cur_pos.x,
+            cur_pos.y,
+            cur_pos.z
         );
 
         // ОТЛАДКА: Вызываем функцию проверки позиций эталонных спутников
@@ -1654,7 +1677,7 @@ impl IFDataGen {
                     // Показать только первые 10 для краткости
                 }
             }
-            println!("[INFO]\tFound {} visible GPS satellites", sat_number);
+            say!("[INFO]\tFound {} visible GPS satellites", sat_number);
 
             sat_number
         } else {
@@ -1713,7 +1736,7 @@ impl IFDataGen {
 
                         if elevation >= elevation_mask && sat_number < TOTAL_BDS_SAT {
                             self.bds_eph_visible[sat_number] = Some(*eph);
-                            println!(
+                            say!(
                                 "[INFO]\tBDS visible: SVID={}, elev={:.1}°, az={:.1}°",
                                 eph.svid,
                                 elevation.to_degrees(),
@@ -1724,7 +1747,7 @@ impl IFDataGen {
                     }
                 }
             }
-            println!("[INFO]\tFound {} visible BeiDou satellites", sat_number);
+            say!("[INFO]\tFound {} visible BeiDou satellites", sat_number);
 
             sat_number
         } else {
@@ -1780,7 +1803,7 @@ impl IFDataGen {
                         if elevation >= elevation_mask {
                             if sat_number < TOTAL_GAL_SAT {
                                 self.gal_eph_visible[sat_number] = Some(*eph);
-                                println!(
+                                say!(
                                     "[INFO]\tGAL visible: SVID={}, elev={:.1}°, az={:.1}°",
                                     eph.svid,
                                     elevation.to_degrees(),
@@ -1797,7 +1820,7 @@ impl IFDataGen {
                 }
             }
             if crate::logutil::is_verbose() {
-                println!("[INFO]\tFound {} visible Galileo satellites", sat_number);
+                say!("[INFO]\tFound {} visible Galileo satellites", sat_number);
             }
 
             sat_number
@@ -1838,7 +1861,7 @@ impl IFDataGen {
                     }
                 }
             }
-            println!("[INFO]\tFound {} visible GLONASS satellites", sat_number);
+            say!("[INFO]\tFound {} visible GLONASS satellites", sat_number);
             sat_number
         } else {
             0
@@ -1846,10 +1869,10 @@ impl IFDataGen {
 
         // Check which satellites are visible and have ephemeris
         if self.glo_sat_number > 0 {
-            print!("[GLONASS] Visible satellites: ");
+            say_inline!("[GLONASS] Visible satellites: ");
             for j in 0..self.glo_sat_number {
                 if let Some(ref eph) = self.glo_eph_visible[j] {
-                    print!("SV{:02}(k={:+2}) ", eph.n, eph.freq);
+                    say_inline!("SV{:02}(k={:+2}) ", eph.n, eph.freq);
                 }
             }
         }
@@ -1874,26 +1897,28 @@ impl IFDataGen {
             (0..TOTAL_SAT_CHANNEL).map(|_| None).collect();
         let mut total_channel_number = 0;
 
-        println!("[INFO]\tUsing Rayon parallelization for satellite processing");
+        if !self.quiet_refresh {
+            println!("[INFO]\tUsing Rayon parallelization for satellite processing");
 
-        println!("[INFO]\tGenerating IF data with following satellite signals:\n");
+            println!("[INFO]\tGenerating IF data with following satellite signals:\n");
 
-        // Enhanced signal display with cleaner formatting
-        println!("[INFO]\tEnabled Signals:");
+            // Enhanced signal display with cleaner formatting
+            println!("[INFO]\tEnabled Signals:");
 
-        // Display enabled signals for each system
-        self.display_enabled_signals();
+            // Display enabled signals for each system
+            self.display_enabled_signals();
 
-        // Count total signals per system
-        let (gps_signal_count, bds_signal_count, gal_signal_count, glo_signal_count) =
-            self.count_signals_per_system();
+            // Count total signals per system
+            let (gps_signal_count, bds_signal_count, gal_signal_count, glo_signal_count) =
+                self.count_signals_per_system();
 
-        self.display_signals_summary_table(
-            gps_signal_count,
-            bds_signal_count,
-            gal_signal_count,
-            glo_signal_count,
-        );
+            self.display_signals_summary_table(
+                gps_signal_count,
+                bds_signal_count,
+                gal_signal_count,
+                glo_signal_count,
+            );
+        }
 
         // Create satellite signal instances for each system
         total_channel_number = self.create_gps_signals(
@@ -1928,6 +1953,19 @@ impl IFDataGen {
     }
 
     fn refresh_channels(
+        &mut self,
+        time: GnssTime,
+        position: KinematicInfo,
+        signals: &mut Vec<Option<Box<SatIfSignal>>>,
+        update_navigation: bool,
+    ) -> Result<u64, Box<dyn std::error::Error>> {
+        self.quiet_refresh = true;
+        let result = self.refresh_channels_inner(time, position, signals, update_navigation);
+        self.quiet_refresh = false;
+        result
+    }
+
+    fn refresh_channels_inner(
         &mut self,
         time: GnssTime,
         position: KinematicInfo,
@@ -1973,6 +2011,10 @@ impl IFDataGen {
         }
         let mut nav = self.create_nav_bit_instances();
         self.setup_navigation_data(&mut nav, utc, glo, utc_to_bds_time(utc))?;
+        if !update_navigation {
+            return self.add_and_drop_channels(&nav, position, signals);
+        }
+        // Обновление nav: полная пересборка, чтобы заново применить фильтры health/source.
         let mut fresh = self.create_satellite_signals(&nav, position)?;
         let mut transitions = 0;
         for slot in fresh.iter_mut().flatten() {
@@ -1994,6 +2036,105 @@ impl IFDataGen {
             }
         }
         transitions += signals.iter().filter(|s| s.is_some()).count() as u64;
+        *signals = fresh;
+        Ok(transitions)
+    }
+
+    /// Смена видимости без обновления nav: удаляем зашедшие спутники и создаём каналы
+    /// только для взошедших. Существующие каналы (и их NCO) не пересоздаются.
+    fn add_and_drop_channels(
+        &mut self,
+        nav: &[Option<UnifiedNavData>],
+        position: KinematicInfo,
+        signals: &mut Vec<Option<Box<SatIfSignal>>>,
+    ) -> Result<u64, Box<dyn std::error::Error>> {
+        let key = |system: GnssSystem, svid: i32| (system as i32, svid);
+        let visible: std::collections::HashSet<(i32, i32)> = self
+            .gps_eph_visible
+            .iter()
+            .flatten()
+            .map(|e| key(GnssSystem::GpsSystem, e.svid as i32))
+            .chain(
+                self.bds_eph_visible
+                    .iter()
+                    .flatten()
+                    .map(|e| key(GnssSystem::BdsSystem, e.svid as i32)),
+            )
+            .chain(
+                self.gal_eph_visible
+                    .iter()
+                    .flatten()
+                    .map(|e| key(GnssSystem::GalileoSystem, e.svid as i32)),
+            )
+            .chain(
+                self.glo_eph_visible
+                    .iter()
+                    .flatten()
+                    .map(|e| key(GnssSystem::GlonassSystem, e.n as i32)),
+            )
+            .collect();
+
+        let mut transitions = 0;
+        let mut kept = Vec::new();
+        for slot in signals.iter_mut() {
+            if let Some(old) = slot.take() {
+                if visible.contains(&key(old.system, old.svid as i32)) {
+                    kept.push(old);
+                } else {
+                    transitions += 1;
+                }
+            }
+        }
+        let tracked: std::collections::HashSet<(i32, i32)> =
+            kept.iter().map(|c| key(c.system, c.svid as i32)).collect();
+
+        // Временно скрываем уже отслеживаемые спутники, чтобы create_* строил только новые.
+        let saved = (
+            self.gps_eph_visible,
+            self.bds_eph_visible,
+            self.gal_eph_visible,
+            self.glo_eph_visible,
+        );
+        for e in self.gps_eph_visible.iter_mut() {
+            if e.is_some_and(|e| tracked.contains(&key(GnssSystem::GpsSystem, e.svid as i32))) {
+                *e = None;
+            }
+        }
+        for e in self.bds_eph_visible.iter_mut() {
+            if e.is_some_and(|e| tracked.contains(&key(GnssSystem::BdsSystem, e.svid as i32))) {
+                *e = None;
+            }
+        }
+        for e in self.gal_eph_visible.iter_mut() {
+            if e.is_some_and(|e| tracked.contains(&key(GnssSystem::GalileoSystem, e.svid as i32))) {
+                *e = None;
+            }
+        }
+        for e in self.glo_eph_visible.iter_mut() {
+            if e.is_some_and(|e| tracked.contains(&key(GnssSystem::GlonassSystem, e.n as i32))) {
+                *e = None;
+            }
+        }
+        let created = self.create_satellite_signals(nav, position);
+        (
+            self.gps_eph_visible,
+            self.bds_eph_visible,
+            self.gal_eph_visible,
+            self.glo_eph_visible,
+        ) = saved;
+        let mut fresh = created?;
+
+        transitions += fresh.iter().flatten().count() as u64;
+        let mut kept = kept.into_iter();
+        for slot in fresh.iter_mut().filter(|s| s.is_none()) {
+            match kept.next() {
+                Some(channel) => *slot = Some(channel),
+                None => break,
+            }
+        }
+        if kept.next().is_some() {
+            return Err("Too many satellite channels after visibility refresh".into());
+        }
         *signals = fresh;
         Ok(transitions)
     }
