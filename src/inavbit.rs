@@ -427,12 +427,12 @@ impl Default for INavBit {
 
 impl INavBit {
     pub fn new() -> Self {
-        // Максимально заполняем данные для повышения плотности сигнала (~50% как в GPS)
+        // Spare/dummy заполняются нулями, как в эталонном IQ, принимаемом телефоном.
         let mut nav_bit = INavBit {
-            gal_spare_data: [0x02000000, 0xAAAAAA, 0xAAAAAA, 0xAAAAAA],
-            gal_dummy_data: [0xfc000000, 0xAAAAAA, 0xAAAAAA, 0xAAAAAA],
+            gal_spare_data: [0x02000000, 0, 0, 0],
+            gal_dummy_data: [0xfc000000, 0, 0, 0],
             gal_eph_data: [[0; 20]; 36],
-            gal_alm_data: [[0xAAAAAA; 16]; 12],
+            gal_alm_data: [[0; 16]; 12],
             gal_utc_data: [0xfc000000, 0, 0, 0],
             // Word Type 10 (GGTO). Composed in set_iono_utc() once the GST/GPS
             // week is known; default to a valid all-zero GGTO (Type=10 in 6 MSB).
@@ -736,8 +736,15 @@ impl INavBit {
             // almanac. Match it before the 7..=9 almanac range.
             10 => &self.gal_ggto_data,
             7..=9 => {
-                &self.gal_alm_data[(subframe / 2) as usize]
-                    [(word - 7) as usize * 4..(word - 6) as usize * 4]
+                let alm = &self.gal_alm_data[(subframe / 2) as usize]
+                    [(word - 7) as usize * 4..(word - 6) as usize * 4];
+                // Без альманаха слот получал пустой буфер и уходил в эфир как Word 0
+                // с time=0. Вместо мусора — штатное dummy-слово (тип 63).
+                if alm[0] >> 26 == word as u32 {
+                    alm
+                } else {
+                    &self.gal_dummy_data
+                }
             }
             17..=20 => {
                 &self.gal_rs_vector[(svid - 1) as usize]

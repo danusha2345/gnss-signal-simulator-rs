@@ -1346,17 +1346,14 @@ impl IFDataGen {
                 self.nav_data.get_bds_utc_param(),
             );
         }
+        // Задержка Galileo в сигнале моделируется Клобучаром GPS, а не NeQuick G.
+        // Реальные ai0..ai2 заставили бы приёмник «исправлять» ионосферу чужой
+        // моделью (метры невязки, RAIM исключает Galileo). Передаём нули, как эталон.
         if let Some(ref mut nav_bit) = nav_bit_array[DataBitType::DataBitINav as usize] {
-            nav_bit.set_galileo_iono_utc(
-                self.nav_data.get_galileo_nequick(),
-                self.nav_data.get_galileo_utc_param(),
-            );
+            nav_bit.set_galileo_iono_utc(None, self.nav_data.get_galileo_utc_param());
         }
         if let Some(ref mut nav_bit) = nav_bit_array[DataBitType::DataBitFNav as usize] {
-            nav_bit.set_galileo_iono_utc(
-                self.nav_data.get_galileo_nequick(),
-                self.nav_data.get_galileo_utc_param(),
-            );
+            nav_bit.set_galileo_iono_utc(None, self.nav_data.get_galileo_utc_param());
         }
         if let Some(ref mut nav_bit) = nav_bit_array[DataBitType::DataBitGNav as usize] {
             nav_bit.set_iono_utc(None, self.nav_data.get_gps_utc_param()); // GLONASS uses GPS UTC parameters
@@ -5018,7 +5015,7 @@ impl IFDataGen {
             "clipped_samples":stats.clipped_samples,"navigation_updates":stats.navigation_updates,"channel_transitions":stats.channel_transitions,
             "noise_algorithm":"rand-0.8-SmallRng-BoxMuller-block50ms-chunk8192-v1",
             "galileo_propagation_ionosphere":"GPS-Klobuchar approximation; NOT NeQuick G",
-            "galileo_navigation_ionosphere":"RINEX NeQuick coefficients",
+            "galileo_navigation_ionosphere":"zero NeQuick coefficients (propagation uses GPS Klobuchar)",
             "beidou_b1c_ionosphere":"BDGIM coefficients unavailable in RINEX3; zero payload, no Klobuchar conversion",
             "boc_mode":self.scenario_config["output"]["bocMode"].as_str().unwrap_or("auto"),
             "boc_full_main_lobe_requirement":"Fs/2 > abs(carrier-center) + 7161000 Hz",
