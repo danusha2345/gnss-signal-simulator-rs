@@ -230,6 +230,8 @@ pub struct GpsEphemeris {
     pub toc: i32,
     /// Time of Prediction - время прогноза (не всегда используется)
     pub top: i32,
+    /// RINEX transmission time of message (секунды недели `week`), если известно
+    pub ttom: Option<i32>,
     /// GPS/GNSS неделя эфемерид
     pub week: i32,
 
@@ -319,11 +321,12 @@ pub struct BeiDouEphemeris {
     pub aodc: u8,    // Age of Data Clock - возраст данных часов (специфично для BeiDou)
 
     // временные параметры
-    pub toe: i32,   // Time of Ephemeris (секунды BDT недели)
-    pub toc: i32,   // Time of Clock (секунды BDT недели)
-    pub top: i32,   // Time of Prediction (не используется в BeiDou)
-    pub week: i32,  // BeiDou неделя (отличается от GPS на 1356 недель)
-    pub weekh: i32, // Week number в header (старшие биты)
+    pub toe: i32,          // Time of Ephemeris (секунды BDT недели)
+    pub toc: i32,          // Time of Clock (секунды BDT недели)
+    pub top: i32,          // Time of Prediction (не используется в BeiDou)
+    pub ttom: Option<i32>, // RINEX transmission time of message (секунды BDT недели)
+    pub week: i32,         // BeiDou неделя (отличается от GPS на 1356 недель)
+    pub weekh: i32,        // Week number в header (старшие биты)
 
     // орбитальные параметры Кеплера
     pub M0: f64,          // Mean Anomaly at Reference Time (рад)
@@ -403,6 +406,7 @@ impl BeiDouEphemeris {
             toe: self.toe,
             toc: self.toc,
             top: self.top,
+            ttom: self.ttom,
             week: self.week,
             M0: self.M0,
             delta_n: self.delta_n,
@@ -451,6 +455,7 @@ impl BeiDouEphemeris {
             toe: gps.toe,
             toc: gps.toc,
             top: gps.top,
+            ttom: gps.ttom,
             week: gps.week,
             M0: gps.M0,
             delta_n: gps.delta_n,

@@ -1191,6 +1191,7 @@ mod tests {
             toe: 345600, // Must be divisible by 60 for I-NAV
             toc: 345600,
             top: 0,
+            ttom: None,
             week: 1241, // Galileo week
             M0: 0.539_812_714_5,
             delta_n: 3.187_632_149e-9,

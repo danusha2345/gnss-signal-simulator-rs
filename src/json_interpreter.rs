@@ -2026,6 +2026,10 @@ where
     if data.len() > 25 {
         eph.tgd = data[25];
     }
+    // BROADCAST ORBIT-7: время передачи сообщения (сек. недели из ORBIT-5); 0 = нет данных
+    if data[27] != 0.0 {
+        eph.ttom = Some(data[27].round() as i32);
+    }
 
     // Вычисляем производные значения
     eph.axis = eph.sqrtA * eph.sqrtA;
@@ -2314,6 +2318,7 @@ where
         toe: gps_eph.toe,
         toc: gps_eph.toc,
         top: gps_eph.top,
+        ttom: gps_eph.ttom,
         week: gps_eph.week,
         weekh: (gps_eph.week >> 8) as i32, // Старшие биты недели
 

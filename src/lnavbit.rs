@@ -588,6 +588,7 @@ mod tests {
             toe: 345600,
             toc: 345600,
             top: 0,
+            ttom: None,
             week: 2369,
             M0: 0.539_812_714_5,
             delta_n: 4.908_419_825e-9,

@@ -651,6 +651,7 @@ mod tests {
             toe: 345600, // Must be multiple of 300
             toc: 345600,
             top: 0,
+            ttom: None,
             week: 1013, // BDT week
             M0: -0.278_312_451_3,
             delta_n: 4.361_281_720e-9,

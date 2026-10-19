@@ -35,6 +35,7 @@ fn sample_gps_eph(svid: u8) -> GpsEphemeris {
         toe: 345_600, // 4th day
         toc: 345_600,
         top: 345_600,
+        ttom: None,
         week: 2369,
         M0: 0.1,
         delta_n: 4.5e-9,

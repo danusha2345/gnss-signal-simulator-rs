@@ -73,6 +73,43 @@ pub struct GenerationStats {
     pub navigation_updates: u64,
     pub channel_transitions: u64,
 }
+
+/// Эфемерида GPS/BDS, которую спутник реально передавал в момент `week:sow`
+/// (шкала записей: GPS — GPST, BDS — BDT), в пределах fit-интервала ±2 ч от toe.
+///
+/// Приоритет — последняя запись с RINEX TTOM ≤ t. GPS выгружает набор на чётном часе
+/// с toe = выгрузка + 2 ч, поэтому в эфире toe всегда в будущем: в 10:05 передаётся
+/// toe 12:00, а не истёкший в эфире toe 10:00. BDS передаёт набор с момента toe.
+/// Без TTOM — ближайший toe, как C++ FindEphemeris.
+pub fn select_broadcast_ephemeris(
+    records: &[GpsEphemeris],
+    week: i32,
+    sow: i64,
+    svid: u8,
+) -> Option<GpsEphemeris> {
+    let t = week as i64 * 604800 + sow;
+    let candidates = || {
+        records.iter().filter(move |e| {
+            e.svid == svid
+                && e.health == 0
+                && (t - (e.week as i64 * 604800 + e.toe as i64)).abs() <= 7200
+        })
+    };
+    candidates()
+        .filter_map(|e| {
+            let tx = e.week as i64 * 604800 + e.ttom? as i64;
+            (tx <= t).then_some((tx, e.toe, e))
+        })
+        .max_by_key(|&(tx, toe, _)| (tx, toe))
+        .map(|(_, _, e)| *e)
+        .or_else(|| {
+            candidates()
+                .enumerate()
+                .min_by_key(|(i, e)| ((t - (e.week as i64 * 604800 + e.toe as i64)).abs(), *i))
+                .map(|(_, e)| *e)
+        })
+}
+
 pub struct NavData {
     // Ионосферные и UTC параметры
     gps_iono: Option<IonoParam>,
@@ -1207,42 +1244,28 @@ impl IFDataGen {
 
         // 1) GPS (UTC→GPS)
         let tgt_gps = utc_to_gps_time(utc_time, true);
-        let tgt_week = tgt_gps.Week;
         let tgt_sec = (tgt_gps.MilliSeconds / 1000) as i64;
         for svid in 1..=TOTAL_GPS_SAT {
-            let mut best: Option<(GpsEphemeris, i64)> = None;
-            for eph in &c_nav_data.gps_ephemeris {
-                if eph.svid as usize == svid && eph.health == 0 {
-                    let diff = ((tgt_week - eph.week) as i64) * 604800 + (tgt_sec - eph.toe as i64);
-                    let ad = diff.abs();
-                    if ad <= 7200 && best.is_none_or(|(_, bd)| ad < bd) {
-                        best = Some((*eph, ad));
-                    }
-                }
-            }
-            if let Some((eph, _)) = best {
-                self.gps_eph[svid - 1] = Some(eph);
-            }
+            self.gps_eph[svid - 1] = select_broadcast_ephemeris(
+                &c_nav_data.gps_ephemeris,
+                tgt_gps.Week,
+                tgt_sec,
+                svid as u8,
+            );
         }
 
         // 2) BeiDou (UTC→BDT)
         let tgt_bds = utc_to_bds_time(utc_time);
-        let bw = tgt_bds.Week;
         let bs = (tgt_bds.MilliSeconds / 1000) as i64;
         for svid in 1..=TOTAL_BDS_SAT {
-            let mut best: Option<(GpsEphemeris, i64)> = None;
-            for eph in &c_nav_data.beidou_ephemeris {
-                if eph.svid as usize == svid && eph.health == 0 {
-                    let diff = ((bw - eph.week) as i64) * 604800 + (bs - eph.toe as i64);
-                    let ad = diff.abs();
-                    if ad <= 7200 && best.is_none_or(|(_, bd)| ad < bd) {
-                        best = Some((eph.to_gps_ephemeris(), ad));
-                    }
-                }
-            }
-            if let Some((eph, _)) = best {
-                self.bds_eph[svid - 1] = Some(eph);
-            }
+            let records: Vec<GpsEphemeris> = c_nav_data
+                .beidou_ephemeris
+                .iter()
+                .filter(|e| e.svid as usize == svid)
+                .map(BeiDouEphemeris::to_gps_ephemeris)
+                .collect();
+            self.bds_eph[svid - 1] =
+                select_broadcast_ephemeris(&records, tgt_bds.Week, bs, svid as u8);
         }
 
         let gps = utc_to_gps_time(utc_time, true);
