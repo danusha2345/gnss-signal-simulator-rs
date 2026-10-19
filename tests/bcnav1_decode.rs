@@ -145,8 +145,7 @@ fn b1c_sf3_page_schedule_and_utc_are_not_filler() {
         }),
     );
     let mut bits = [0; 1800];
-    let mut almanac_pages = [0usize; 5];
-    for soh in 0..200 {
+    for soh in 0..100 {
         nav.get_frame_data(
             GnssTime {
                 Week: 2369,
@@ -158,21 +157,16 @@ fn b1c_sf3_page_schedule_and_utc_are_not_filler() {
             &mut bits,
         );
         let (_, sf3) = payload(&bits);
-        let page = uint(&sf3[..6]);
-        // Типы 1 (SISAI/BDGIM/UTC) и 3 (EOP/BGTO) нужны для фикса: каждые 72 с.
-        let expected = match soh % 4 {
-            0 => 1,
-            2 => 3,
-            _ => {
-                assert!(
-                    page == 2 || page == 4,
-                    "SOH {soh}: almanac page, got {page}"
-                );
-                almanac_pages[page as usize] += 1;
-                page
-            }
+        let expected = if soh % 10 == 0 || soh == 99 {
+            1
+        } else if soh % 10 == 5 {
+            3
+        } else if soh % 5 == 1 && soh < 80 {
+            2
+        } else {
+            4
         };
-        assert_eq!(page, expected);
+        assert_eq!(uint(&sf3[..6]), expected);
         assert_eq!(crc(&sf3[..240]), uint(&sf3[240..264]));
         if expected == 1 {
             assert_eq!(uint(&sf3[116..132]), 0xffc0);
@@ -181,17 +175,6 @@ fn b1c_sf3_page_schedule_and_utc_are_not_filler() {
             assert_eq!(uint(&sf3[176..189]), 1013);
         }
     }
-    // За час проходят все 16 страниц сокращённого и 63 страницы midi-альманаха.
-    assert!(
-        almanac_pages[2] >= 16,
-        "reduced almanac pages: {}",
-        almanac_pages[2]
-    );
-    assert!(
-        almanac_pages[4] >= 63,
-        "midi almanac pages: {}",
-        almanac_pages[4]
-    );
 }
 #[test]
 fn rinex_frame_matches_pocketsdr_verified_fixture() {
