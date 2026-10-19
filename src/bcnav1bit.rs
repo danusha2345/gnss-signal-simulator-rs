@@ -641,9 +641,27 @@ impl BCNav1Bit {
         0
     }
 
+    /// Слот подкадра 3 в раскладке 0..99 (0 — тип 1, 5 — тип 3, прочие — альманах).
+    /// Страницы самоописываемы (PageID), порядок по ICD не фиксирован: типы 1 и 3,
+    /// нужные для первого фикса (SISAI/BDGIM/UTC и BGTO), идут каждые 72 с,
+    /// а не раз в 180 с; альманах занимает нечётные кадры.
+    fn subframe3_slot(soh: i32) -> usize {
+        let k = soh.rem_euclid(200) as usize;
+        match k % 4 {
+            0 => 0,
+            2 => 5,
+            _ => {
+                // 79 слотов альманаха: в каждом десятке 1-4 и 6-9, кроме 99.
+                const OFFSET: [usize; 8] = [1, 2, 3, 4, 6, 7, 8, 9];
+                let a = (k / 2) % 79;
+                a / 8 * 10 + OFFSET[a % 8]
+            }
+        }
+    }
+
     /// ICD B1C: 6-bit PageID, общие flags/SISAI, затем данные конкретной страницы.
     fn compose_subframe3(&self, soh: i32, flags: u32, accuracy: u32) -> [u32; 11] {
-        let index = soh.rem_euclid(100) as usize;
+        let index = Self::subframe3_slot(soh);
         let mut d = [0u32; 11];
         d[0] = flags << 9;
         // Страница 99 не покрывается альманахом (63 SV); PageID 0 по ICD не определён —
