@@ -1,0 +1,92 @@
+{
+  "version": 1.0,
+  "description": "Дрон over-air: GPS L1CA + BDS B1C + Galileo E1, IQ8 4.2 МГц, 300 с; Монтана, окружность R=100 м, 33 км/ч, подъём 10 км/ч (100 → ~933 м); старт 03:00:00 UTC; GPS 52 / BDS и Galileo 58 dBHz. Поле up задаётся в м/с (speedUnit к нему не применяется).",
+  "time": {
+    "type": "UTC",
+    "year": 2025,
+    "month": 6,
+    "day": 5,
+    "hour": 3,
+    "minute": 0,
+    "second": 0
+  },
+  "trajectory": {
+    "name": "Монтана, США: окружность 100 м, 33 км/ч, подъём 10 км/ч",
+    "initPosition": {
+      "type": "LLA",
+      "format": "d",
+      "longitude": -114.2847,
+      "latitude": 48.4928,
+      "altitude": 100.0
+    },
+    "initVelocity": {
+      "type": "SCU",
+      "speedUnit": "km/h",
+      "speed": 33.0,
+      "course": 90.0,
+      "up": 2.7778
+    },
+    "trajectoryList": [
+      {
+        "type": "Circular",
+        "time": 300.0,
+        "radius": 100.0
+      }
+    ]
+  },
+  "ephemeris": {
+    "type": "RINEX",
+    "name": "Rinex_Data/BRDC00IGS_R_20251560000_01D_MN.rnx"
+  },
+  "output": {
+    "type": "IFdata",
+    "format": "IQ8",
+    "sampleFreq": 4.2,
+    "centerFreq": 1575.42,
+    "name": "generated_files/USA_CIRCLE33_CLIMB10_T03.C8",
+    "config": {
+      "elevationMask": 5
+    },
+    "systemSelect": [
+      {
+        "system": "GPS",
+        "signal": "L1CA",
+        "enable": true
+      },
+      {
+        "system": "BDS",
+        "signal": "B1C",
+        "enable": true
+      },
+      {
+        "system": "Galileo",
+        "signal": "E1",
+        "enable": true
+      }
+    ]
+  },
+  "power": {
+    "noiseFloor": -172,
+    "initPower": {
+      "unit": "dBHz",
+      "value": 52
+    },
+    "elevationAdjust": false,
+    "signalPower": [
+      {
+        "system": "Galileo",
+        "powerValue": {
+          "unit": "dBHz",
+          "value": 58
+        }
+      },
+      {
+        "system": "BDS",
+        "powerValue": {
+          "unit": "dBHz",
+          "value": 58
+        }
+      }
+    ]
+  }
+}
