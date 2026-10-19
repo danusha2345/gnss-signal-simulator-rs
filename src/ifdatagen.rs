@@ -4277,21 +4277,6 @@ impl IFDataGen {
             if !duration.is_finite() || duration <= 0.0 {
                 return Err("Invalid trajectory duration".into());
             }
-            // Const с полем course (градусы от севера) — прямая с явным курсом,
-            // чтобы рисовать ломаные; без course курс наследуется, как раньше.
-            if let (Some("Const"), Some(course)) = (segment["type"].as_str(), segment.get("course"))
-            {
-                let course = course.as_f64().ok_or("Invalid trajectory course")?;
-                let status = new_trajectory.append_const_course(
-                    duration,
-                    start_vel.speed,
-                    course.to_radians(),
-                );
-                if status != crate::trajectory::TRAJECTORY_NO_ERR {
-                    return Err(format!("Invalid trajectory segment: error {status}").into());
-                }
-                continue;
-            }
             let (kind, data_type, value) = match segment["type"].as_str() {
                 Some("Const") => (
                     Kind::TrajTypeConstSpeed,
@@ -4317,13 +4302,28 @@ impl IFDataGen {
             if !value.is_finite() {
                 return Err("Invalid trajectory parameter".into());
             }
-            let status = new_trajectory.append_trajectory(
-                kind,
-                Data::TrajDataTimeSpan,
-                duration,
-                data_type,
-                value,
-            );
+            // Поле course (градусы от севера) у Const/ConstAcc задаёт курс участка,
+            // чтобы рисовать ломаные; без него курс наследуется, как раньше.
+            let status = match segment.get("course") {
+                Some(course) if kind != Kind::TrajTypeHorizontalCircular => {
+                    let course = course.as_f64().ok_or("Invalid trajectory course")?;
+                    new_trajectory.append_trajectory_course(
+                        kind,
+                        Data::TrajDataTimeSpan,
+                        duration,
+                        data_type,
+                        value,
+                        course.to_radians(),
+                    )
+                }
+                _ => new_trajectory.append_trajectory(
+                    kind,
+                    Data::TrajDataTimeSpan,
+                    duration,
+                    data_type,
+                    value,
+                ),
+            };
             if status != crate::trajectory::TRAJECTORY_NO_ERR {
                 return Err(format!("Invalid trajectory segment: error {status}").into());
             }

@@ -138,3 +138,31 @@ fn skylab_preset_loads_and_returns_to_start() {
     );
     assert!((v.ve.hypot(v.vn) - 12.5).abs() < 0.1);
 }
+
+#[test]
+fn const_acc_with_course_starts_from_rest_in_given_direction() {
+    // Острый угол: торможение 5 м/с² до нуля через 10 м на восток, разгон на север.
+    let mut generator = load(serde_json::json!([
+        {"type": "ConstAcc", "time": 2.0, "acceleration": -5.0},
+        {"type": "ConstAcc", "time": 2.0, "acceleration": 5.0, "course": 0.0},
+        {"type": "Const", "time": 1.0, "course": 0.0}
+    ]))
+    .unwrap();
+    for (step, east, north, ve, vn) in [
+        (2.0, 10.0, 0.0, 0.0, 0.0),
+        (2.0, 10.0, 10.0, 0.0, 10.0),
+        (1.0, 10.0, 20.0, 0.0, 10.0),
+    ] {
+        let mut pos = KinematicInfo::default();
+        assert!(generator.trajectory.get_next_pos_vel_ecef(step, &mut pos));
+        let (d, v) = enu(&generator, &pos);
+        assert!(
+            (d.ve - east).abs() < 1e-2 && (d.vn - north).abs() < 1e-2,
+            "{d:?}"
+        );
+        assert!(
+            (v.ve - ve).abs() < 1e-3 && (v.vn - vn).abs() < 1e-3,
+            "{v:?}"
+        );
+    }
+}

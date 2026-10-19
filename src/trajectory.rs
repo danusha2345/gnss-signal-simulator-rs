@@ -839,19 +839,23 @@ impl CTrajectory {
         result
     }
 
-    /// Прямой участок с явным курсом (рад от севера): вертикальная скорость берётся
-    /// с конца предыдущего участка, горизонтальная — `speed` в направлении `course`.
-    pub fn append_const_course(&mut self, time_span: f64, speed: f64, course: f64) -> i32 {
+    /// Участок с явным курсом (рад от севера): горизонтальная скорость с конца
+    /// предыдущего участка поворачивается на `course` с сохранением модуля, затем
+    /// параметры участка пересчитываются. Для `ConstAcc` из покоя курс задаёт
+    /// направление разгона — так рисуется острый угол с остановкой в вершине.
+    pub fn append_trajectory_course(
+        &mut self,
+        traj_type: TrajectoryType,
+        data_type1: TrajectoryDataType,
+        data1: f64,
+        data_type2: TrajectoryDataType,
+        data2: f64,
+        course: f64,
+    ) -> i32 {
         if !course.is_finite() {
             return TRAJECTORY_INVALID_PARAM;
         }
-        let result = self.append_trajectory(
-            TrajectoryType::TrajTypeConstSpeed,
-            TrajectoryDataType::TrajDataTimeSpan,
-            time_span,
-            TrajectoryDataType::TrajDataSpeed,
-            speed,
-        );
+        let result = self.append_trajectory(traj_type, data_type1, data1, data_type2, data2);
         if result != TRAJECTORY_NO_ERR {
             return result;
         }
@@ -863,13 +867,12 @@ impl CTrajectory {
         let mut start = *segment.get_start_pos_vel();
         let mut local = LocalSpeed::default();
         speed_ecef_to_local(&matrix, &start, &mut local);
-        local.speed = speed;
         local.course = course;
         speed_course_to_enu(&mut local);
         speed_local_to_ecef(&matrix, &local, &mut start);
         segment.set_start_pos_vel(start);
         segment.set_local_speed(local);
-        TRAJECTORY_NO_ERR
+        segment.set_segment_param(None, data_type1, data1, data_type2, data2)
     }
 
     pub fn reset_trajectory_time(&mut self) {

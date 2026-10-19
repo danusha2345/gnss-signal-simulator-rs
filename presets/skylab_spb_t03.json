@@ -1,6 +1,6 @@
 {
   "version": 1.0,
-  "description": "Дрон over-air: GPS L1CA + BDS B1C + Galileo E1, IQ8 4.2 МГц, 300 с; Санкт-Петербург, Дворцовая площадь, высота 20 м: трек дважды (вперёд и обратно по тому же следу) пишет слово SKYLAB печатными буквами 85 x 50 м, 12.5 м/с (45 км/ч). Углы скруглены дугами R=6–15 м (Circular, радиус < 0 — вправо), развороты — торможение и разгон назад 8 м/с² (ConstAcc), прямые — Const с полем course; скорость без скачков. Старт 03:00:00 UTC; GPS 52 / BDS и Galileo 58 dBHz.",
+  "description": "Дрон over-air: GPS L1CA + BDS B1C + Galileo E1, IQ8 4.2 МГц, 300 с; Санкт-Петербург, Дворцовая площадь, высота 20 м: трек дважды (вперёд и обратно по тому же следу) пишет слово SKYLAB печатными буквами 80 x 47 м, 12.5 м/с (45 км/ч). Углы скруглены дугами R=6–15 м (Circular, радиус < 0 — вправо), развороты — торможение и разгон назад 8 м/с² (ConstAcc), вершины A острые — остановка и разгон по новому курсу 6.25 м/с² (ConstAcc с course), прямые — Const с полем course; скорость без скачков. Старт 03:00:00 UTC; GPS 52 / BDS и Galileo 58 dBHz.",
   "time": {
     "type": "UTC",
     "year": 2025,
@@ -11,12 +11,12 @@
     "second": 0
   },
   "trajectory": {
-    "name": "Санкт-Петербург: слово SKYLAB, буквы 85 м, 12.5 м/с",
+    "name": "Санкт-Петербург: слово SKYLAB, буквы 80 м, 12.5 м/с",
     "initPosition": {
       "type": "LLA",
       "format": "d",
-      "longitude": 30.3127103,
-      "latitude": 59.9393836,
+      "longitude": 30.3129145,
+      "latitude": 59.9393582,
       "altitude": 20.0
     },
     "initVelocity": {
@@ -29,7 +29,7 @@
     "trajectoryList": [
       {
         "type": "Const",
-        "time": 2.789,
+        "time": 2.525,
         "course": 270.0
       },
       {
@@ -39,7 +39,7 @@
       },
       {
         "type": "Const",
-        "time": 1.019,
+        "time": 0.793,
         "course": 180.0
       },
       {
@@ -49,7 +49,7 @@
       },
       {
         "type": "Const",
-        "time": 1.589,
+        "time": 1.325,
         "course": 90.0
       },
       {
@@ -59,7 +59,7 @@
       },
       {
         "type": "Const",
-        "time": 1.019,
+        "time": 0.793,
         "course": 180.0
       },
       {
@@ -69,7 +69,7 @@
       },
       {
         "type": "Const",
-        "time": 2.007,
+        "time": 1.744,
         "course": 270.0
       },
       {
@@ -79,12 +79,12 @@
       },
       {
         "type": "Const",
-        "time": 3.207,
+        "time": 2.944,
         "course": 90.0
       },
       {
         "type": "Const",
-        "time": 1.079,
+        "time": 0.929,
         "course": 90.0
       },
       {
@@ -94,7 +94,7 @@
       },
       {
         "type": "Const",
-        "time": 4.856,
+        "time": 4.404,
         "course": 0.0
       },
       {
@@ -104,17 +104,17 @@
       },
       {
         "type": "Const",
-        "time": 0.264,
+        "time": 0.241,
         "course": 180.0
       },
       {
         "type": "Circular",
-        "time": 2.48,
-        "radius": 13.6
+        "time": 2.279,
+        "radius": 12.5
       },
       {
         "type": "Const",
-        "time": 2.098,
+        "time": 1.954,
         "course": 49.399
       },
       {
@@ -124,7 +124,7 @@
       },
       {
         "type": "Const",
-        "time": 3.072,
+        "time": 2.725,
         "course": 229.399
       },
       {
@@ -134,7 +134,7 @@
       },
       {
         "type": "Const",
-        "time": 3.409,
+        "time": 3.062,
         "course": 130.601
       },
       {
@@ -144,7 +144,7 @@
       },
       {
         "type": "Const",
-        "time": 2.63,
+        "time": 2.347,
         "course": 90.0
       },
       {
@@ -154,7 +154,7 @@
       },
       {
         "type": "Const",
-        "time": 1.894,
+        "time": 1.668,
         "course": 0.0
       },
       {
@@ -164,7 +164,7 @@
       },
       {
         "type": "Const",
-        "time": 2.852,
+        "time": 2.591,
         "course": 329.744
       },
       {
@@ -174,7 +174,7 @@
       },
       {
         "type": "Const",
-        "time": 1.12,
+        "time": 0.858,
         "course": 149.744
       },
       {
@@ -184,7 +184,7 @@
       },
       {
         "type": "Const",
-        "time": 1.12,
+        "time": 0.858,
         "course": 30.256
       },
       {
@@ -194,7 +194,7 @@
       },
       {
         "type": "Const",
-        "time": 2.852,
+        "time": 2.591,
         "course": 210.256
       },
       {
@@ -204,7 +204,7 @@
       },
       {
         "type": "Const",
-        "time": 1.894,
+        "time": 1.668,
         "course": 180.0
       },
       {
@@ -214,7 +214,7 @@
       },
       {
         "type": "Const",
-        "time": 1.874,
+        "time": 1.591,
         "course": 90.0
       },
       {
@@ -224,7 +224,7 @@
       },
       {
         "type": "Const",
-        "time": 4.856,
+        "time": 4.404,
         "course": 0.0
       },
       {
@@ -234,7 +234,7 @@
       },
       {
         "type": "Const",
-        "time": 4.856,
+        "time": 4.404,
         "course": 180.0
       },
       {
@@ -244,12 +244,12 @@
       },
       {
         "type": "Const",
-        "time": 2.789,
+        "time": 2.525,
         "course": 90.0
       },
       {
         "type": "Const",
-        "time": 1.379,
+        "time": 1.229,
         "course": 90.0
       },
       {
@@ -259,18 +259,40 @@
       },
       {
         "type": "Const",
-        "time": 0.871,
+        "time": 4.752,
         "course": 16.26
       },
       {
-        "type": "Circular",
-        "time": 1.544,
-        "radius": -15.0
+        "type": "ConstAcc",
+        "time": 2.0,
+        "acceleration": -6.25
+      },
+      {
+        "type": "ConstAcc",
+        "time": 2.0,
+        "acceleration": 6.25,
+        "course": 163.74
       },
       {
         "type": "Const",
-        "time": 0.812,
-        "course": 90.0
+        "time": 1.991,
+        "course": 163.74
+      },
+      {
+        "type": "ConstAcc",
+        "time": 2.0,
+        "acceleration": -6.25
+      },
+      {
+        "type": "ConstAcc",
+        "time": 2.0,
+        "acceleration": 6.25,
+        "course": 270.0
+      },
+      {
+        "type": "Const",
+        "time": 0.454,
+        "course": 270.0
       },
       {
         "type": "ConstAcc",
@@ -279,27 +301,23 @@
       },
       {
         "type": "Const",
-        "time": 0.171,
-        "course": 270.0
+        "time": 0.454,
+        "course": 90.0
       },
       {
-        "type": "Circular",
-        "time": 2.136,
-        "radius": -14.4
+        "type": "ConstAcc",
+        "time": 2.0,
+        "acceleration": -6.25
       },
       {
-        "type": "Const",
-        "time": 0.685,
-        "course": 16.26
-      },
-      {
-        "type": "Circular",
-        "time": 1.668,
-        "radius": -8.1
+        "type": "ConstAcc",
+        "time": 2.0,
+        "acceleration": 6.25,
+        "course": 163.74
       },
       {
         "type": "Const",
-        "time": 3.997,
+        "time": 0.761,
         "course": 163.74
       },
       {
@@ -309,17 +327,17 @@
       },
       {
         "type": "Const",
-        "time": 0.24,
+        "time": 0.164,
         "course": 90.0
       },
       {
         "type": "Circular",
-        "time": 1.784,
-        "radius": 14.2
+        "time": 1.671,
+        "radius": 13.3
       },
       {
         "type": "Const",
-        "time": 4.498,
+        "time": 4.121,
         "course": 0.0
       },
       {
@@ -329,7 +347,7 @@
       },
       {
         "type": "Const",
-        "time": 1.437,
+        "time": 1.23,
         "course": 90.0
       },
       {
@@ -339,7 +357,7 @@
       },
       {
         "type": "Const",
-        "time": 0.215,
+        "time": 0.135,
         "course": 135.0
       },
       {
@@ -349,7 +367,7 @@
       },
       {
         "type": "Const",
-        "time": 0.715,
+        "time": 0.602,
         "course": 180.0
       },
       {
@@ -359,7 +377,7 @@
       },
       {
         "type": "Const",
-        "time": 0.215,
+        "time": 0.135,
         "course": 225.0
       },
       {
@@ -369,7 +387,7 @@
       },
       {
         "type": "Const",
-        "time": 1.856,
+        "time": 1.648,
         "course": 270.0
       },
       {
@@ -379,7 +397,7 @@
       },
       {
         "type": "Const",
-        "time": 2.14,
+        "time": 1.915,
         "course": 90.0
       },
       {
@@ -389,7 +407,7 @@
       },
       {
         "type": "Const",
-        "time": 0.215,
+        "time": 0.135,
         "course": 135.0
       },
       {
@@ -399,7 +417,7 @@
       },
       {
         "type": "Const",
-        "time": 0.715,
+        "time": 0.602,
         "course": 180.0
       },
       {
@@ -409,7 +427,7 @@
       },
       {
         "type": "Const",
-        "time": 0.215,
+        "time": 0.135,
         "course": 225.0
       },
       {
@@ -419,7 +437,7 @@
       },
       {
         "type": "Const",
-        "time": 2.14,
+        "time": 1.915,
         "course": 270.0
       },
       {
@@ -429,7 +447,7 @@
       },
       {
         "type": "Const",
-        "time": 2.14,
+        "time": 1.915,
         "course": 90.0
       },
       {
@@ -439,7 +457,7 @@
       },
       {
         "type": "Const",
-        "time": 0.215,
+        "time": 0.135,
         "course": 45.0
       },
       {
@@ -449,7 +467,7 @@
       },
       {
         "type": "Const",
-        "time": 0.715,
+        "time": 0.602,
         "course": 0.0
       },
       {
@@ -459,7 +477,7 @@
       },
       {
         "type": "Const",
-        "time": 0.215,
+        "time": 0.135,
         "course": 315.0
       },
       {
@@ -469,7 +487,7 @@
       },
       {
         "type": "Const",
-        "time": 2.14,
+        "time": 1.915,
         "course": 270.0
       },
       {
@@ -479,7 +497,7 @@
       },
       {
         "type": "Const",
-        "time": 1.856,
+        "time": 1.648,
         "course": 90.0
       },
       {
@@ -489,7 +507,7 @@
       },
       {
         "type": "Const",
-        "time": 0.215,
+        "time": 0.135,
         "course": 45.0
       },
       {
@@ -499,7 +517,7 @@
       },
       {
         "type": "Const",
-        "time": 0.715,
+        "time": 0.602,
         "course": 0.0
       },
       {
@@ -509,7 +527,7 @@
       },
       {
         "type": "Const",
-        "time": 0.215,
+        "time": 0.135,
         "course": 315.0
       },
       {
@@ -519,7 +537,7 @@
       },
       {
         "type": "Const",
-        "time": 1.437,
+        "time": 1.23,
         "course": 270.0
       },
       {
@@ -529,17 +547,17 @@
       },
       {
         "type": "Const",
-        "time": 4.498,
+        "time": 4.121,
         "course": 180.0
       },
       {
         "type": "Circular",
-        "time": 1.784,
-        "radius": -14.2
+        "time": 1.671,
+        "radius": -13.3
       },
       {
         "type": "Const",
-        "time": 0.24,
+        "time": 0.164,
         "course": 270.0
       },
       {
@@ -549,28 +567,24 @@
       },
       {
         "type": "Const",
-        "time": 3.997,
+        "time": 0.761,
         "course": 343.74
       },
       {
-        "type": "Circular",
-        "time": 1.668,
-        "radius": 8.1
+        "type": "ConstAcc",
+        "time": 2.0,
+        "acceleration": -6.25
+      },
+      {
+        "type": "ConstAcc",
+        "time": 2.0,
+        "acceleration": 6.25,
+        "course": 270.0
       },
       {
         "type": "Const",
-        "time": 0.685,
-        "course": 196.26
-      },
-      {
-        "type": "Circular",
-        "time": 2.136,
-        "radius": 14.4
-      },
-      {
-        "type": "Const",
-        "time": 0.171,
-        "course": 90.0
+        "time": 0.454,
+        "course": 270.0
       },
       {
         "type": "ConstAcc",
@@ -579,17 +593,39 @@
       },
       {
         "type": "Const",
-        "time": 0.812,
-        "course": 270.0
+        "time": 0.454,
+        "course": 90.0
       },
       {
-        "type": "Circular",
-        "time": 1.544,
-        "radius": 15.0
+        "type": "ConstAcc",
+        "time": 2.0,
+        "acceleration": -6.25
+      },
+      {
+        "type": "ConstAcc",
+        "time": 2.0,
+        "acceleration": 6.25,
+        "course": 343.74
       },
       {
         "type": "Const",
-        "time": 0.871,
+        "time": 1.991,
+        "course": 343.74
+      },
+      {
+        "type": "ConstAcc",
+        "time": 2.0,
+        "acceleration": -6.25
+      },
+      {
+        "type": "ConstAcc",
+        "time": 2.0,
+        "acceleration": 6.25,
+        "course": 196.26
+      },
+      {
+        "type": "Const",
+        "time": 4.752,
         "course": 196.26
       },
       {
@@ -599,12 +635,12 @@
       },
       {
         "type": "Const",
-        "time": 1.379,
+        "time": 1.229,
         "course": 270.0
       },
       {
         "type": "Const",
-        "time": 2.789,
+        "time": 2.525,
         "course": 270.0
       },
       {
@@ -614,7 +650,7 @@
       },
       {
         "type": "Const",
-        "time": 4.856,
+        "time": 4.404,
         "course": 0.0
       },
       {
@@ -624,7 +660,7 @@
       },
       {
         "type": "Const",
-        "time": 4.856,
+        "time": 4.404,
         "course": 180.0
       },
       {
@@ -634,7 +670,7 @@
       },
       {
         "type": "Const",
-        "time": 1.874,
+        "time": 1.591,
         "course": 270.0
       },
       {
@@ -644,7 +680,7 @@
       },
       {
         "type": "Const",
-        "time": 1.894,
+        "time": 1.668,
         "course": 0.0
       },
       {
@@ -654,7 +690,7 @@
       },
       {
         "type": "Const",
-        "time": 2.852,
+        "time": 2.591,
         "course": 30.256
       },
       {
@@ -664,7 +700,7 @@
       },
       {
         "type": "Const",
-        "time": 1.12,
+        "time": 0.858,
         "course": 210.256
       },
       {
@@ -674,7 +710,7 @@
       },
       {
         "type": "Const",
-        "time": 1.12,
+        "time": 0.858,
         "course": 329.744
       },
       {
@@ -684,7 +720,7 @@
       },
       {
         "type": "Const",
-        "time": 2.852,
+        "time": 2.591,
         "course": 149.744
       },
       {
@@ -694,7 +730,7 @@
       },
       {
         "type": "Const",
-        "time": 1.894,
+        "time": 1.668,
         "course": 180.0
       },
       {
@@ -704,7 +740,7 @@
       },
       {
         "type": "Const",
-        "time": 2.63,
+        "time": 2.347,
         "course": 270.0
       },
       {
@@ -714,7 +750,7 @@
       },
       {
         "type": "Const",
-        "time": 3.409,
+        "time": 3.062,
         "course": 310.601
       },
       {
@@ -724,7 +760,7 @@
       },
       {
         "type": "Const",
-        "time": 3.072,
+        "time": 2.725,
         "course": 49.399
       },
       {
@@ -734,17 +770,17 @@
       },
       {
         "type": "Const",
-        "time": 2.098,
+        "time": 1.954,
         "course": 229.399
       },
       {
         "type": "Circular",
-        "time": 2.48,
-        "radius": -13.6
+        "time": 2.279,
+        "radius": -12.5
       },
       {
         "type": "Const",
-        "time": 0.264,
+        "time": 0.241,
         "course": 0.0
       },
       {
@@ -754,7 +790,7 @@
       },
       {
         "type": "Const",
-        "time": 4.856,
+        "time": 4.404,
         "course": 180.0
       },
       {
@@ -764,12 +800,12 @@
       },
       {
         "type": "Const",
-        "time": 1.079,
+        "time": 0.929,
         "course": 270.0
       },
       {
         "type": "Const",
-        "time": 3.207,
+        "time": 2.944,
         "course": 270.0
       },
       {
@@ -779,7 +815,7 @@
       },
       {
         "type": "Const",
-        "time": 2.007,
+        "time": 1.744,
         "course": 90.0
       },
       {
@@ -789,7 +825,7 @@
       },
       {
         "type": "Const",
-        "time": 1.019,
+        "time": 0.793,
         "course": 0.0
       },
       {
@@ -799,7 +835,7 @@
       },
       {
         "type": "Const",
-        "time": 1.589,
+        "time": 1.325,
         "course": 270.0
       },
       {
@@ -809,7 +845,7 @@
       },
       {
         "type": "Const",
-        "time": 1.019,
+        "time": 0.793,
         "course": 0.0
       },
       {
@@ -819,7 +855,7 @@
       },
       {
         "type": "Const",
-        "time": 2.79,
+        "time": 2.528,
         "course": 90.0
       }
     ]
