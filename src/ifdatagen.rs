@@ -4277,11 +4277,33 @@ impl IFDataGen {
             if !duration.is_finite() || duration <= 0.0 {
                 return Err("Invalid trajectory duration".into());
             }
+            // Const с полем course (градусы от севера) — прямая с явным курсом,
+            // чтобы рисовать ломаные; без course курс наследуется, как раньше.
+            if let (Some("Const"), Some(course)) = (segment["type"].as_str(), segment.get("course"))
+            {
+                let course = course.as_f64().ok_or("Invalid trajectory course")?;
+                let status = new_trajectory.append_const_course(
+                    duration,
+                    start_vel.speed,
+                    course.to_radians(),
+                );
+                if status != crate::trajectory::TRAJECTORY_NO_ERR {
+                    return Err(format!("Invalid trajectory segment: error {status}").into());
+                }
+                continue;
+            }
             let (kind, data_type, value) = match segment["type"].as_str() {
                 Some("Const") => (
                     Kind::TrajTypeConstSpeed,
                     Data::TrajDataSpeed,
                     start_vel.speed,
+                ),
+                Some("ConstAcc") => (
+                    Kind::TrajTypeConstAcc,
+                    Data::TrajDataAcceleration,
+                    segment["acceleration"]
+                        .as_f64()
+                        .ok_or("Missing acceleration")?,
                 ),
                 Some("Circular") => (
                     Kind::TrajTypeHorizontalCircular,

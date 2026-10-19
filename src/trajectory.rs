@@ -657,8 +657,9 @@ impl TrajectorySegment for TrajectoryHorizontalCircular {
                 if time_span <= 0.0 {
                     return TRAJECTORY_INVALID_PARAM;
                 }
-                if radius <= 0.0 {
-                    return TRAJECTORY_NEGATIVE;
+                // Отрицательный радиус — поворот по часовой стрелке (вправо).
+                if radius == 0.0 {
+                    return TRAJECTORY_INVALID_PARAM;
                 }
 
                 let speed = self.base.local_speed.speed;
@@ -836,6 +837,39 @@ impl CTrajectory {
         }
 
         result
+    }
+
+    /// Прямой участок с явным курсом (рад от севера): вертикальная скорость берётся
+    /// с конца предыдущего участка, горизонтальная — `speed` в направлении `course`.
+    pub fn append_const_course(&mut self, time_span: f64, speed: f64, course: f64) -> i32 {
+        if !course.is_finite() {
+            return TRAJECTORY_INVALID_PARAM;
+        }
+        let result = self.append_trajectory(
+            TrajectoryType::TrajTypeConstSpeed,
+            TrajectoryDataType::TrajDataTimeSpan,
+            time_span,
+            TrajectoryDataType::TrajDataSpeed,
+            speed,
+        );
+        if result != TRAJECTORY_NO_ERR {
+            return result;
+        }
+        let segment = self
+            .trajectory_list
+            .last_mut()
+            .expect("segment just appended");
+        let matrix = *segment.get_convert_matrix();
+        let mut start = *segment.get_start_pos_vel();
+        let mut local = LocalSpeed::default();
+        speed_ecef_to_local(&matrix, &start, &mut local);
+        local.speed = speed;
+        local.course = course;
+        speed_course_to_enu(&mut local);
+        speed_local_to_ecef(&matrix, &local, &mut start);
+        segment.set_start_pos_vel(start);
+        segment.set_local_speed(local);
+        TRAJECTORY_NO_ERR
     }
 
     pub fn reset_trajectory_time(&mut self) {

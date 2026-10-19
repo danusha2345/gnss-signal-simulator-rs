@@ -1,0 +1,882 @@
+{
+  "version": 1.0,
+  "description": "Дрон over-air: GPS L1CA + BDS B1C + Galileo E1, IQ8 4.2 МГц, 300 с; Санкт-Петербург, Дворцовая площадь, высота 20 м: трек дважды (вперёд и обратно по тому же следу) пишет слово SKYLAB печатными буквами 85 x 50 м, 12.5 м/с (45 км/ч). Углы скруглены дугами R=6–15 м (Circular, радиус < 0 — вправо), развороты — торможение и разгон назад 8 м/с² (ConstAcc), прямые — Const с полем course; скорость без скачков. Старт 03:00:00 UTC; GPS 52 / BDS и Galileo 58 dBHz.",
+  "time": {
+    "type": "UTC",
+    "year": 2025,
+    "month": 6,
+    "day": 5,
+    "hour": 3,
+    "minute": 0,
+    "second": 0
+  },
+  "trajectory": {
+    "name": "Санкт-Петербург: слово SKYLAB, буквы 85 м, 12.5 м/с",
+    "initPosition": {
+      "type": "LLA",
+      "format": "d",
+      "longitude": 30.3127103,
+      "latitude": 59.9393836,
+      "altitude": 20.0
+    },
+    "initVelocity": {
+      "type": "SCU",
+      "speedUnit": "m/s",
+      "speed": 12.5,
+      "course": 270.0,
+      "up": 0.0
+    },
+    "trajectoryList": [
+      {
+        "type": "Const",
+        "time": 2.789,
+        "course": 270.0
+      },
+      {
+        "type": "Circular",
+        "time": 1.885,
+        "radius": 15.0
+      },
+      {
+        "type": "Const",
+        "time": 1.019,
+        "course": 180.0
+      },
+      {
+        "type": "Circular",
+        "time": 1.885,
+        "radius": 15.0
+      },
+      {
+        "type": "Const",
+        "time": 1.589,
+        "course": 90.0
+      },
+      {
+        "type": "Circular",
+        "time": 1.885,
+        "radius": -15.0
+      },
+      {
+        "type": "Const",
+        "time": 1.019,
+        "course": 180.0
+      },
+      {
+        "type": "Circular",
+        "time": 1.885,
+        "radius": -15.0
+      },
+      {
+        "type": "Const",
+        "time": 2.007,
+        "course": 270.0
+      },
+      {
+        "type": "ConstAcc",
+        "time": 3.125,
+        "acceleration": -8.0
+      },
+      {
+        "type": "Const",
+        "time": 3.207,
+        "course": 90.0
+      },
+      {
+        "type": "Const",
+        "time": 1.079,
+        "course": 90.0
+      },
+      {
+        "type": "Circular",
+        "time": 1.885,
+        "radius": 15.0
+      },
+      {
+        "type": "Const",
+        "time": 4.856,
+        "course": 0.0
+      },
+      {
+        "type": "ConstAcc",
+        "time": 3.125,
+        "acceleration": -8.0
+      },
+      {
+        "type": "Const",
+        "time": 0.264,
+        "course": 180.0
+      },
+      {
+        "type": "Circular",
+        "time": 2.48,
+        "radius": 13.6
+      },
+      {
+        "type": "Const",
+        "time": 2.098,
+        "course": 49.399
+      },
+      {
+        "type": "ConstAcc",
+        "time": 3.125,
+        "acceleration": -8.0
+      },
+      {
+        "type": "Const",
+        "time": 3.072,
+        "course": 229.399
+      },
+      {
+        "type": "Circular",
+        "time": 2.069,
+        "radius": 15.0
+      },
+      {
+        "type": "Const",
+        "time": 3.409,
+        "course": 130.601
+      },
+      {
+        "type": "Circular",
+        "time": 0.85,
+        "radius": 15.0
+      },
+      {
+        "type": "Const",
+        "time": 2.63,
+        "course": 90.0
+      },
+      {
+        "type": "Circular",
+        "time": 1.885,
+        "radius": 15.0
+      },
+      {
+        "type": "Const",
+        "time": 1.894,
+        "course": 0.0
+      },
+      {
+        "type": "Circular",
+        "time": 0.634,
+        "radius": 15.0
+      },
+      {
+        "type": "Const",
+        "time": 2.852,
+        "course": 329.744
+      },
+      {
+        "type": "ConstAcc",
+        "time": 3.125,
+        "acceleration": -8.0
+      },
+      {
+        "type": "Const",
+        "time": 1.12,
+        "course": 149.744
+      },
+      {
+        "type": "Circular",
+        "time": 2.503,
+        "radius": 15.0
+      },
+      {
+        "type": "Const",
+        "time": 1.12,
+        "course": 30.256
+      },
+      {
+        "type": "ConstAcc",
+        "time": 3.125,
+        "acceleration": -8.0
+      },
+      {
+        "type": "Const",
+        "time": 2.852,
+        "course": 210.256
+      },
+      {
+        "type": "Circular",
+        "time": 0.634,
+        "radius": 15.0
+      },
+      {
+        "type": "Const",
+        "time": 1.894,
+        "course": 180.0
+      },
+      {
+        "type": "Circular",
+        "time": 1.885,
+        "radius": 15.0
+      },
+      {
+        "type": "Const",
+        "time": 1.874,
+        "course": 90.0
+      },
+      {
+        "type": "Circular",
+        "time": 1.885,
+        "radius": 15.0
+      },
+      {
+        "type": "Const",
+        "time": 4.856,
+        "course": 0.0
+      },
+      {
+        "type": "ConstAcc",
+        "time": 3.125,
+        "acceleration": -8.0
+      },
+      {
+        "type": "Const",
+        "time": 4.856,
+        "course": 180.0
+      },
+      {
+        "type": "Circular",
+        "time": 1.885,
+        "radius": 15.0
+      },
+      {
+        "type": "Const",
+        "time": 2.789,
+        "course": 90.0
+      },
+      {
+        "type": "Const",
+        "time": 1.379,
+        "course": 90.0
+      },
+      {
+        "type": "Circular",
+        "time": 1.544,
+        "radius": 15.0
+      },
+      {
+        "type": "Const",
+        "time": 0.871,
+        "course": 16.26
+      },
+      {
+        "type": "Circular",
+        "time": 1.544,
+        "radius": -15.0
+      },
+      {
+        "type": "Const",
+        "time": 0.812,
+        "course": 90.0
+      },
+      {
+        "type": "ConstAcc",
+        "time": 3.125,
+        "acceleration": -8.0
+      },
+      {
+        "type": "Const",
+        "time": 0.171,
+        "course": 270.0
+      },
+      {
+        "type": "Circular",
+        "time": 2.136,
+        "radius": -14.4
+      },
+      {
+        "type": "Const",
+        "time": 0.685,
+        "course": 16.26
+      },
+      {
+        "type": "Circular",
+        "time": 1.668,
+        "radius": -8.1
+      },
+      {
+        "type": "Const",
+        "time": 3.997,
+        "course": 163.74
+      },
+      {
+        "type": "Circular",
+        "time": 1.544,
+        "radius": 15.0
+      },
+      {
+        "type": "Const",
+        "time": 0.24,
+        "course": 90.0
+      },
+      {
+        "type": "Circular",
+        "time": 1.784,
+        "radius": 14.2
+      },
+      {
+        "type": "Const",
+        "time": 4.498,
+        "course": 0.0
+      },
+      {
+        "type": "Circular",
+        "time": 1.885,
+        "radius": -15.0
+      },
+      {
+        "type": "Const",
+        "time": 1.437,
+        "course": 90.0
+      },
+      {
+        "type": "Circular",
+        "time": 0.942,
+        "radius": -15.0
+      },
+      {
+        "type": "Const",
+        "time": 0.215,
+        "course": 135.0
+      },
+      {
+        "type": "Circular",
+        "time": 0.942,
+        "radius": -15.0
+      },
+      {
+        "type": "Const",
+        "time": 0.715,
+        "course": 180.0
+      },
+      {
+        "type": "Circular",
+        "time": 0.942,
+        "radius": -15.0
+      },
+      {
+        "type": "Const",
+        "time": 0.215,
+        "course": 225.0
+      },
+      {
+        "type": "Circular",
+        "time": 0.942,
+        "radius": -15.0
+      },
+      {
+        "type": "Const",
+        "time": 1.856,
+        "course": 270.0
+      },
+      {
+        "type": "ConstAcc",
+        "time": 3.125,
+        "acceleration": -8.0
+      },
+      {
+        "type": "Const",
+        "time": 2.14,
+        "course": 90.0
+      },
+      {
+        "type": "Circular",
+        "time": 0.942,
+        "radius": -15.0
+      },
+      {
+        "type": "Const",
+        "time": 0.215,
+        "course": 135.0
+      },
+      {
+        "type": "Circular",
+        "time": 0.942,
+        "radius": -15.0
+      },
+      {
+        "type": "Const",
+        "time": 0.715,
+        "course": 180.0
+      },
+      {
+        "type": "Circular",
+        "time": 0.942,
+        "radius": -15.0
+      },
+      {
+        "type": "Const",
+        "time": 0.215,
+        "course": 225.0
+      },
+      {
+        "type": "Circular",
+        "time": 0.942,
+        "radius": -15.0
+      },
+      {
+        "type": "Const",
+        "time": 2.14,
+        "course": 270.0
+      },
+      {
+        "type": "ConstAcc",
+        "time": 3.125,
+        "acceleration": -8.0
+      },
+      {
+        "type": "Const",
+        "time": 2.14,
+        "course": 90.0
+      },
+      {
+        "type": "Circular",
+        "time": 0.942,
+        "radius": 15.0
+      },
+      {
+        "type": "Const",
+        "time": 0.215,
+        "course": 45.0
+      },
+      {
+        "type": "Circular",
+        "time": 0.942,
+        "radius": 15.0
+      },
+      {
+        "type": "Const",
+        "time": 0.715,
+        "course": 0.0
+      },
+      {
+        "type": "Circular",
+        "time": 0.942,
+        "radius": 15.0
+      },
+      {
+        "type": "Const",
+        "time": 0.215,
+        "course": 315.0
+      },
+      {
+        "type": "Circular",
+        "time": 0.942,
+        "radius": 15.0
+      },
+      {
+        "type": "Const",
+        "time": 2.14,
+        "course": 270.0
+      },
+      {
+        "type": "ConstAcc",
+        "time": 3.125,
+        "acceleration": -8.0
+      },
+      {
+        "type": "Const",
+        "time": 1.856,
+        "course": 90.0
+      },
+      {
+        "type": "Circular",
+        "time": 0.942,
+        "radius": 15.0
+      },
+      {
+        "type": "Const",
+        "time": 0.215,
+        "course": 45.0
+      },
+      {
+        "type": "Circular",
+        "time": 0.942,
+        "radius": 15.0
+      },
+      {
+        "type": "Const",
+        "time": 0.715,
+        "course": 0.0
+      },
+      {
+        "type": "Circular",
+        "time": 0.942,
+        "radius": 15.0
+      },
+      {
+        "type": "Const",
+        "time": 0.215,
+        "course": 315.0
+      },
+      {
+        "type": "Circular",
+        "time": 0.942,
+        "radius": 15.0
+      },
+      {
+        "type": "Const",
+        "time": 1.437,
+        "course": 270.0
+      },
+      {
+        "type": "Circular",
+        "time": 1.885,
+        "radius": 15.0
+      },
+      {
+        "type": "Const",
+        "time": 4.498,
+        "course": 180.0
+      },
+      {
+        "type": "Circular",
+        "time": 1.784,
+        "radius": -14.2
+      },
+      {
+        "type": "Const",
+        "time": 0.24,
+        "course": 270.0
+      },
+      {
+        "type": "Circular",
+        "time": 1.544,
+        "radius": -15.0
+      },
+      {
+        "type": "Const",
+        "time": 3.997,
+        "course": 343.74
+      },
+      {
+        "type": "Circular",
+        "time": 1.668,
+        "radius": 8.1
+      },
+      {
+        "type": "Const",
+        "time": 0.685,
+        "course": 196.26
+      },
+      {
+        "type": "Circular",
+        "time": 2.136,
+        "radius": 14.4
+      },
+      {
+        "type": "Const",
+        "time": 0.171,
+        "course": 90.0
+      },
+      {
+        "type": "ConstAcc",
+        "time": 3.125,
+        "acceleration": -8.0
+      },
+      {
+        "type": "Const",
+        "time": 0.812,
+        "course": 270.0
+      },
+      {
+        "type": "Circular",
+        "time": 1.544,
+        "radius": 15.0
+      },
+      {
+        "type": "Const",
+        "time": 0.871,
+        "course": 196.26
+      },
+      {
+        "type": "Circular",
+        "time": 1.544,
+        "radius": -15.0
+      },
+      {
+        "type": "Const",
+        "time": 1.379,
+        "course": 270.0
+      },
+      {
+        "type": "Const",
+        "time": 2.789,
+        "course": 270.0
+      },
+      {
+        "type": "Circular",
+        "time": 1.885,
+        "radius": -15.0
+      },
+      {
+        "type": "Const",
+        "time": 4.856,
+        "course": 0.0
+      },
+      {
+        "type": "ConstAcc",
+        "time": 3.125,
+        "acceleration": -8.0
+      },
+      {
+        "type": "Const",
+        "time": 4.856,
+        "course": 180.0
+      },
+      {
+        "type": "Circular",
+        "time": 1.885,
+        "radius": -15.0
+      },
+      {
+        "type": "Const",
+        "time": 1.874,
+        "course": 270.0
+      },
+      {
+        "type": "Circular",
+        "time": 1.885,
+        "radius": -15.0
+      },
+      {
+        "type": "Const",
+        "time": 1.894,
+        "course": 0.0
+      },
+      {
+        "type": "Circular",
+        "time": 0.634,
+        "radius": -15.0
+      },
+      {
+        "type": "Const",
+        "time": 2.852,
+        "course": 30.256
+      },
+      {
+        "type": "ConstAcc",
+        "time": 3.125,
+        "acceleration": -8.0
+      },
+      {
+        "type": "Const",
+        "time": 1.12,
+        "course": 210.256
+      },
+      {
+        "type": "Circular",
+        "time": 2.503,
+        "radius": -15.0
+      },
+      {
+        "type": "Const",
+        "time": 1.12,
+        "course": 329.744
+      },
+      {
+        "type": "ConstAcc",
+        "time": 3.125,
+        "acceleration": -8.0
+      },
+      {
+        "type": "Const",
+        "time": 2.852,
+        "course": 149.744
+      },
+      {
+        "type": "Circular",
+        "time": 0.634,
+        "radius": -15.0
+      },
+      {
+        "type": "Const",
+        "time": 1.894,
+        "course": 180.0
+      },
+      {
+        "type": "Circular",
+        "time": 1.885,
+        "radius": -15.0
+      },
+      {
+        "type": "Const",
+        "time": 2.63,
+        "course": 270.0
+      },
+      {
+        "type": "Circular",
+        "time": 0.85,
+        "radius": -15.0
+      },
+      {
+        "type": "Const",
+        "time": 3.409,
+        "course": 310.601
+      },
+      {
+        "type": "Circular",
+        "time": 2.069,
+        "radius": -15.0
+      },
+      {
+        "type": "Const",
+        "time": 3.072,
+        "course": 49.399
+      },
+      {
+        "type": "ConstAcc",
+        "time": 3.125,
+        "acceleration": -8.0
+      },
+      {
+        "type": "Const",
+        "time": 2.098,
+        "course": 229.399
+      },
+      {
+        "type": "Circular",
+        "time": 2.48,
+        "radius": -13.6
+      },
+      {
+        "type": "Const",
+        "time": 0.264,
+        "course": 0.0
+      },
+      {
+        "type": "ConstAcc",
+        "time": 3.125,
+        "acceleration": -8.0
+      },
+      {
+        "type": "Const",
+        "time": 4.856,
+        "course": 180.0
+      },
+      {
+        "type": "Circular",
+        "time": 1.885,
+        "radius": -15.0
+      },
+      {
+        "type": "Const",
+        "time": 1.079,
+        "course": 270.0
+      },
+      {
+        "type": "Const",
+        "time": 3.207,
+        "course": 270.0
+      },
+      {
+        "type": "ConstAcc",
+        "time": 3.125,
+        "acceleration": -8.0
+      },
+      {
+        "type": "Const",
+        "time": 2.007,
+        "course": 90.0
+      },
+      {
+        "type": "Circular",
+        "time": 1.885,
+        "radius": 15.0
+      },
+      {
+        "type": "Const",
+        "time": 1.019,
+        "course": 0.0
+      },
+      {
+        "type": "Circular",
+        "time": 1.885,
+        "radius": 15.0
+      },
+      {
+        "type": "Const",
+        "time": 1.589,
+        "course": 270.0
+      },
+      {
+        "type": "Circular",
+        "time": 1.885,
+        "radius": -15.0
+      },
+      {
+        "type": "Const",
+        "time": 1.019,
+        "course": 0.0
+      },
+      {
+        "type": "Circular",
+        "time": 1.885,
+        "radius": -15.0
+      },
+      {
+        "type": "Const",
+        "time": 2.79,
+        "course": 90.0
+      }
+    ]
+  },
+  "ephemeris": {
+    "type": "RINEX",
+    "name": "Rinex_Data/BRDC00IGS_R_20251560000_01D_MN.rnx"
+  },
+  "output": {
+    "type": "IFdata",
+    "format": "IQ8",
+    "sampleFreq": 4.2,
+    "centerFreq": 1575.42,
+    "name": "generated_files/SKYLAB_SPB_T03.C8",
+    "config": {
+      "elevationMask": 5
+    },
+    "systemSelect": [
+      {
+        "system": "GPS",
+        "signal": "L1CA",
+        "enable": true
+      },
+      {
+        "system": "BDS",
+        "signal": "B1C",
+        "enable": true
+      },
+      {
+        "system": "Galileo",
+        "signal": "E1",
+        "enable": true
+      }
+    ]
+  },
+  "power": {
+    "noiseFloor": -172,
+    "initPower": {
+      "unit": "dBHz",
+      "value": 52
+    },
+    "elevationAdjust": false,
+    "signalPower": [
+      {
+        "system": "Galileo",
+        "powerValue": {
+          "unit": "dBHz",
+          "value": 58
+        }
+      },
+      {
+        "system": "BDS",
+        "powerValue": {
+          "unit": "dBHz",
+          "value": 58
+        }
+      }
+    ]
+  }
+}
